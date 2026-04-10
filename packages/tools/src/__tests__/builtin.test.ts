@@ -433,6 +433,53 @@ describe('edit tool', () => {
     expect(after).toBe('B'.repeat(1000));
   });
 
+  // Codex round-4 regression: atomic edit via temp+rename must preserve the
+  // original file's permission bits. Without this, a 0o600 secrets file would
+  // be clobbered to 0o644 (world-readable) and a 0o755 script would lose
+  // its executable bit.
+  it('preserves 0o600 permissions across atomic edit', async () => {
+    const filePath = path.join(tmpDir, 'secret.txt');
+    fs.writeFileSync(filePath, 'SECRET=foo', 'utf-8');
+    fs.chmodSync(filePath, 0o600);
+
+    const before = fs.statSync(filePath).mode & 0o7777;
+    expect(before).toBe(0o600);
+
+    const tool = createEditTool();
+    const result = await tool.execute('1', {
+      path: 'secret.txt',
+      old_string: 'foo',
+      new_string: 'bar',
+    }, makeContext(tmpDir));
+
+    expect(result.type).toBe('text');
+    expect(fs.readFileSync(filePath, 'utf-8')).toBe('SECRET=bar');
+
+    const after = fs.statSync(filePath).mode & 0o7777;
+    expect(after).toBe(0o600); // still private, not clobbered to 0o644
+  });
+
+  it('preserves 0o755 executable permissions across atomic edit', async () => {
+    const filePath = path.join(tmpDir, 'run.sh');
+    fs.writeFileSync(filePath, '#!/bin/sh\necho hello\n', 'utf-8');
+    fs.chmodSync(filePath, 0o755);
+
+    const before = fs.statSync(filePath).mode & 0o7777;
+    expect(before).toBe(0o755);
+
+    const tool = createEditTool();
+    const result = await tool.execute('1', {
+      path: 'run.sh',
+      old_string: 'hello',
+      new_string: 'world',
+    }, makeContext(tmpDir));
+
+    expect(result.type).toBe('text');
+
+    const after = fs.statSync(filePath).mode & 0o7777;
+    expect(after).toBe(0o755); // executable bit retained
+  });
+
   // Regression: editing through a symlink pointing outside the workspace
   // would have modified the external file.
   it('blocks edits through a symlink pointing outside the workspace', async () => {

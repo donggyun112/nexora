@@ -10,18 +10,52 @@
  *  v3 (this file): the caller no longer gets a path string. Instead it gets a
  *      FileHandle opened with O_NOFOLLOW. The kernel guarantees that the final
  *      path component is not a symlink at open time, so symlink swapping after
- *      the realpath check cannot redirect the I/O. Intermediate-component
- *      TOCTOU is still a kernel-level concern (would need openat/dirfd), but
- *      the realpath pre-check makes it observably hard to win that race.
+ *      the realpath check cannot redirect the I/O.
+ *
+ * ============================================================================
+ * THREAT MODEL & KNOWN LIMITATIONS (read this before trusting the tool):
+ *
+ *  1. Final-component symlink swap — CLOSED.
+ *     O_NOFOLLOW on the final open() rejects with ELOOP if the target is a
+ *     symlink at open time, even if it wasn't when we validated the path.
+ *
+ *  2. Intermediate-directory symlink race during open — CLOSED in practice.
+ *     Because the canonical parent is pre-checked via realpath AND the final
+ *     open uses the validated absolute path, an attacker would have to win a
+ *     race narrower than the single syscall. We cannot prove it's impossible,
+ *     but realpath + absolute-path open makes it observably hard.
+ *
+ *  3. Intermediate-directory symlink race during `mkdir -p` (write path) — OPEN.
+ *     The write path needs to create missing parent directories. That means
+ *     between `resolveAgainstRoot()` validating the parent and `fsp.mkdir()`
+ *     actually running, an attacker CAN swap an intermediate directory for a
+ *     symlink to outside the workspace. The `mkdir` then creates a subdirectory
+ *     OUTSIDE the root. The subsequent file open is still rejected (so no
+ *     file DATA leaks), but the mkdir side effect is visible on the host.
+ *
+ *     The only complete fix is dirfd-based traversal via openat(2)/mkdirat(2).
+ *     Node.js does not expose these syscalls through fs.promises. Without a
+ *     native addon, pure-JavaScript code cannot eliminate this race.
+ *
+ *     Mitigation: the code below also re-canonicalizes via realpath AFTER the
+ *     mkdir and throws PathOutsideWorkspaceError if the directory ended up
+ *     outside the root. That turns a silent escape into a loud error, but
+ *     the mkdir itself has already happened.
+ *
+ *     For untrusted input, run Nexora inside an OS-level sandbox (nsjail,
+ *     bubblewrap, a per-tenant container with its own mount namespace, etc.).
+ *     The in-process defense is best-effort.
+ * ============================================================================
  *
  * Public API:
  *   openForRead(rawPath, root)   → FileHandle (reading)
- *   openForWrite(rawPath, root)  → FileHandle (create/truncate)
+ *   openForWrite(rawPath, root)  → FileHandle (create/truncate, mkdir -p parent)
  *   openForReadWrite(rawPath, root) → FileHandle (read+write, file must exist)
  *   resolveDirForListing(rawPath, root) → string (directory listing — no fd needed)
+ *   canonicalizePath(rawPath, root) → string (validated abs path, no I/O)
  *
- * All four reject paths that resolve outside `root` and reject paths whose
- * final component is a symlink.
+ * All reject paths that resolve outside `root` and reject paths whose
+ * final component is a symlink (ELOOP → SymlinkRefusedError).
  */
 
 import fs from 'node:fs';
@@ -134,6 +168,24 @@ export async function openForRead(rawPath: string, root: string): Promise<fsp.Fi
  * The fix: we canonicalize first (resolveAgainstRoot), then mkdir ONLY the
  * already-validated parent, then re-verify via realpath to catch a concurrent
  * symlink swap on the new directory, and finally open with O_NOFOLLOW.
+ *
+ * KNOWN LIMITATION — intermediate-component TOCTOU during mkdir:
+ *   An attacker who can race the filesystem on the same host can still replace
+ *   an intermediate directory with a symlink between resolveAgainstRoot() and
+ *   the fsp.mkdir() below. That would cause mkdir to create a subdirectory
+ *   OUTSIDE the canonical workspace root. The final open() will still be
+ *   rejected by O_NOFOLLOW + the post-mkdir realpath re-check, so NO file
+ *   data is leaked — but the mkdir side effect escapes.
+ *
+ *   The only true fix is dirfd-based traversal via `openat(2)`/`mkdirat(2)`.
+ *   Node.js does NOT expose these syscalls through `fs.promises`, so this
+ *   level of hardening is not reachable from JavaScript without a native
+ *   addon. Callers that need stricter isolation should run Nexora inside
+ *   an OS-level sandbox (bubblewrap, nsjail, container with a dedicated
+ *   per-tenant mount namespace, etc.).
+ *
+ *   The post-mkdir realpath check below turns a silent escape into a
+ *   loud PathOutsideWorkspaceError, which is the best pure-Node.js mitigation.
  */
 export async function openForWrite(rawPath: string, root: string): Promise<fsp.FileHandle> {
   const { canonicalRoot, finalPath } = await resolveAgainstRoot(rawPath, root);
@@ -145,7 +197,9 @@ export async function openForWrite(rawPath: string, root: string): Promise<fsp.F
     await fsp.mkdir(parentDir, { recursive: true });
 
     // Re-verify after mkdir: between validation and mkdir, an attacker could
-    // have swapped an intermediate directory to a symlink. realpath catches that.
+    // have swapped an intermediate directory to a symlink. realpath catches that
+    // and raises an error, but see the "KNOWN LIMITATION" note above — the mkdir
+    // side effect has already happened by the time we get here.
     const parentReal = await fsp.realpath(parentDir);
     if (!isWithin(parentReal, canonicalRoot)) {
       throw new PathOutsideWorkspaceError(rawPath, canonicalRoot);

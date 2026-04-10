@@ -62,11 +62,20 @@ export function createEditTool(): ToolDefinition {
         return errorResult('old_string and new_string are identical');
       }
 
-      // Step 1: read the original atomically (fd with O_NOFOLLOW).
+      // Step 1: read the original atomically (fd with O_NOFOLLOW) and capture
+      // its permission bits. The temp file we write to below is created with
+      // a default 0o644 mode by openForWrite — without preserving the original
+      // mode, a 0o600 secrets file would leak as world-readable after rename,
+      // and a 0o755 script would lose its executable bit.
       let content: string;
+      let originalMode: number;
       try {
         const readHandle = await openForRead(rawPath, ctx.workdir);
         try {
+          const stat = await readHandle.stat();
+          // Only keep the 12 mode bits that matter for file permissions
+          // (setuid/setgid/sticky + rwx for ugo). Higher bits are file-type.
+          originalMode = stat.mode & 0o7777;
           content = await readHandle.readFile('utf-8');
         } finally {
           await readHandle.close().catch(() => {});
@@ -129,6 +138,11 @@ export function createEditTool(): ToolDefinition {
         // handle.writeFile loops internally until every byte is written — avoids
         // the short-write bug of a single handle.write().
         await writeHandle.writeFile(updated, 'utf-8');
+        // Preserve the original file's permission bits BEFORE rename so that
+        // a 0o600 secrets file stays 0o600 and a 0o755 script stays executable.
+        // Round-4 review flagged that without this, rename would clobber
+        // permissions back to openForWrite's default 0o644.
+        await writeHandle.chmod(originalMode);
         // Flush to disk before rename so the new file is durable even if the
         // process crashes during the rename().
         await writeHandle.sync().catch(() => {});

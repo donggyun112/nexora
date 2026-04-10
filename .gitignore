@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Reference implementations copied locally for design reference only.
+# These are third-party projects with their own licenses — do not commit.
+reference/
+
+# Logs and temp data
+logs/
+*.log
+coverage/
+data/

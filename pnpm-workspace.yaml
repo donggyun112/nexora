@@ -1,0 +1,7 @@
+packages:
+  - "packages/*"
+  - "agents/*"
+  - "platform/*"
+  - "platform/gateway"
+  - "platform/registry"
+  - "platform/cli"

@@ -1,0 +1,233 @@
+/**
+ * OpenAIProvider — OpenAI Chat Completions API 래핑.
+ *
+ * LLMProvider 인터페이스 구현. 스트리밍 + 도구 호출 지원.
+ */
+
+import OpenAI from 'openai';
+import type {
+  LLMProvider,
+  LLMMessage,
+  LLMOptions,
+  LLMChunk,
+  LLMResponse,
+  LLMContentBlock,
+} from '@nexora/contracts';
+
+export interface OpenAIProviderOptions {
+  apiKey?: string;
+  defaultModel?: string;
+  baseURL?: string;
+  tools?: { name: string; description: string; parameters: Record<string, unknown> }[];
+}
+
+const DEFAULT_MODEL = 'gpt-4o';
+const DEFAULT_MAX_TOKENS = 4096;
+
+export class OpenAIProvider implements LLMProvider {
+  private readonly client: OpenAI;
+  private readonly defaultModel: string;
+  private readonly tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
+
+  constructor(options: OpenAIProviderOptions = {}) {
+    this.client = new OpenAI({ apiKey: options.apiKey, baseURL: options.baseURL });
+    this.defaultModel = options.defaultModel ?? DEFAULT_MODEL;
+    this.tools = options.tools?.map(t => ({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
+    }));
+  }
+
+  async *stream(messages: LLMMessage[], options?: LLMOptions): AsyncGenerator<LLMChunk> {
+    const openaiMessages = this.toOpenAIMessages(messages, options);
+
+    const stream = await this.client.chat.completions.create(
+      {
+        model: options?.model ?? this.defaultModel,
+        max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
+        temperature: options?.temperature,
+        messages: openaiMessages,
+        tools: this.tools,
+        stream: true,
+      },
+      options?.signal ? { signal: options.signal } : undefined,
+    );
+
+    let accumulatedText = '';
+    let stopReason = 'stop';
+    const toolCallBuilders = new Map<number, { id: string; name: string; arguments: string }>();
+
+    for await (const chunk of stream) {
+      const choice = chunk.choices[0];
+      if (!choice) continue;
+
+      const delta = choice.delta;
+
+      if (delta.content) {
+        accumulatedText += delta.content;
+        yield { type: 'text_delta', delta: delta.content };
+      }
+
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index;
+          let builder = toolCallBuilders.get(idx);
+          if (!builder) {
+            builder = { id: tc.id ?? '', name: '', arguments: '' };
+            toolCallBuilders.set(idx, builder);
+          }
+          if (tc.id) builder.id = tc.id;
+          if (tc.function?.name) {
+            builder.name = tc.function.name;
+            yield { type: 'tool_call_start', id: builder.id, name: builder.name };
+          }
+          if (tc.function?.arguments) {
+            builder.arguments += tc.function.arguments;
+            yield { type: 'tool_call_delta', id: builder.id, delta: tc.function.arguments };
+          }
+        }
+      }
+
+      if (choice.finish_reason) {
+        stopReason = choice.finish_reason;
+      }
+    }
+
+    yield {
+      type: 'done',
+      content: accumulatedText,
+      stopReason,
+    };
+  }
+
+  async complete(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse> {
+    const openaiMessages = this.toOpenAIMessages(messages, options);
+
+    const response = await this.client.chat.completions.create(
+      {
+        model: options?.model ?? this.defaultModel,
+        max_tokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
+        temperature: options?.temperature,
+        messages: openaiMessages,
+        tools: this.tools,
+      },
+      options?.signal ? { signal: options.signal } : undefined,
+    );
+
+    const choice = response.choices[0];
+    if (!choice) throw new Error('OpenAI returned no choices');
+
+    const toolCalls = choice.message.tool_calls?.map(tc => ({
+      id: tc.id,
+      name: tc.function.name,
+      arguments: safeJsonParse(tc.function.arguments),
+    }));
+
+    return {
+      content: choice.message.content ?? '',
+      model: response.model,
+      stopReason: choice.finish_reason ?? 'stop',
+      toolCalls,
+    };
+  }
+
+  private toOpenAIMessages(
+    messages: LLMMessage[],
+    options?: LLMOptions,
+  ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+    const result: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+
+    if (options?.systemPrompt) {
+      result.push({ role: 'system', content: options.systemPrompt });
+    }
+
+    for (const msg of messages) {
+      if (msg.role === 'system') {
+        result.push({
+          role: 'system',
+          content: typeof msg.content === 'string' ? msg.content : extractText(msg.content),
+        });
+      } else if (msg.role === 'user') {
+        if (typeof msg.content === 'string') {
+          result.push({ role: 'user', content: msg.content });
+        } else {
+          result.push({
+            role: 'user',
+            content: msg.content
+              .filter((b): b is Extract<LLMContentBlock, { type: 'text' | 'image' }> =>
+                b.type === 'text' || b.type === 'image')
+              .map(b => {
+                if (b.type === 'text') return { type: 'text' as const, text: b.text };
+                return {
+                  type: 'image_url' as const,
+                  image_url: { url: `data:${b.mimeType};base64,${b.data}` },
+                };
+              }),
+          });
+        }
+      } else if (msg.role === 'assistant') {
+        if (typeof msg.content === 'string') {
+          result.push({ role: 'assistant', content: msg.content });
+        } else {
+          const textBlocks = msg.content
+            .filter((b): b is Extract<LLMContentBlock, { type: 'text' }> => b.type === 'text');
+          const toolCalls = msg.content
+            .filter((b): b is Extract<LLMContentBlock, { type: 'tool_call' }> => b.type === 'tool_call');
+
+          const assistantMsg: OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam = {
+            role: 'assistant',
+            content: textBlocks.map(b => b.text).join('') || null,
+          };
+
+          if (toolCalls.length > 0) {
+            assistantMsg.tool_calls = toolCalls.map(tc => ({
+              id: tc.id,
+              type: 'function',
+              function: {
+                name: tc.name,
+                arguments: typeof tc.arguments === 'string'
+                  ? tc.arguments
+                  : JSON.stringify(tc.arguments),
+              },
+            }));
+          }
+
+          result.push(assistantMsg);
+        }
+      } else if (msg.role === 'tool_result') {
+        if (Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (block.type === 'tool_result') {
+              result.push({
+                role: 'tool',
+                tool_call_id: block.id,
+                content: block.content,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+}
+
+function extractText(blocks: LLMContentBlock[]): string {
+  return blocks
+    .filter((b): b is Extract<LLMContentBlock, { type: 'text' }> => b.type === 'text')
+    .map(b => b.text)
+    .join('');
+}
+
+function safeJsonParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return s;
+  }
+}

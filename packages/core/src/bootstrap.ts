@@ -27,6 +27,7 @@ import type {
   TopicString,
 } from '@nexora/contracts';
 import { messageId, spanId, matchTopic } from '@nexora/contracts';
+import { createSchemaValidator, SchemaValidationError } from './schema.js';
 
 export interface AgentBootstrapOptions {
   /** Agent capability declaration (subscribes / publishes / tools / architecture). */
@@ -77,6 +78,23 @@ export interface AgentBootstrapOptions {
    * pattern throws instead of logging a warning. Default: false.
    */
   strictPublishLint?: boolean;
+  /**
+   * If set, this agent instance only processes messages whose
+   * `envelope.metadata.tenantId` matches. Messages for other tenants are
+   * silently dropped. This is a CORRECTNESS guard, not a security boundary —
+   * a malicious sibling that forgets to set `tenantId` will still see all
+   * traffic. For true isolation, run one bootstrap per tenant and use a
+   * transport that can route per-tenant (or a per-tenant channel prefix).
+   */
+  tenantId?: string;
+  /**
+   * If true, incoming messages are validated against `card.inputSchema` and
+   * outgoing results against `card.outputSchema` (JSON Schema, AJV-backed).
+   * Validation failures are routed to `<topic>.schema-rejected` (for input)
+   * or `<topic>.failed` (for output). Default: true when either schema is
+   * present on the card; no-op when both are undefined.
+   */
+  validateSchemas?: boolean;
   /** Logger for framework-level events (boot, shutdown, lint warnings). */
   logger?: AgentLogger;
 }
@@ -109,8 +127,17 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
     resultTopicFor,
     buildResultPayload,
     strictPublishLint = false,
+    tenantId: scopedTenantId,
   } = options;
   const logger = options.logger ?? NOOP_LOGGER;
+
+  // Build schema validators once at boot. No-op if the card declares no schemas.
+  const validateSchemas = options.validateSchemas ?? (
+    card.inputSchema !== undefined || card.outputSchema !== undefined
+  );
+  const { validateInput, validateOutput } = validateSchemas
+    ? createSchemaValidator(card)
+    : { validateInput: () => {}, validateOutput: () => {} };
 
   if (card.subscribes.length === 0) {
     logger.warn(`Agent ${card.name} has no subscribes`);
@@ -135,6 +162,13 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
 
   for (const topic of card.subscribes) {
     const sub = transport.subscribe(topic, async (envelope) => {
+      // Tenant isolation: drop messages not addressed to our tenant.
+      // This is a CORRECTNESS guard — the transport itself still delivers
+      // everything, we just ignore messages for other tenants.
+      if (scopedTenantId !== undefined && envelope.metadata.tenantId !== scopedTenantId) {
+        return;
+      }
+
       const work = handleMessage({
         envelope,
         card,
@@ -145,6 +179,8 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
         resultTopicFor,
         buildResultPayload,
         strictPublishLint,
+        validateInput,
+        validateOutput,
         logger,
       });
       inFlight.add(work);
@@ -191,6 +227,8 @@ async function handleMessage(args: {
   resultTopicFor?: AgentBootstrapOptions['resultTopicFor'];
   buildResultPayload?: AgentBootstrapOptions['buildResultPayload'];
   strictPublishLint: boolean;
+  validateInput: (payload: unknown) => void;
+  validateOutput: (payload: unknown) => void;
   logger: AgentLogger;
 }): Promise<void> {
   const {
@@ -207,6 +245,36 @@ async function handleMessage(args: {
   const tenantId = envelope.metadata.tenantId;
 
   try {
+    // Schema validation: reject malformed inbound payloads BEFORE we spend
+    // any context-loading or LLM budget on them. Schema errors go to a
+    // dedicated `.schema-rejected` topic instead of `.failed` so operators
+    // can distinguish "agent ran and errored" from "payload was never legal".
+    try {
+      args.validateInput(envelope.payload);
+    } catch (err) {
+      if (err instanceof SchemaValidationError) {
+        args.logger.warn(`Schema-rejected inbound for ${card.name}`, { message: err.message });
+        await args.transport.publish({
+          id: messageId(),
+          topic: `${envelope.topic}.schema-rejected`,
+          type: 'result',
+          payload: { error: err.message, errors: err.errors },
+          metadata: {
+            traceId: envelope.metadata.traceId,
+            spanId: spanId(),
+            parentSpanId: envelope.metadata.spanId,
+            conversationId: envelope.metadata.conversationId,
+            replyTo: envelope.id,
+            tenantId,
+            sourceInstanceId: card.name,
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
+      throw err;
+    }
+
     const context = await contextLoader.load(tenantId, card.name);
     const runtime = await createRuntime({ context, envelope });
 
@@ -237,6 +305,18 @@ async function handleMessage(args: {
     const payload = args.buildResultPayload
       ? args.buildResultPayload(events)
       : defaultResultPayload(events);
+
+    // Output schema validation. A failure here is an AGENT BUG (it produced
+    // a result that doesn't match its own declared outputSchema), so we
+    // route to `.failed` like any other execution error.
+    try {
+      args.validateOutput(payload);
+    } catch (err) {
+      if (err instanceof SchemaValidationError) {
+        throw err; // handled by the outer catch which publishes .failed
+      }
+      throw err;
+    }
 
     const reply: MessageEnvelope = {
       id: messageId(),

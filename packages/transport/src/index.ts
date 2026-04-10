@@ -1,9 +1,11 @@
 /**
- * @nexora/transport — 에이전트 간 이벤트 통신.
+ * @nexora/transport — agent-to-agent event communication.
  *
- * - LocalTransport: 인메모리 (개발/테스트)
- * - RedisTransport: 분산 (프로덕션, ioredis/redis 어댑터)
- * - TracingTransport: AsyncLocalStorage 기반 trace 자동 전파
+ * - LocalTransport: in-memory EventTransport (at-most-once, dev/test)
+ * - RedisTransport: Redis PUBSUB EventTransport (at-most-once, distributed)
+ * - RedisStreamsTransport: Redis Streams DurableTransport (at-least-once,
+ *   consumer groups, durable — production workflow path)
+ * - TracingTransport: AsyncLocalStorage-based trace propagation wrapper
  */
 
 export { LocalTransport, createEnvelope } from './local.js';
@@ -11,6 +13,12 @@ export type { LocalTransportOptions } from './local.js';
 
 export { RedisTransport } from './redis.js';
 export type { RedisTransportOptions, RedisLike } from './redis.js';
+
+export { RedisStreamsTransport } from './redis-streams.js';
+export type {
+  RedisStreamsTransportOptions,
+  RedisStreamsLike,
+} from './redis-streams.js';
 
 export { TracingTransport, currentTrace, withTrace } from './tracing.js';
 export type { TraceContext } from './tracing.js';

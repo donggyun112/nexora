@@ -113,3 +113,8 @@ export type {
 export { assertDurable } from './transport.js';
 
 export type { AgentRegistry } from './registry.js';
+
+export type {
+  WorkflowStateStore,
+  WorkflowCheckpoint,
+} from './workflow-state.js';

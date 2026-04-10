@@ -659,6 +659,194 @@ describe('bootstrapAgent', () => {
     await running.shutdown();
   });
 
+  // Tenant isolation: bootstrapAgent({ tenantId }) silently drops messages
+  // addressed to other tenants. Messages to the matching tenant still flow.
+  it('tenant isolation: drops messages for other tenants', async () => {
+    const transport = new InlineTransport();
+    const card: AgentCard = {
+      name: 'tenant-scoped',
+      version: '0.1.0',
+      description: '',
+      capabilities: [],
+      subscribes: ['tenant-work.requested'],
+      publishes: ['tenant-work.completed'],
+      tools: [],
+      architecture: 'echo',
+    };
+
+    const seen: string[] = [];
+    const observingLoader: ContextLoader = {
+      async load(tenantId, agentName) {
+        seen.push(tenantId);
+        return {
+          tenantId, systemPrompt: `${agentName}@${tenantId}`, persona: '',
+          tools: [],
+          limits: {
+            maxExecutionMs: 60_000, maxTokens: 1000, model: 'mock',
+            thinkingLevel: 'off', contextWindow: 200_000,
+          },
+          runtime: { today: '2026-04-11', weekday: 'Sat', thisWeek: '', workdir: '/tmp' },
+        };
+      },
+    };
+
+    const llm = new MockLLMProvider([{ text: 'ok-A' }, { text: 'ok-B' }]);
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: observingLoader,
+      transport,
+      tenantId: 'tenant-A', // ONLY tenant-A traffic
+      createRuntime: ({ context }) => new AgentRunner({
+        architecture: echoArch, llm,
+        tools: new CoreToolExecutor({
+          tools: [],
+          context: {
+            tenantId: context.tenantId,
+            workdir: context.runtime.workdir,
+            secrets: { get: async () => undefined },
+            logger: { info: () => {}, warn: () => {}, error: () => {} },
+          },
+        }),
+        idleTimeoutMs: context.limits.maxExecutionMs,
+      }),
+      toAgentInput: () => ({ prompt: 'x' }),
+    });
+
+    await transport.publish({
+      id: messageId(), topic: 'tenant-work.requested', type: 'request', payload: {},
+      metadata: {
+        traceId: 't', spanId: 's', conversationId: 'c',
+        tenantId: 'tenant-A', timestamp: Date.now(),
+      },
+    });
+    await transport.publish({
+      id: messageId(), topic: 'tenant-work.requested', type: 'request', payload: {},
+      metadata: {
+        traceId: 't', spanId: 's', conversationId: 'c',
+        tenantId: 'tenant-B', timestamp: Date.now(),
+      },
+    });
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(seen).toEqual(['tenant-A']);
+    const results = transport.published.filter(p => p.topic === 'tenant-work.completed');
+    expect(results).toHaveLength(1);
+    expect(results[0].metadata.tenantId).toBe('tenant-A');
+    await running.shutdown();
+  });
+
+  // Schema validation: malformed input is routed to `<topic>.schema-rejected`
+  // BEFORE any agent code runs.
+  it('schema validation rejects malformed input to .schema-rejected topic', async () => {
+    const transport = new InlineTransport();
+    const card: AgentCard = {
+      name: 'schema-agent',
+      version: '0.1.0',
+      description: '',
+      capabilities: [],
+      subscribes: ['schema.requested'],
+      publishes: ['schema.completed'],
+      tools: [],
+      architecture: 'echo',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string' },
+          priority: { type: 'integer', minimum: 0, maximum: 10 },
+        },
+        required: ['prompt', 'priority'],
+      },
+    };
+
+    const llm = new MockLLMProvider([]);
+    let runtimeInvoked = false;
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: inlineLoader,
+      transport,
+      createRuntime: () => {
+        runtimeInvoked = true;
+        return new AgentRunner({
+          architecture: echoArch, llm,
+          tools: new CoreToolExecutor({ tools: [], context: toolContext }),
+        });
+      },
+      toAgentInput: (env) => ({ prompt: (env.payload as { prompt: string }).prompt }),
+    });
+
+    await transport.publish({
+      id: messageId(), topic: 'schema.requested', type: 'request',
+      payload: { prompt: 'hi' }, // missing required `priority`
+      metadata: {
+        traceId: 't', spanId: 's', conversationId: 'c',
+        tenantId: 'x', timestamp: Date.now(),
+      },
+    });
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(runtimeInvoked).toBe(false);
+    const rejected = transport.published.find(p => p.topic === 'schema.requested.schema-rejected');
+    expect(rejected).toBeDefined();
+    expect((rejected?.payload as { error: string }).error).toMatch(/priority/);
+    expect(transport.published.find(p => p.topic === 'schema.completed')).toBeUndefined();
+    expect(transport.published.find(p => p.topic === 'schema.requested.failed')).toBeUndefined();
+    await running.shutdown();
+  });
+
+  it('schema validation: valid input flows through normally', async () => {
+    const transport = new InlineTransport();
+    const card: AgentCard = {
+      name: 'schema-agent-valid',
+      version: '0.1.0',
+      description: '',
+      capabilities: [],
+      subscribes: ['schema2.requested'],
+      publishes: ['schema2.completed'],
+      tools: [],
+      architecture: 'echo',
+      inputSchema: {
+        type: 'object',
+        properties: { prompt: { type: 'string' } },
+        required: ['prompt'],
+      },
+    };
+
+    const llm = new MockLLMProvider([{ text: 'processed' }]);
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: inlineLoader,
+      transport,
+      createRuntime: ({ context }) => new AgentRunner({
+        architecture: echoArch, llm,
+        tools: new CoreToolExecutor({
+          tools: [],
+          context: {
+            tenantId: context.tenantId,
+            workdir: context.runtime.workdir,
+            secrets: { get: async () => undefined },
+            logger: { info: () => {}, warn: () => {}, error: () => {} },
+          },
+        }),
+      }),
+      toAgentInput: (env) => ({ prompt: (env.payload as { prompt: string }).prompt }),
+    });
+
+    await transport.publish({
+      id: messageId(), topic: 'schema2.requested', type: 'request',
+      payload: { prompt: 'valid' },
+      metadata: {
+        traceId: 't', spanId: 's', conversationId: 'c',
+        tenantId: 'x', timestamp: Date.now(),
+      },
+    });
+    await new Promise(r => setTimeout(r, 20));
+
+    const completed = transport.published.find(p => p.topic === 'schema2.completed');
+    expect(completed).toBeDefined();
+    expect((completed?.payload as { content: string }).content).toBe('processed');
+    await running.shutdown();
+  });
+
   it('does not warn on failure topics even if not declared in card.publishes', async () => {
     const transport = new InlineTransport();
     const warnings: string[] = [];

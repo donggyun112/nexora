@@ -54,3 +54,5 @@ export type { AgentRunnerOptions } from './runner.js';
 
 export { bootstrapAgent } from './bootstrap.js';
 export type { AgentBootstrapOptions, RunningAgent } from './bootstrap.js';
+
+export { createSchemaValidator, SchemaValidationError } from './schema.js';

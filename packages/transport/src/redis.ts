@@ -1,24 +1,32 @@
 /**
- * RedisTransport — 프로덕션용 transport (인터페이스 + 어댑터).
+ * RedisTransport — Redis PUBSUB adapter.
  *
- * `ioredis`나 `redis` 등 SDK를 직접 의존하지 않고
- * 최소 인터페이스(RedisLike)만 정의 → 사용자가 클라이언트 인스턴스를 주입.
+ * DELIVERY CONTRACT: at-most-once, non-durable. Redis pub/sub is fire-and-forget:
+ * if no subscriber is listening when the message is published, the message is
+ * dropped. This transport implements `EventTransport` ONLY. For production
+ * workflow steps or critical paths, use `RedisStreamsTransport` (planned,
+ * at-least-once with consumer groups) or another `DurableTransport` impl.
  *
- * 사용:
+ * Do NOT assume this is "production-grade just because it's Redis". Pub/sub
+ * in Redis has the same delivery guarantees as LocalTransport — it's just
+ * distributed across processes.
+ *
+ * Uses Redis pattern subscription (PSUBSCRIBE) for wildcard topic matching.
+ *
+ * Usage:
  *   import { Redis } from 'ioredis';
  *   const sub = new Redis();
  *   const pub = new Redis();
  *   const transport = new RedisTransport({ subscriber: sub, publisher: pub });
- *
- * Redis pattern subscription (PSUBSCRIBE)을 사용해 wildcard 토픽 매칭.
  */
 
 import type {
-  Transport,
+  EventTransport,
   Subscription,
   RequestOptions,
   MessageEnvelope,
   TopicString,
+  TransportDescription,
 } from '@nexora/contracts';
 import { matchTopic, messageId, traceId, spanId, conversationId } from '@nexora/contracts';
 
@@ -52,7 +60,7 @@ interface SubRecord {
   handler: (envelope: MessageEnvelope) => Promise<void>;
 }
 
-export class RedisTransport implements Transport {
+export class RedisTransport implements EventTransport {
   private readonly subscriber: RedisLike;
   private readonly publisher: RedisLike;
   private readonly prefix: string;
@@ -71,6 +79,16 @@ export class RedisTransport implements Transport {
     this.subscriber.on('pmessage', (_pat, channel, message) => {
       this.handlePMessage(channel, message);
     });
+  }
+
+  describe(): TransportDescription {
+    return {
+      kind: 'redis-pubsub',
+      deliveryGuarantee: 'at-most-once',
+      durable: false,
+      supportsConsumerGroups: false,
+      notes: `Redis PUBSUB (prefix: ${this.prefix}). No durability: if no subscriber is connected at publish time, the message is lost. For at-least-once delivery use a DurableTransport implementation.`,
+    };
   }
 
   private channelFor(topic: string): string {

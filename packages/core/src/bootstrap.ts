@@ -15,49 +15,69 @@
 import type {
   AgentCard,
   AgentContext,
+  AgentRegistry,
   AgentRuntime,
   AgentInput,
   AgentEvent,
   ContextLoader,
-  Transport,
+  EventTransport,
   Subscription,
   MessageEnvelope,
   AgentLogger,
+  TopicString,
 } from '@nexora/contracts';
-import { messageId, spanId } from '@nexora/contracts';
+import { messageId, spanId, matchTopic } from '@nexora/contracts';
 
 export interface AgentBootstrapOptions {
-  /** 에이전트 카드 (subscribes/publishes 정의) */
+  /** Agent capability declaration (subscribes / publishes / tools / architecture). */
   card: AgentCard;
-  /** 컨텍스트 로더 */
+  /** Loads per-tenant context (system prompt, limits, tool allowlist) for each request. */
   contextLoader: ContextLoader;
-  /** Transport */
-  transport: Transport;
+  /** Transport the agent uses to send and receive messages. */
+  transport: EventTransport;
   /**
-   * 컨텍스트가 주입된 후 AgentRuntime을 생성하는 팩토리.
-   * 매 요청마다 호출되며, 전체 AgentContext(systemPrompt + tools + limits + runtime)를 받는다.
-   * 팩토리는 limits로 모델/토큰/timeout을 설정하고, runtime.workdir로 ToolContext를 만들어야 한다.
+   * Optional registry. If provided, `bootstrapAgent` will automatically call
+   * `registry.register(card)` at startup and `registry.unregister(card.name)`
+   * at shutdown. Lets other components (workflow engine, gateway routing) look
+   * up the card without the caller having to thread the registry through manually.
+   */
+  registry?: AgentRegistry;
+  /**
+   * Per-request AgentRuntime factory. Receives the full tenant-resolved
+   * context so it can build a ToolContext from `context.runtime.workdir`,
+   * apply `context.limits` to the runner, and filter tools against
+   * `context.tools`.
    */
   createRuntime: (args: {
     context: AgentContext;
     envelope: MessageEnvelope;
   }) => AgentRuntime | Promise<AgentRuntime>;
   /**
-   * 수신된 메시지 payload를 AgentInput으로 변환.
-   * 각 에이전트가 도메인 schema에 맞게 구현.
+   * Convert an incoming MessageEnvelope into the agent's domain-specific
+   * AgentInput. Each agent implements this per its payload schema.
    */
   toAgentInput: (envelope: MessageEnvelope) => AgentInput;
   /**
-   * 에이전트 결과를 어떤 topic으로 발행할지 결정.
-   * 기본: 첫 번째 publishes 토픽 또는 `<original>.completed`
+   * Compute the topic to publish the result on. Default: first entry of
+   * `card.publishes`, or `<incoming-topic>.completed` if `publishes` is empty.
+   *
+   * The chosen topic is lint-checked against `card.publishes` at runtime —
+   * a mismatch is logged as a warning (not an error, because many operators
+   * use dynamic routing that can't be declared statically). Set
+   * `strictPublishLint: true` to turn the warning into a hard error.
    */
   resultTopicFor?: (envelope: MessageEnvelope) => string;
   /**
-   * 에이전트 결과 payload 조립.
-   * 기본: { content, toolCalls, error }
+   * Convert the agent's AgentEvent stream into a serializable result payload.
+   * Default: `{ content, toolCalls }` for done events, `{ error }` for errors.
    */
   buildResultPayload?: (events: AgentEvent[]) => unknown;
-  /** 로거 */
+  /**
+   * If true, publishing a result topic that doesn't match any `card.publishes`
+   * pattern throws instead of logging a warning. Default: false.
+   */
+  strictPublishLint?: boolean;
+  /** Logger for framework-level events (boot, shutdown, lint warnings). */
   logger?: AgentLogger;
 }
 
@@ -74,22 +94,38 @@ const NOOP_LOGGER: AgentLogger = {
 };
 
 /**
- * 에이전트 부팅 — 모든 subscribes 토픽 구독 시작.
+ * Bootstrap an agent: auto-register to the registry (if provided), subscribe
+ * to every topic in `card.subscribes`, and run each incoming message through
+ * the `createRuntime` factory → `AgentRunner` → topic publish result pipeline.
  */
 export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<RunningAgent> {
   const {
     card,
     contextLoader,
     transport,
+    registry,
     createRuntime,
     toAgentInput,
     resultTopicFor,
     buildResultPayload,
+    strictPublishLint = false,
   } = options;
   const logger = options.logger ?? NOOP_LOGGER;
 
   if (card.subscribes.length === 0) {
     logger.warn(`Agent ${card.name} has no subscribes`);
+  }
+
+  // Auto-register to the registry before taking any traffic. If the registry
+  // is a remote service and the call fails, we fail the whole bootstrap —
+  // we don't want an unregistered agent silently pulling messages.
+  if (registry) {
+    await registry.register(card);
+    logger.info(`Agent ${card.name} registered`, {
+      capabilities: card.capabilities,
+      subscribes: card.subscribes,
+      publishes: card.publishes,
+    });
   }
 
   // Per-instance in-flight tracking — each bootstrapAgent owns its own set,
@@ -108,6 +144,7 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
         toAgentInput,
         resultTopicFor,
         buildResultPayload,
+        strictPublishLint,
         logger,
       });
       inFlight.add(work);
@@ -129,8 +166,16 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
     card,
     async shutdown() {
       for (const sub of subscriptions) sub.unsubscribe();
-      // in-flight 작업 완료 대기 (best-effort)
+      // Wait for in-flight work (best-effort).
       await Promise.allSettled(Array.from(inFlight));
+      // Unregister from the registry so stale cards don't stick around.
+      if (registry) {
+        try {
+          await registry.unregister(card.name);
+        } catch (err) {
+          logger.warn(`Failed to unregister ${card.name}`, { err: String(err) });
+        }
+      }
       logger.info(`Agent ${card.name} shutdown`);
     },
   };
@@ -140,11 +185,12 @@ async function handleMessage(args: {
   envelope: MessageEnvelope;
   card: AgentCard;
   contextLoader: ContextLoader;
-  transport: Transport;
+  transport: EventTransport;
   createRuntime: AgentBootstrapOptions['createRuntime'];
   toAgentInput: AgentBootstrapOptions['toAgentInput'];
   resultTopicFor?: AgentBootstrapOptions['resultTopicFor'];
   buildResultPayload?: AgentBootstrapOptions['buildResultPayload'];
+  strictPublishLint: boolean;
   logger: AgentLogger;
 }): Promise<void> {
   const {
@@ -154,6 +200,7 @@ async function handleMessage(args: {
     transport,
     createRuntime,
     toAgentInput,
+    strictPublishLint,
     logger,
   } = args;
 
@@ -173,6 +220,19 @@ async function handleMessage(args: {
     const resultTopic = args.resultTopicFor
       ? args.resultTopicFor(envelope)
       : (card.publishes[0] ?? `${envelope.topic}.completed`);
+
+    // Publishes lint: the chosen result topic MUST match one of the card's
+    // declared publishes patterns. Catches drift between the AgentCard and
+    // actual behavior (e.g. an agent that silently started publishing to a
+    // new topic without updating its card). Wildcards in card.publishes
+    // (`*`, `#`) are honored.
+    enforcePublishesLint({
+      resultTopic,
+      cardPublishes: card.publishes,
+      cardName: card.name,
+      strict: strictPublishLint,
+      logger,
+    });
 
     const payload = args.buildResultPayload
       ? args.buildResultPayload(events)
@@ -218,6 +278,41 @@ async function handleMessage(args: {
       },
     });
   }
+}
+
+/**
+ * Enforce that `resultTopic` matches one of `cardPublishes` (wildcards honored).
+ * In strict mode, a mismatch throws. In default mode, it logs a warning —
+ * some deployments legitimately use dynamic routing the static card cannot
+ * express.
+ *
+ * The `<incoming>.failed` error topic is always exempt: failure topics are
+ * derived from the inbound topic, not from card.publishes, and requiring
+ * operators to pre-declare every possible failure topic is unreasonable.
+ */
+function enforcePublishesLint(args: {
+  resultTopic: string;
+  cardPublishes: readonly TopicString[];
+  cardName: string;
+  strict: boolean;
+  logger: AgentLogger;
+}): void {
+  // Exempt failure topics
+  if (args.resultTopic.endsWith('.failed')) return;
+  // Exempt if card declares no publishes at all (permissive mode)
+  if (args.cardPublishes.length === 0) return;
+
+  const matches = args.cardPublishes.some(pattern =>
+    matchTopic(pattern, args.resultTopic as TopicString),
+  );
+  if (matches) return;
+
+  const msg =
+    `Agent "${args.cardName}" published to "${args.resultTopic}" which is not ` +
+    `in card.publishes (${args.cardPublishes.join(', ') || '[]'}). ` +
+    `Add it to the card or use resultTopicFor to route dynamically.`;
+  if (args.strict) throw new Error(msg);
+  args.logger.warn(msg);
 }
 
 function defaultResultPayload(events: AgentEvent[]): unknown {

@@ -1,20 +1,30 @@
 /**
- * LocalTransport — 인메모리 EventEmitter 기반 transport.
+ * LocalTransport — in-process EventEmitter-backed transport.
  *
- * 개발/테스트용. 단일 프로세스 내 에이전트 간 통신.
- * topic 패턴 매칭 (* 단일 세그먼트, # 나머지 전부) 지원.
+ * DELIVERY CONTRACT: at-most-once, non-durable. This is the weakest
+ * guarantee — messages are dispatched via setImmediate to current
+ * subscribers and then forgotten. If no subscriber is listening, the
+ * message is lost. If a subscriber's handler throws, there is no retry.
+ * This transport implements `EventTransport` explicitly and does NOT
+ * implement `DurableTransport`.
  *
- * 같은 인터페이스를 만족하는 RedisTransport로 프로덕션 교체 가능.
+ * Use for: development, unit tests, single-process demos.
+ * Do NOT use for: workflow engine steps, billable work, anything that
+ * must be processed exactly once. For those, use a DurableTransport
+ * implementation (RedisStreamsTransport, planned).
+ *
+ * Topic pattern matching: `*` matches a single segment, `#` matches the rest.
  */
 
 import { EventEmitter } from 'node:events';
 import type {
-  Transport,
+  EventTransport,
   Subscription,
   RequestOptions,
   MessageEnvelope,
   TopicString,
   MessageMetadata,
+  TransportDescription,
 } from '@nexora/contracts';
 import { matchTopic, messageId, traceId, spanId, conversationId } from '@nexora/contracts';
 
@@ -33,7 +43,7 @@ export interface LocalTransportOptions {
   defaultRequestTimeoutMs?: number;
 }
 
-export class LocalTransport implements Transport {
+export class LocalTransport implements EventTransport {
   private readonly emitter = new EventEmitter();
   private readonly subscribers = new Map<number, SubscriberRecord>();
   private nextId = 0;
@@ -51,6 +61,16 @@ export class LocalTransport implements Transport {
     this.emitter.on(PUBLISH_EVENT, (envelope: MessageEnvelope) => {
       void this.dispatch(envelope);
     });
+  }
+
+  describe(): TransportDescription {
+    return {
+      kind: 'local',
+      deliveryGuarantee: 'at-most-once',
+      durable: false,
+      supportsConsumerGroups: false,
+      notes: 'In-process EventEmitter. Dev/test only. Messages are dropped if no subscriber is listening.',
+    };
   }
 
   async publish(envelope: MessageEnvelope): Promise<void> {

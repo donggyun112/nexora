@@ -9,10 +9,12 @@ import { bootstrapAgent } from '../bootstrap.js';
 import { AgentRunner } from '../runner.js';
 import { CoreToolExecutor } from '../tool-executor.js';
 import type {
-  Transport,
+  EventTransport,
   Subscription,
   RequestOptions,
   TopicString,
+  TransportDescription,
+  AgentRegistry,
   MessageEnvelope,
   AgentCard,
   ContextLoader,
@@ -26,10 +28,20 @@ import type {
 import { matchTopic, messageId } from '@nexora/contracts';
 import { MockLLMProvider } from './mock-llm.js';
 
-class InlineTransport implements Transport {
+class InlineTransport implements EventTransport {
   private readonly subs = new Map<number, { pattern: string; handler: (e: MessageEnvelope) => Promise<void> }>();
   private nextId = 0;
   public readonly published: MessageEnvelope[] = [];
+
+  describe(): TransportDescription {
+    return {
+      kind: 'inline-test',
+      deliveryGuarantee: 'at-most-once',
+      durable: false,
+      supportsConsumerGroups: false,
+      notes: 'Synchronous in-test transport, publish runs handlers inline',
+    };
+  }
 
   async publish(envelope: MessageEnvelope): Promise<void> {
     this.published.push(envelope);
@@ -51,6 +63,26 @@ class InlineTransport implements Transport {
 
   async close(): Promise<void> {
     this.subs.clear();
+  }
+}
+
+class FakeRegistry implements AgentRegistry {
+  public readonly registered: AgentCard[] = [];
+  public readonly unregistered: string[] = [];
+
+  async register(card: AgentCard): Promise<void> { this.registered.push(card); }
+  async unregister(name: string): Promise<void> { this.unregistered.push(name); }
+  async get(name: string): Promise<AgentCard | null> {
+    return this.registered.find(c => c.name === name) ?? null;
+  }
+  async list(): Promise<AgentCard[]> { return [...this.registered]; }
+  async findByCapability(cap: string): Promise<AgentCard[]> {
+    return this.registered.filter(c => c.capabilities.includes(cap));
+  }
+  async findBySubscription(topic: string): Promise<AgentCard[]> {
+    return this.registered.filter(c =>
+      c.subscribes.some(p => matchTopic(p, topic as TopicString)),
+    );
   }
 }
 
@@ -455,6 +487,230 @@ describe('bootstrapAgent', () => {
     expect(echoCall).toEqual({ name: 'echo', isError: false });
     expect(catCall).toEqual({ name: 'cat', isError: true });
 
+    await running.shutdown();
+  });
+
+  // P1-1a: bootstrap auto-registers to an optional AgentRegistry and
+  // unregisters on shutdown, so other components (workflow engine, gateway)
+  // can look the agent up by name without manual wiring.
+  it('auto-registers with AgentRegistry on bootstrap and unregisters on shutdown', async () => {
+    const transport = new InlineTransport();
+    const registry = new FakeRegistry();
+    const card: AgentCard = {
+      name: 'registered-agent',
+      version: '0.1.0',
+      description: 'autoreg test',
+      capabilities: ['x'],
+      subscribes: ['reg.requested'],
+      publishes: ['reg.completed'],
+      tools: [],
+      architecture: 'echo',
+    };
+
+    const llm = new MockLLMProvider([{ text: 'ok' }]);
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: inlineLoader,
+      transport,
+      registry,
+      createRuntime: ({ context }) => new AgentRunner({
+        architecture: echoArch,
+        llm,
+        tools: new CoreToolExecutor({
+          tools: [],
+          context: {
+            tenantId: context.tenantId,
+            workdir: context.runtime.workdir,
+            secrets: { get: async () => undefined },
+            logger: { info: () => {}, warn: () => {}, error: () => {} },
+          },
+        }),
+        idleTimeoutMs: context.limits.maxExecutionMs,
+      }),
+      toAgentInput: () => ({ prompt: 'hi' }),
+    });
+
+    expect(registry.registered).toHaveLength(1);
+    expect(registry.registered[0].name).toBe('registered-agent');
+
+    await running.shutdown();
+
+    expect(registry.unregistered).toEqual(['registered-agent']);
+  });
+
+  // P1-1b: publishes lint — if the agent would publish to a topic NOT in
+  // card.publishes, bootstrap logs a warning (default) or throws (strict).
+  // Failure topics (`<topic>.failed`) are always exempt.
+  it('warns when result topic does not match card.publishes', async () => {
+    const transport = new InlineTransport();
+    const warnings: string[] = [];
+    const card: AgentCard = {
+      name: 'drift-agent',
+      version: '0.1.0',
+      description: 'publishes drift',
+      capabilities: [],
+      subscribes: ['drift.requested'],
+      publishes: ['drift.completed'], // declared
+      tools: [],
+      architecture: 'echo',
+    };
+
+    const llm = new MockLLMProvider([{ text: 'ok' }]);
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: inlineLoader,
+      transport,
+      createRuntime: ({ context }) => new AgentRunner({
+        architecture: echoArch,
+        llm,
+        tools: new CoreToolExecutor({
+          tools: [],
+          context: {
+            tenantId: context.tenantId,
+            workdir: context.runtime.workdir,
+            secrets: { get: async () => undefined },
+            logger: { info: () => {}, warn: () => {}, error: () => {} },
+          },
+        }),
+        idleTimeoutMs: context.limits.maxExecutionMs,
+      }),
+      toAgentInput: () => ({ prompt: 'hi' }),
+      // Route to a topic that is NOT in card.publishes
+      resultTopicFor: () => 'drift.unexpected',
+      logger: {
+        info: () => {},
+        warn: (msg: string) => { warnings.push(msg); },
+        error: () => {},
+        debug: () => {},
+      },
+    });
+
+    await transport.publish({
+      id: messageId(),
+      topic: 'drift.requested',
+      type: 'request',
+      payload: {},
+      metadata: {
+        traceId: 't', spanId: 's', conversationId: 'c',
+        tenantId: 'tenant-x', timestamp: Date.now(),
+      },
+    });
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(warnings.some(w => w.includes('drift.unexpected'))).toBe(true);
+    expect(warnings.some(w => w.includes('drift.completed'))).toBe(true);
+    await running.shutdown();
+  });
+
+  it('publishes lint strict mode throws instead of warning', async () => {
+    const transport = new InlineTransport();
+    const card: AgentCard = {
+      name: 'strict-agent',
+      version: '0.1.0',
+      description: 'strict drift',
+      capabilities: [],
+      subscribes: ['strict.requested'],
+      publishes: ['strict.completed'],
+      tools: [],
+      architecture: 'echo',
+    };
+
+    const llm = new MockLLMProvider([{ text: 'ok' }]);
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: inlineLoader,
+      transport,
+      createRuntime: ({ context }) => new AgentRunner({
+        architecture: echoArch,
+        llm,
+        tools: new CoreToolExecutor({
+          tools: [],
+          context: {
+            tenantId: context.tenantId,
+            workdir: context.runtime.workdir,
+            secrets: { get: async () => undefined },
+            logger: { info: () => {}, warn: () => {}, error: () => {} },
+          },
+        }),
+        idleTimeoutMs: context.limits.maxExecutionMs,
+      }),
+      toAgentInput: () => ({ prompt: 'hi' }),
+      resultTopicFor: () => 'strict.wrong',
+      strictPublishLint: true,
+    });
+
+    await transport.publish({
+      id: messageId(),
+      topic: 'strict.requested',
+      type: 'request',
+      payload: {},
+      metadata: {
+        traceId: 't', spanId: 's', conversationId: 'c',
+        tenantId: 'tenant-x', timestamp: Date.now(),
+      },
+    });
+    await new Promise(r => setTimeout(r, 20));
+
+    // In strict mode, the lint throws inside handleMessage. That error is
+    // caught by the outer try/catch and routed to the `.failed` topic.
+    const failed = transport.published.find(p => p.topic === 'strict.requested.failed');
+    expect(failed).toBeDefined();
+    expect((failed?.payload as { error: string }).error).toMatch(/strict\.wrong/);
+    await running.shutdown();
+  });
+
+  it('does not warn on failure topics even if not declared in card.publishes', async () => {
+    const transport = new InlineTransport();
+    const warnings: string[] = [];
+    const card: AgentCard = {
+      name: 'failing-strict-agent',
+      version: '0.1.0',
+      description: '',
+      capabilities: [],
+      subscribes: ['fail-strict.requested'],
+      publishes: ['fail-strict.completed'],
+      tools: [],
+      architecture: 'echo',
+    };
+
+    const broken: ContextLoader = {
+      async load(): Promise<AgentContext> { throw new Error('boom'); },
+    };
+
+    const llm = new MockLLMProvider([]);
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: broken,
+      transport,
+      createRuntime: () => new AgentRunner({
+        architecture: echoArch, llm,
+        tools: new CoreToolExecutor({ tools: [], context: toolContext }),
+      }),
+      toAgentInput: () => ({ prompt: 'x' }),
+      logger: {
+        info: () => {},
+        warn: (msg: string) => { warnings.push(msg); },
+        error: () => {},
+        debug: () => {},
+      },
+    });
+
+    await transport.publish({
+      id: messageId(),
+      topic: 'fail-strict.requested',
+      type: 'request',
+      payload: {},
+      metadata: {
+        traceId: 't', spanId: 's', conversationId: 'c',
+        tenantId: 'x', timestamp: Date.now(),
+      },
+    });
+    await new Promise(r => setTimeout(r, 20));
+
+    // The failed topic is `fail-strict.requested.failed` which is NOT in
+    // card.publishes — but the lint exempts .failed topics.
+    const publishWarning = warnings.find(w => w.includes('fail-strict.requested.failed'));
+    expect(publishWarning).toBeUndefined();
     await running.shutdown();
   });
 });

@@ -7,11 +7,12 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
-  Transport,
+  EventTransport,
   MessageEnvelope,
   Subscription,
   RequestOptions,
   TopicString,
+  TransportDescription,
 } from '@nexora/contracts';
 import { spanId } from '@nexora/contracts';
 
@@ -39,8 +40,18 @@ export function withTrace<T>(ctx: TraceContext, fn: () => T): T {
  * Transport를 wrap — publish/request에 자동으로 trace 정보 주입,
  * subscribe handler 실행 시 trace 컨텍스트 활성화.
  */
-export class TracingTransport implements Transport {
-  constructor(private readonly inner: Transport) {}
+export class TracingTransport implements EventTransport {
+  constructor(private readonly inner: EventTransport) {}
+
+  describe(): TransportDescription {
+    // Trace wrapping does not change delivery semantics — just annotate
+    // the inner transport's description.
+    const inner = this.inner.describe();
+    return {
+      ...inner,
+      notes: (inner.notes ? `${inner.notes}; ` : '') + 'wrapped with TracingTransport',
+    };
+  }
 
   async publish(envelope: MessageEnvelope): Promise<void> {
     const trace = currentTrace();

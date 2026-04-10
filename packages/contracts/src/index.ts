@@ -102,6 +102,14 @@ export type {
 
 export type {
   Transport,
+  EventTransport,
+  DurableTransport,
+  DeliveryControl,
+  DeliveryGuarantee,
+  TransportDescription,
   Subscription,
   RequestOptions,
 } from './transport.js';
+export { assertDurable } from './transport.js';
+
+export type { AgentRegistry } from './registry.js';

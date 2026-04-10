@@ -327,4 +327,134 @@ describe('bootstrapAgent', () => {
 
     await running.shutdown();
   });
+
+  // Codex round-3 fix #6: the scaffold applies `context.tools` as a tool
+  // allowlist inside createRuntime, but the previous tests never exercised
+  // that path end-to-end. This test mirrors the scaffold's filter logic and
+  // verifies that a tool NOT in the tenant allowlist is truly unreachable
+  // via services.tools.execute().
+  it('tenant tool allowlist is actually applied — filtered tools are unreachable', async () => {
+    const transport = new InlineTransport();
+    const card: AgentCard = {
+      name: 'filter-agent',
+      version: '0.1.0',
+      description: 'Filter',
+      capabilities: [],
+      subscribes: ['filter.requested'],
+      publishes: ['filter.completed'],
+      tools: ['echo', 'cat'],
+      architecture: 'filter',
+    };
+
+    // Two tools — the tenant only allowlists 'echo', 'cat' must be rejected.
+    const echoTool = {
+      name: 'echo',
+      description: 'echo',
+      parameters: { type: 'object', properties: {} },
+      execute: async (): Promise<{ type: 'text'; text: string }> => ({ type: 'text', text: 'echo-ran' }),
+    };
+    const catTool = {
+      name: 'cat',
+      description: 'cat',
+      parameters: { type: 'object', properties: {} },
+      execute: async (): Promise<{ type: 'text'; text: string }> => ({ type: 'text', text: 'cat-should-not-run' }),
+    };
+
+    // Tenant-aware context loader: only 'echo' is allowed for tenant-filter.
+    const filteringLoader: ContextLoader = {
+      async load(tenantId, agentName): Promise<AgentContext> {
+        return {
+          tenantId,
+          systemPrompt: `${agentName}@${tenantId}`,
+          persona: 'filter persona',
+          tools: ['echo'], // cat is NOT allowed
+          limits: {
+            maxExecutionMs: 60_000,
+            maxTokens: 1000,
+            model: 'mock',
+            thinkingLevel: 'off',
+            contextWindow: 200_000,
+          },
+          runtime: {
+            today: '2026-04-11',
+            weekday: 'Saturday',
+            thisWeek: '2026-04-06 ~ 2026-04-12',
+            workdir: '/tmp',
+          },
+        };
+      },
+    };
+
+    // Architecture that tries to call BOTH tools — we want to see cat
+    // rejected while echo succeeds.
+    const calls: { name: string; isError: boolean }[] = [];
+    const dualCallArch: AgentArchitecture = {
+      name: 'dual-call',
+      async *loop(services: RuntimeServices, _input: AgentInput): AsyncGenerator<AgentEvent> {
+        for (const name of ['echo', 'cat']) {
+          const result = await services.tools.execute(name, `call-${name}`, {});
+          const isError = (result as { type?: string }).type === 'error';
+          calls.push({ name, isError });
+          yield { type: 'tool_call', id: `call-${name}`, name, input: {} };
+          yield { type: 'tool_result', id: `call-${name}`, name, result, isError };
+        }
+        yield { type: 'done', content: 'tested both', toolCalls: [] };
+      },
+    };
+
+    const running = await bootstrapAgent({
+      card,
+      contextLoader: filteringLoader,
+      transport,
+      createRuntime: ({ context }) => {
+        // Mirror the scaffold's filter logic exactly.
+        const allowed = context.tools.length > 0 ? new Set(context.tools) : null;
+        const allTools = [echoTool, catTool];
+        const filtered = allowed
+          ? allTools.filter(t => allowed.has(t.name))
+          : allTools;
+        return new AgentRunner({
+          architecture: dualCallArch,
+          llm: new MockLLMProvider([]),
+          tools: new CoreToolExecutor({
+            tools: filtered,
+            context: {
+              tenantId: context.tenantId,
+              workdir: context.runtime.workdir,
+              secrets: { get: async () => undefined },
+              logger: { info: () => {}, warn: () => {}, error: () => {} },
+            },
+          }),
+          idleTimeoutMs: context.limits.maxExecutionMs,
+        });
+      },
+      toAgentInput: () => ({ prompt: 'test' }),
+    });
+
+    await transport.publish({
+      id: messageId(),
+      topic: 'filter.requested',
+      type: 'request',
+      payload: {},
+      metadata: {
+        traceId: 't',
+        spanId: 's',
+        conversationId: 'c',
+        tenantId: 'tenant-filter',
+        timestamp: Date.now(),
+      },
+    });
+
+    await new Promise(r => setTimeout(r, 30));
+
+    // Assertion: echo must have run successfully, cat must have been rejected
+    // because it was not in context.tools.
+    expect(calls).toHaveLength(2);
+    const echoCall = calls.find(c => c.name === 'echo');
+    const catCall = calls.find(c => c.name === 'cat');
+    expect(echoCall).toEqual({ name: 'echo', isError: false });
+    expect(catCall).toEqual({ name: 'cat', isError: true });
+
+    await running.shutdown();
+  });
 });

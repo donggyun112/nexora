@@ -123,11 +123,34 @@ export async function openForRead(rawPath: string, root: string): Promise<fsp.Fi
 }
 
 /**
- * Open (create + truncate) a file for write with O_NOFOLLOW. Refuses to
- * overwrite an existing symlink — that was the original symlink-write attack.
+ * Open (create + truncate) a file for write with O_NOFOLLOW.
+ *
+ * Also handles the "mkdir -p parent directory" case SAFELY. The previous
+ * version had callers run `fsp.mkdir(parent, { recursive: true })` on the
+ * RAW user-supplied path BEFORE any workspace check, which let a malicious
+ * path like `../outside/file` create directories outside the workspace even
+ * though the subsequent open correctly failed.
+ *
+ * The fix: we canonicalize first (resolveAgainstRoot), then mkdir ONLY the
+ * already-validated parent, then re-verify via realpath to catch a concurrent
+ * symlink swap on the new directory, and finally open with O_NOFOLLOW.
  */
 export async function openForWrite(rawPath: string, root: string): Promise<fsp.FileHandle> {
-  const { finalPath } = await resolveAgainstRoot(rawPath, root);
+  const { canonicalRoot, finalPath } = await resolveAgainstRoot(rawPath, root);
+
+  // Ensure the parent directory exists INSIDE the validated boundary.
+  // resolveAgainstRoot has already verified that parentReal is within canonicalRoot.
+  const parentDir = path.dirname(finalPath);
+  if (parentDir !== canonicalRoot) {
+    await fsp.mkdir(parentDir, { recursive: true });
+
+    // Re-verify after mkdir: between validation and mkdir, an attacker could
+    // have swapped an intermediate directory to a symlink. realpath catches that.
+    const parentReal = await fsp.realpath(parentDir);
+    if (!isWithin(parentReal, canonicalRoot)) {
+      throw new PathOutsideWorkspaceError(rawPath, canonicalRoot);
+    }
+  }
 
   // Pre-check: if the target already exists as a symlink, refuse before O_CREAT
   // would even consider following it.
@@ -179,6 +202,17 @@ export async function resolveDirForListing(rawPath: string, root: string): Promi
     throw new PathOutsideWorkspaceError(rawPath, canonicalRoot);
   }
   return real;
+}
+
+/**
+ * Canonicalize a path under `root` without opening it.
+ * Used by tools that need the validated absolute path (e.g. `edit` does a
+ * temp-file + rename where both paths must be pre-validated).
+ * Throws PathOutsideWorkspaceError if it escapes root.
+ */
+export async function canonicalizePath(rawPath: string, root: string): Promise<string> {
+  const { finalPath } = await resolveAgainstRoot(rawPath, root);
+  return finalPath;
 }
 
 /**

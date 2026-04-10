@@ -4,10 +4,13 @@
  * Workspace boundary enforced via fd-based open with O_NOFOLLOW (see safe-path.ts).
  * The kernel refuses to follow a symlink at the final component, eliminating the
  * "swap target between resolve and write" attack.
+ *
+ * mkdir-p for parent directories now happens INSIDE openForWrite, AFTER path
+ * canonicalization, so a malicious `../outside/file` cannot create directories
+ * on the host before the workspace check runs.
  */
 
-import fsp from 'node:fs/promises';
-import path from 'node:path';
+import type fsp from 'node:fs/promises';
 import type { ToolDefinition, ToolResult } from '@nexora/contracts';
 import { textResult, errorResult } from '@nexora/contracts';
 import {
@@ -37,22 +40,9 @@ export function createWriteTool(): ToolDefinition {
       if (!rawPath) return errorResult('path is required');
       if (typeof params.content !== 'string') return errorResult('content is required');
 
-      // mkdir -p the parent directory.
-      // We deliberately do NOT canonicalize the parent here — openForWrite will
-      // re-validate after creation, and the actual safety guarantee comes from
-      // O_NOFOLLOW on the final open.
-      const parent = path.dirname(path.isAbsolute(rawPath)
-        ? rawPath
-        : path.join(ctx.workdir, rawPath));
-      try {
-        await fsp.mkdir(parent, { recursive: true });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return errorResult(`Cannot create parent dir: ${msg}`);
-      }
-
       let handle: fsp.FileHandle;
       try {
+        // openForWrite does the parent mkdir AFTER canonicalization — safe.
         handle = await openForWrite(rawPath, ctx.workdir);
       } catch (err) {
         if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);

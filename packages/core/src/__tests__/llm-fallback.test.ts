@@ -101,10 +101,12 @@ describe('FallbackLLMProvider', () => {
     expect(secondary.callLog).toHaveLength(0);
   });
 
-  it('does NOT fall back when caller signal is already aborted', async () => {
+  // Codex round-3 fix #4b: pre-aborted signal must NOT invoke ANY provider.
+  it('pre-aborted signal: does not call primary at all', async () => {
+    let primaryCalled = false;
     const primary = {
-      stream: async function* () {},
-      complete: async () => { throw new Error('primary raised'); },
+      stream: async function* () { primaryCalled = true; },
+      complete: async () => { primaryCalled = true; return { content: 'x', model: 'm', stopReason: 'end_turn' }; },
     } as unknown as ConstructorParameters<typeof FallbackLLMProvider>[0]['providers'][0]['provider'];
     const secondary = new MockLLMProvider([{ text: 'should never be called' }]);
 
@@ -120,7 +122,35 @@ describe('FallbackLLMProvider', () => {
 
     await expect(
       fallback.complete([{ role: 'user', content: 'hi' }], { signal: ac.signal }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/abort/i);
+    // The critical assertion — primary must NOT have been called at all.
+    expect(primaryCalled).toBe(false);
+    expect(secondary.callLog).toHaveLength(0);
+  });
+
+  // Codex round-3 fix #4b: aborted empty-response must throw, not return success.
+  it('aborted empty response throws instead of returning silent empty', async () => {
+    // Primary returns empty content, but signal gets aborted mid-call.
+    const ac = new AbortController();
+    const primary = {
+      stream: async function* () {},
+      complete: async () => {
+        ac.abort(); // abort happens during the call
+        return { content: '', model: 'm', stopReason: 'end_turn' };
+      },
+    } as unknown as ConstructorParameters<typeof FallbackLLMProvider>[0]['providers'][0]['provider'];
+    const secondary = new MockLLMProvider([{ text: 'should not be called' }]);
+
+    const fallback = new FallbackLLMProvider({
+      providers: [
+        { name: 'primary', provider: primary },
+        { name: 'secondary', provider: secondary },
+      ],
+    });
+
+    await expect(
+      fallback.complete([{ role: 'user', content: 'hi' }], { signal: ac.signal }),
+    ).rejects.toThrow(/abort/i);
     expect(secondary.callLog).toHaveLength(0);
   });
 });

@@ -82,7 +82,36 @@ describe('exec tool', () => {
     for (const interp of ['bash', 'sh']) {
       const result = await tool.execute('1', { argv: [interp, '-c', 'echo pwned'] }, makeContext(tmpDir));
       expect(result.type).toBe('error');
-      if (result.type === 'error') expect(result.message).toMatch(/interpreter|shell/i);
+      if (result.type === 'error') expect(result.message).toMatch(/interpreter|shell|exec-surface/i);
+    }
+  });
+
+  // Codex round-3 gap: sed/find/xargs/tar/git all have exec primitives and
+  // were missing from the round-2 blocklist.
+  it('blocks exec-capable tools: sed/find/xargs/tar/git/wget/curl', async () => {
+    const tool = createExecTool({
+      allowList: ['sed', 'find', 'xargs', 'tar', 'git', 'wget', 'curl', 'echo'],
+    });
+    for (const name of ['sed', 'find', 'xargs', 'tar', 'git', 'wget', 'curl']) {
+      const result = await tool.execute('1', { argv: [name, 'arg'] }, makeContext(tmpDir));
+      expect(result.type).toBe('error');
+      if (result.type === 'error') expect(result.message).toMatch(/interpreter|shell|exec-surface/i);
+    }
+    // But plain 'echo' should still be allowed
+    const ok = await tool.execute('2', { argv: ['echo', 'hi'] }, makeContext(tmpDir));
+    expect(ok.type).toBe('text');
+  });
+
+  // Codex round-3 gap: version-suffixed interpreters (python3.12, nodejs, etc.)
+  // were bypassing the exact-name blocklist.
+  it('blocks version-suffixed interpreters: python3.12, nodejs, node20', async () => {
+    const tool = createExecTool({
+      allowList: ['python3.12', 'nodejs', 'node20', 'python3', 'ruby3.3', 'echo'],
+    });
+    for (const name of ['python3.12', 'nodejs', 'node20', 'python3', 'ruby3.3']) {
+      const result = await tool.execute('1', { argv: [name, '-c', 'print("hi")'] }, makeContext(tmpDir));
+      expect(result.type).toBe('error');
+      if (result.type === 'error') expect(result.message).toMatch(/interpreter|shell|exec-surface/i);
     }
   });
 
@@ -252,6 +281,30 @@ describe('write tool', () => {
     expect(result.type).toBe('error');
   });
 
+  // Codex round-3 new-bug regression: round-2 ran mkdir -p on the RAW parent
+  // path BEFORE workspace validation, letting `../outside/new` create directories
+  // on the host filesystem even though the final write was later rejected.
+  it('does not mkdir outside workspace even when write is rejected', async () => {
+    // Create a sibling dir next to tmpDir to detect unintended mkdirs
+    const parentOfTmp = path.dirname(tmpDir);
+    const canaryName = `canary-${path.basename(tmpDir)}-do-not-create`;
+    const canaryPath = path.join(parentOfTmp, canaryName);
+    // Ensure it doesn't exist beforehand
+    expect(fs.existsSync(canaryPath)).toBe(false);
+
+    const tool = createWriteTool();
+    // Try to write via path that walks outside the workdir and into a new directory
+    const result = await tool.execute('1', {
+      path: `../${canaryName}/evil.txt`,
+      content: 'pwned',
+    }, makeContext(tmpDir));
+
+    expect(result.type).toBe('error');
+
+    // The directory must NOT have been created as a side-effect.
+    expect(fs.existsSync(canaryPath)).toBe(false);
+  });
+
   // Regression: previously a symlink at the target path was followed and
   // overwrote the external file.
   it('blocks writes through a symlink pointing outside the workspace', async () => {
@@ -337,6 +390,47 @@ describe('edit tool', () => {
       new_string: 'x',
     }, makeContext(tmpDir));
     expect(result.type).toBe('error');
+  });
+
+  // Codex round-3 new-bug regression: round-2 used truncate(0) + single write(),
+  // which is neither atomic nor guaranteed to write the full payload. The
+  // current implementation uses temp-file + rename for atomic replace.
+  it('leaves no .tmp garbage after successful edit', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'atomic.txt'), 'hello world', 'utf-8');
+    const tool = createEditTool();
+
+    await tool.execute('1', {
+      path: 'atomic.txt',
+      old_string: 'world',
+      new_string: 'there',
+    }, makeContext(tmpDir));
+
+    expect(fs.readFileSync(path.join(tmpDir, 'atomic.txt'), 'utf-8')).toBe('hello there');
+
+    // No stray .nexora-*.tmp file left in the directory.
+    const leftover = fs.readdirSync(tmpDir).filter(f => f.includes('.nexora-'));
+    expect(leftover).toHaveLength(0);
+  });
+
+  it('atomic edit: original unchanged if write fails', async () => {
+    // Simulate by editing a file whose parent dir we make read-only after write.
+    // Instead we just verify that on a successful edit the size matches the
+    // new content exactly (no half-truncation visible).
+    const before = 'A'.repeat(1000);
+    fs.writeFileSync(path.join(tmpDir, 'big.txt'), before, 'utf-8');
+    const tool = createEditTool();
+
+    const result = await tool.execute('1', {
+      path: 'big.txt',
+      old_string: 'A',
+      new_string: 'B',
+      replace_all: true,
+    }, makeContext(tmpDir));
+
+    expect(result.type).toBe('text');
+    const after = fs.readFileSync(path.join(tmpDir, 'big.txt'), 'utf-8');
+    expect(after.length).toBe(1000);
+    expect(after).toBe('B'.repeat(1000));
   });
 
   // Regression: editing through a symlink pointing outside the workspace

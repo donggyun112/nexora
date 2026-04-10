@@ -60,22 +60,66 @@ export interface ExecToolOptions {
 const ALWAYS_PASS = ['PATH', 'HOME', 'LANG', 'LC_ALL'];
 
 /**
- * Programs that can read and execute arbitrary code from arguments. Allowlisting
- * any of these is equivalent to allowlisting the entire shell — so we require
- * the operator to explicitly opt in via `allowShell: true`.
+ * Programs whose design includes "read code from arguments" or "execute other
+ * commands". Allowlisting any of these is equivalent to handing the LLM a shell —
+ * so we require the operator to explicitly opt in via `allowShell: true`.
  *
- * This list is conservative: better to false-positive on a few benign cases
- * (and have the operator turn allowShell on) than to grant a hidden RCE.
+ * IMPORTANT: this is a BEST-EFFORT list, NOT a complete sandbox. Many
+ * allowlisted tools (e.g. git, awk, find) also have RCE primitives via config
+ * options, hooks, or -exec flags. The only reliable boundary is:
+ *   1. A curated allowList of programs your operator has audited
+ *   2. An OS-level sandbox (container, nsjail, bubblewrap, seatbelt)
+ * This list catches the obvious footguns but should not be mistaken for
+ * isolation. See README's security section.
  */
 const SHELL_INTERPRETERS = new Set<string>([
   // POSIX shells
   'bash', 'sh', 'zsh', 'dash', 'ksh', 'tcsh', 'csh', 'fish', 'ash',
+  'busybox', // contains many applets including sh
   // Scripting interpreters that read code from -c / -e
-  'python', 'python2', 'python3', 'ruby', 'perl', 'node', 'deno', 'bun', 'php',
-  'lua', 'awk', 'gawk',
-  // Container / remote exec
-  'env', 'sudo', 'doas', 'su', 'ssh', 'docker', 'kubectl', 'nsenter',
+  'python', 'ruby', 'perl', 'node', 'nodejs', 'deno', 'bun', 'php',
+  'lua', 'awk', 'gawk', 'mawk', 'nawk',
+  // Text-processing tools with exec primitives
+  'sed',   // GNU sed: s/.../.../e
+  'find',  // -exec / -execdir
+  'xargs', // spawns arbitrary commands
+  // Archive tools with exec primitives
+  'tar',   // --checkpoint-action=exec
+  'cpio',  // -E / filter
+  'zip', 'unzip', // can run commands via some variants
+  // VCS tools with exec primitives (editor, pager, hooks, ssh config, etc.)
+  'git', 'hg', 'svn',
+  // Network egress / remote exec
+  'wget', 'curl', 'scp', 'rsync', 'ssh', 'sshpass', 'telnet', 'nc', 'ncat', 'socat',
+  // Container / privilege escalation
+  'env', 'sudo', 'doas', 'su', 'docker', 'podman', 'kubectl', 'nsenter',
+  'chroot', 'unshare', 'setsid',
 ]);
+
+/**
+ * Normalize a program basename so that versioned variants like `python3.12`,
+ * `python3`, and `nodejs` map back to their canonical name for blocklist lookup.
+ * Without this, `argv: ['python3.12', '-c', '...']` would bypass the filter.
+ */
+function normalizeInterpreterName(name: string): string {
+  // python / python2 / python3 / python3.12 → python
+  // ruby3.3 → ruby, perl5.38 → perl, node20 → node, lua5.4 → lua, php8.2 → php
+  const versionedMatch = name.match(/^(python|ruby|perl|node|lua|php|tcl|julia|r)\d+(\.\d+)?$/);
+  if (versionedMatch) return versionedMatch[1];
+  // nodejs → node (Debian name)
+  if (name === 'nodejs') return 'node';
+  // python-3, python-3.12 (less common but seen)
+  const dashedMatch = name.match(/^(python|ruby|perl|node|lua|php)-\d+(\.\d+)?$/);
+  if (dashedMatch) return dashedMatch[1];
+  return name;
+}
+
+/** Is this a known execution/egress surface? */
+function isInterpreter(program: string): boolean {
+  if (SHELL_INTERPRETERS.has(program)) return true;
+  const canonical = normalizeInterpreterName(program);
+  return SHELL_INTERPRETERS.has(canonical);
+}
 
 /**
  * Validate the bare program name. Rejects path traversal, absolute paths,
@@ -174,13 +218,16 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
           );
         }
 
-        // Block known shell interpreters in argv mode unless the operator has
-        // explicitly opted into allowShell. Otherwise an attacker who got
-        // `bash` allowlisted (e.g. for builtins) can pivot to `bash -c '...'`.
-        if (!allowShell && SHELL_INTERPRETERS.has(program)) {
+        // Block known shell interpreters / execution surfaces in argv mode unless
+        // the operator has explicitly opted into allowShell. This is a best-effort
+        // footgun filter — it normalizes version suffixes (python3.12 → python)
+        // so the obvious bypasses are covered, but it is NOT a sandbox (git, sed,
+        // find and friends still have RCE primitives via hooks/-exec/etc.).
+        if (!allowShell && isInterpreter(program)) {
           return errorResult(
-            `Executable "${program}" is a shell/interpreter and is blocked. ` +
-            'Either remove it from allowList or set allowShell: true on createExecTool().',
+            `Executable "${program}" is a shell/interpreter/exec-surface and is blocked. ` +
+            'Either remove it from allowList or set allowShell: true on createExecTool(). ' +
+            'Remember: many other CLIs have RCE primitives — prefer OS-level sandboxing for real isolation.',
           );
         }
       } else if (typeof params.command === 'string' && params.command.trim().length > 0) {

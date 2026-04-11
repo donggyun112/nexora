@@ -1,5 +1,5 @@
 /**
- * 7개 builtin 도구.
+ * 8 builtin tools: file I/O + exec + knowledge + web search + handraise.
  */
 
 export { createExecTool } from './exec.js';
@@ -14,3 +14,11 @@ export { createKnowledgeTool } from './knowledge.js';
 
 export { createWebSearchTool } from './web-search.js';
 export type { SearchBackend, SearchResult } from './web-search.js';
+
+export { createHandraiseTool } from './handraise.js';
+export type {
+  HandraiseToolOptions,
+  HandraiseRecipient,
+  HandraiseRequestPayload,
+  HandraiseReplyPayload,
+} from './handraise.js';

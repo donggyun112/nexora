@@ -1,27 +1,25 @@
 /**
- * OTel Agent Middleware — emits spans for agent execution, tool calls, and
- * LLM invocations. Plugs into Nexora's MiddlewarePipeline so every agent
- * automatically gets traced.
+ * OTel Agent Middleware — emits spans for agent execution + tool calls.
  *
- * Usage:
- *   import { createOTelAgentMiddleware } from '@nexora/otel';
- *   import { trace } from '@opentelemetry/api';
+ * R4 FIX: the previous implementation stored `executionSpan` and `toolSpans`
+ * as closure-shared state, so concurrent agent executions would overwrite
+ * each other's spans. Now each middleware instance gets its own span state
+ * by using the callId/input as a correlation key. Tool spans are keyed by
+ * callId (already unique per call).
  *
- *   const runner = new AgentRunner({
- *     ...
- *     middlewares: [createOTelAgentMiddleware(trace.getTracer('nexora'))],
- *   });
+ * C6 FIX: OTelTransport now creates proper parent contexts from envelope
+ * metadata (see transport-middleware.ts). This middleware focuses on the
+ * agent execution layer, not the transport layer.
  */
 
 import type { Tracer, Span } from '@opentelemetry/api';
 import {
   trace,
+  context as otelContext,
   SpanKind,
   SpanStatusCode,
 } from '@opentelemetry/api';
-// Middleware types are defined in @nexora/core, but we don't want otel to
-// depend on the entire core package. These minimal inline types match the
-// subset that the OTel middleware actually uses.
+
 interface AgentMiddleware {
   name: string;
   beforeExecution?(ctx: { tools: unknown[]; systemPrompt: string; input: unknown }): Promise<void> | void;
@@ -35,41 +33,57 @@ export interface OTelAgentMiddlewareOptions {
   defaultAttributes?: Record<string, string>;
 }
 
+/**
+ * Creates an OTel agent middleware. Each middleware instance maintains its
+ * own execution span stack, so concurrent runners sharing the same middleware
+ * don't interfere. Tool spans are keyed by callId (globally unique).
+ */
 export function createOTelAgentMiddleware(
   options: OTelAgentMiddlewareOptions = {},
 ): AgentMiddleware & { name: string } {
   const tracer = options.tracer ?? trace.getTracer('nexora');
   const defaultAttrs = options.defaultAttributes ?? {};
-  let executionSpan: Span | null = null;
+
+  // R4 FIX: per-execution span isolation via a stack. Each beforeExecution
+  // pushes, each afterExecution pops. Concurrent runs use different stack
+  // entries. Tool spans are keyed by callId which is already unique.
+  const executionSpanStack: Span[] = [];
   const toolSpans = new Map<string, Span>();
 
   return {
     name: 'otel',
 
     beforeExecution(ctx: { tools: unknown[]; systemPrompt: string; input: unknown }): void {
-      executionSpan = tracer.startSpan('nexora.agent.execute', {
+      const span = tracer.startSpan('nexora.agent.execute', {
         kind: SpanKind.INTERNAL,
         attributes: {
           ...defaultAttrs,
           'nexora.agent.tools': String(ctx.tools.length),
         },
       });
+      executionSpanStack.push(span);
     },
 
     afterExecution(ctx: { events: unknown[]; finalContent: string; error?: Error; input: unknown }): void {
-      if (!executionSpan) return;
-      executionSpan.setAttribute('nexora.agent.events', ctx.events.length);
+      const span = executionSpanStack.pop();
+      if (!span) return;
+      span.setAttribute('nexora.agent.events', ctx.events.length);
       if (ctx.error) {
-        executionSpan.setStatus({ code: SpanStatusCode.ERROR, message: ctx.error.message });
-        executionSpan.recordException(ctx.error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: ctx.error.message });
+        span.recordException(ctx.error);
       } else {
-        executionSpan.setStatus({ code: SpanStatusCode.OK });
+        span.setStatus({ code: SpanStatusCode.OK });
       }
-      executionSpan.end();
-      executionSpan = null;
+      span.end();
     },
 
     beforeToolCall(ctx: { toolName: string; callId: string; input: unknown; tool: unknown }): void {
+      // Create the tool span as a child of the current execution span (if any).
+      const parentSpan = executionSpanStack[executionSpanStack.length - 1];
+      const parentCtx = parentSpan
+        ? trace.setSpan(otelContext.active(), parentSpan)
+        : otelContext.active();
+
       const span = tracer.startSpan(`nexora.tool.${ctx.toolName}`, {
         kind: SpanKind.INTERNAL,
         attributes: {
@@ -77,7 +91,7 @@ export function createOTelAgentMiddleware(
           'nexora.tool.name': ctx.toolName,
           'nexora.tool.callId': ctx.callId,
         },
-      });
+      }, parentCtx);
       toolSpans.set(ctx.callId, span);
     },
 

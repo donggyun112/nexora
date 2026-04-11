@@ -43,12 +43,28 @@ Output ONLY a JSON object: {"respond": bool, "confidence": 0.0-1.0, "reason": "o
  * Run the evaluate phase for a single agent.
  * Returns quickly (~50 tokens, ~200-500ms).
  */
+/** Default per-agent evaluate timeout (ms). */
+const DEFAULT_EVALUATE_TIMEOUT_MS = 3_000;
+
 export async function evaluateAgent(
   participant: RoomParticipant,
   newMessage: RoomMessage,
   history: { role: 'user' | 'assistant'; content: string }[],
   otherAgentNames: string[],
+  evaluateTimeoutMs: number = DEFAULT_EVALUATE_TIMEOUT_MS,
 ): Promise<EvaluationResult> {
+  // R5 SHORT-CIRCUIT: if the message @mentions this agent by name, skip the
+  // LLM call entirely. We know confidence=1.0 and the answer is "yes".
+  // This saves ~200-500ms and $0.00001 per mentioned agent.
+  if (newMessage.content.includes(`@${participant.card.name}`)) {
+    return {
+      agentName: participant.card.name,
+      respond: true,
+      confidence: 1.0,
+      reason: 'directly mentioned (short-circuited, no LLM call)',
+    };
+  }
+
   const systemPrompt = participant.evaluatePrompt
     ?? EVALUATE_SYSTEM_TEMPLATE
       .replace(/{agentName}/g, participant.card.name)
@@ -61,20 +77,27 @@ export async function evaluateAgent(
   ];
 
   try {
-    const response = await participant.llm.complete(messages, {
-      systemPrompt,
-      maxTokens: 80,
-      temperature: 0,
-    });
+    // R5: per-agent timeout so one slow agent doesn't block the entire
+    // evaluate phase. If the timeout fires, we treat it as a pass.
+    const response = await Promise.race([
+      participant.llm.complete(messages, {
+        systemPrompt,
+        maxTokens: 80,
+        temperature: 0,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('evaluate timeout')), evaluateTimeoutMs),
+      ),
+    ]);
 
     return parseEvaluation(participant.card.name, response.content, newMessage);
   } catch {
-    // On LLM failure, default to not responding (safe).
+    // On LLM failure or timeout, default to not responding (safe).
     return {
       agentName: participant.card.name,
       respond: false,
       confidence: 0,
-      reason: 'evaluate failed',
+      reason: 'evaluate failed or timed out',
     };
   }
 }
@@ -102,12 +125,11 @@ export async function evaluateAll(
 function parseEvaluation(
   agentName: string,
   content: string,
-  message: RoomMessage,
+  _message: RoomMessage,
 ): EvaluationResult {
-  // Handle @mention — always respond with confidence 1.0
-  if (message.content.includes(`@${agentName}`)) {
-    return { agentName, respond: true, confidence: 1.0, reason: 'directly mentioned' };
-  }
+  // @mention is handled by the short-circuit in evaluateAgent() above.
+  // By the time we reach parseEvaluation, the LLM has already run, so
+  // we just parse its output.
 
   try {
     const cleaned = content.trim().replace(/^```(?:json)?\n?|\n?```$/g, '');

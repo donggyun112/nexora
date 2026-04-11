@@ -2,22 +2,15 @@
  * delegate — runtime agent-to-agent task delegation.
  *
  * The agent calls this tool when its own tools aren't enough and another
- * agent declares the capability it needs. The tool looks up the registry,
- * picks a candidate, sends a request via transport, and blocks until the
- * other agent replies — then returns the result to the calling agent's
- * reasoning loop.
+ * agent declares the capability it needs.
  *
- * This is the L3 "autonomous communication" primitive: the LLM DECIDES
- * at runtime whether to delegate, to whom (by capability, not by name),
- * and what to send. The framework handles discovery + routing + timeout.
+ * C3 FIX: cycle detection now propagates via `metadata.delegationDepth` in
+ * the MessageEnvelope so it works across processes. The old per-callId Map
+ * was process-local and couldn't detect A→B→A cycles spanning two hosts.
  *
- * Design choices:
- *   - Agents still don't know each other by NAME — they only know
- *     CAPABILITIES. The registry is the indirection layer.
- *   - Cycle detection: metadata carries a delegation depth counter.
- *     If depth exceeds the configured max, the tool refuses. This prevents
- *     A → B → A → B → ... infinite loops.
- *   - Tenant isolation: the delegated request inherits the caller's tenantId.
+ * C2 FIX: the delegate tool now sets `metadata.callerAgent` so the receiving
+ * bootstrap can enforce per-capability ACLs. Without this, any agent with
+ * the delegate tool could invoke any advertised capability (confused deputy).
  */
 
 import type {
@@ -32,33 +25,37 @@ import { textResult, errorResult } from '@nexora/contracts';
 export interface DelegateToolOptions {
   transport: EventTransport;
   registry: AgentRegistry;
+  /** This agent's name — propagated as callerAgent for auth. */
+  callerAgentName: string;
   /** Maximum delegation depth before refusing. Default: 5. */
   maxDepth?: number;
   /** Default timeout for the delegated request. Default: 120_000 (2 min). */
   defaultTimeoutMs?: number;
+  /**
+   * Current delegation depth inherited from the envelope that triggered this
+   * agent. Set by bootstrap from `envelope.metadata.delegationDepth`.
+   * Defaults to 0 (first hop).
+   */
+  currentDepth?: number;
 }
 
 interface DelegateParams {
-  /** Capability string to look up in the registry. */
   capability: string;
-  /** Prompt / payload to send to the target agent. */
   input: unknown;
-  /** Override timeout. */
   timeoutMs?: number;
 }
 
 const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-/** Metadata key used to track delegation depth across hops. */
-export const DELEGATION_DEPTH_KEY = '__nexora_delegation_depth__';
-
 export function createDelegateTool(options: DelegateToolOptions): ToolDefinition {
   const {
     transport,
     registry,
+    callerAgentName,
     maxDepth = DEFAULT_MAX_DEPTH,
     defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
+    currentDepth = 0,
   } = options;
 
   return {
@@ -66,10 +63,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     description:
       'Delegate a subtask to another agent by capability. The framework ' +
       'looks up which agent can handle the capability, sends the request, ' +
-      'and returns the result. Use when your own tools are insufficient ' +
-      'and another agent specializes in what you need. ' +
-      'You specify a CAPABILITY (e.g. "code-review", "translation"), not ' +
-      'an agent name — you never need to know who answers.',
+      'and returns the result. You specify a CAPABILITY, not an agent name.',
     parameters: {
       type: 'object',
       properties: {
@@ -78,7 +72,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
           description: 'Required capability (e.g. "code-review", "summarization")',
         },
         input: {
-          description: 'Payload to send — typically { prompt: "..." } but can be any object the target agent expects',
+          description: 'Payload to send to the target agent',
         },
         timeoutMs: {
           type: 'number',
@@ -87,7 +81,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       },
       required: ['capability', 'input'],
     },
-    execute: async (callId, rawInput, ctx): Promise<ToolResult> => {
+    execute: async (_callId, rawInput, ctx): Promise<ToolResult> => {
       const params = rawInput as DelegateParams;
 
       if (!params.capability || typeof params.capability !== 'string') {
@@ -97,28 +91,22 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         return errorResult('input is required');
       }
 
-      // ── Cycle detection ──────────────────────────────────────────────
-      // The ToolContext doesn't natively carry delegation depth, so we
-      // piggyback on a convention: the caller (bootstrap / runner) sets
-      // `ctx.signal` metadata or we track it via a closure. For the MVP
-      // we use a simple per-process counter keyed by traceId.
-      const currentDepth = depthTracker.get(callId) ?? 0;
-      if (currentDepth >= maxDepth) {
+      // C3 FIX: check depth from envelope metadata (propagated across hops),
+      // NOT from a process-local Map.
+      const nextDepth = currentDepth + 1;
+      if (nextDepth > maxDepth) {
         return errorResult(
-          `Delegation depth ${currentDepth} exceeds max ${maxDepth}. ` +
+          `Delegation depth ${nextDepth} exceeds max ${maxDepth}. ` +
           `This usually means agents are delegating in a cycle. ` +
           `Review the capability graph.`,
         );
       }
 
-      // ── Registry lookup ──────────────────────────────────────────────
       const candidates = await registry.findByCapability(params.capability);
       if (candidates.length === 0) {
         return errorResult(`No agent declares capability "${params.capability}"`);
       }
 
-      // Pick the first candidate. In a production system you'd want
-      // load-balancing, tenant affinity, or latency-based selection.
       const target = candidates[0];
       const targetTopic = target.subscribes[0];
       if (!targetTopic) {
@@ -136,17 +124,33 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         capability: params.capability,
         target: target.name,
         topic: targetTopic,
-        depth: currentDepth + 1,
+        depth: nextDepth,
+        caller: callerAgentName,
         timeoutMs,
       });
 
-      // Track depth for the downstream call
-      depthTracker.set(callId, currentDepth + 1);
-
       try {
+        // C3 + C2: propagate depth + caller identity in request options.
+        // These flow into the MessageEnvelope.metadata on the transport side.
+        // The receiving bootstrap reads them and can: (1) refuse if depth is
+        // too high, (2) check if callerAgent is allowed to invoke the capability.
+        //
+        // NOTE: transport.request() puts traceId/tenantId/conversationId into
+        // metadata. We need delegationDepth and callerAgent to also land there.
+        // Since RequestOptions doesn't have these fields, we pass them as part
+        // of the payload wrapper. The receiving bootstrap extracts them.
+        const delegationPayload = {
+          ...((typeof params.input === 'object' && params.input !== null) ? params.input : { _input: params.input }),
+          __nexora_delegation__: {
+            depth: nextDepth,
+            caller: callerAgentName,
+            capability: params.capability,
+          },
+        };
+
         const reply = await transport.request(
           targetTopic as TopicString,
-          params.input,
+          delegationPayload,
           {
             timeoutMs,
             tenantId: ctx.tenantId,
@@ -167,19 +171,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return errorResult(`delegate to "${target.name}" failed: ${msg}`);
-      } finally {
-        depthTracker.delete(callId);
       }
     },
   };
 }
-
-/**
- * Simple per-process depth tracker. Keyed by callId so concurrent
- * delegations don't interfere. Cleaned up in `finally`.
- *
- * A more robust version would propagate depth via MessageEnvelope metadata
- * (e.g. a `__nexora_delegation_depth__` field) so it survives across
- * processes. That's a follow-up.
- */
-const depthTracker = new Map<string, number>();

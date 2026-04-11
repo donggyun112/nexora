@@ -53,6 +53,21 @@ export interface MessageMetadata {
   /** 발신자 (에이전트 인스턴스 ID, 라우팅 목적이 아닌 추적 목적) */
   sourceInstanceId?: string;
 
+  /**
+   * Delegation hop depth — incremented by the `delegate` tool on each hop.
+   * Used for cross-process cycle detection: if an envelope arrives with
+   * depth >= maxDepth, the receiving agent refuses to process it.
+   * Not set on non-delegated messages (treated as 0).
+   */
+  delegationDepth?: number;
+
+  /**
+   * The agent that initiated this delegation (for C2 authorization checks).
+   * Set by the delegate tool, propagated on every hop. The receiving bootstrap
+   * can check whether the caller is allowed to invoke its capabilities.
+   */
+  callerAgent?: string;
+
   /** 생성 시각 (epoch ms) */
   timestamp: number;
 }

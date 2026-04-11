@@ -68,11 +68,14 @@ export interface TurnResult {
   evaluations: EvaluationResult[];
 }
 
+// R1 FIX: previous version interpolated primary agent's response into the
+// system prompt, which let a malicious primary inject instructions at system
+// priority. Now the system prompt only contains the agent's own identity;
+// the primary response is passed as an assistant message in the conversation
+// history where it cannot override system-level instructions.
 const FOLLOW_UP_SYSTEM_TEMPLATE = `You are {agentName} — {description}.
 
-The user asked: {userMessage}
-Another agent ({primaryAgent}) already responded: {primaryResponse}
-
+Another agent already responded to the user's latest message.
 If you have something ADDITIONAL and DIFFERENT to contribute, respond concisely.
 If the previous response already covers everything, output exactly: PASS
 
@@ -88,6 +91,12 @@ export class TurnManager {
   private readonly followUpMinConfidence: number;
   private readonly onNoVolunteer: NonNullable<TurnManagerOptions['onNoVolunteer']>;
   private readonly onBeforeRespond?: TurnManagerOptions['onBeforeRespond'];
+  /**
+   * Per-room mutex: serializes turns so overlapping messages don't interleave
+   * on the shared history. Key = room.id. The value is the tail of a promise
+   * chain — each new turn awaits the previous one before starting.
+   */
+  private readonly roomLocks = new Map<string, Promise<void>>();
 
   constructor(options: TurnManagerOptions = {}) {
     this.minConfidence = options.minConfidence ?? 0.3;
@@ -105,9 +114,46 @@ export class TurnManager {
     room: ConversationRoom,
     message: RoomMessage,
   ): Promise<TurnResult> {
+    // Serialize turns per room so concurrent messages don't interleave on
+    // the shared history. Each turn awaits the previous one. If the previous
+    // turn threw, we still proceed (the lock chain uses .catch(() => {})).
+    const prev = this.roomLocks.get(room.id) ?? Promise.resolve();
+    let releaseLock: () => void = () => {};
+    const lock = new Promise<void>(resolve => { releaseLock = resolve; });
+    this.roomLocks.set(room.id, prev.catch(() => {}).then(() => lock));
+    await prev.catch(() => {}); // wait for previous turn to finish
+
+    try {
+      return await this.handleMessageUnsafe(room, message);
+    } finally {
+      room.activeResponder = null; // always clean up
+      releaseLock();
+    }
+  }
+
+  /** The actual turn logic, called under the per-room lock. */
+  private async handleMessageUnsafe(
+    room: ConversationRoom,
+    message: RoomMessage,
+  ): Promise<TurnResult> {
     const participants = room.agents();
     if (participants.length === 0) {
       return { responses: [], evaluations: [] };
+    }
+
+    // MESSAGE OWNERSHIP: handleMessage is the single authority that adds the
+    // user message to room history. Callers must NOT call room.addMessage()
+    // before this — if they did, history would contain the message twice,
+    // biasing the evaluate phase and bloating the prompt.
+    // We check for duplicates: if the last message in history has the same
+    // content and sender, skip the insert (idempotent).
+    const lastMsg = room.history()[room.length - 1];
+    const isDuplicate = lastMsg
+      && lastMsg.sender === message.sender
+      && lastMsg.content === message.content
+      && Math.abs(lastMsg.timestamp - message.timestamp) < 1000;
+    if (!isDuplicate) {
+      room.addMessage(message);
     }
 
     // Phase 1: EVALUATE — all agents decide in parallel
@@ -131,32 +177,51 @@ export class TurnManager {
       return { responses, evaluations };
     }
 
-    // Phase 3: PRIMARY responds
-    const primary = willing[0];
-    const primaryParticipant = room.getParticipant(primary.agentName);
-    if (!primaryParticipant) {
+    // Phase 3: PRIMARY responds (with failover to standby if primary throws)
+    let primaryIdx = 0;
+    let primaryContent: string | null = null;
+    let primaryAgentName: string | null = null;
+
+    while (primaryIdx < willing.length && primaryContent === null) {
+      const candidate = willing[primaryIdx];
+      const participant = room.getParticipant(candidate.agentName);
+      if (!participant) { primaryIdx++; continue; }
+
+      this.onBeforeRespond?.(candidate.agentName, 'primary');
+      room.activeResponder = candidate.agentName;
+
+      try {
+        primaryContent = await this.generateResponse(participant, history);
+        primaryAgentName = candidate.agentName;
+      } catch {
+        // Primary LLM failed — try next standby as primary (failover).
+        room.activeResponder = null;
+        primaryIdx++;
+      }
+    }
+
+    if (primaryContent === null || primaryAgentName === null) {
+      // All willing agents failed — run fallback
+      room.activeResponder = null;
+      const fallback = await this.onNoVolunteer(room, message);
+      if (fallback) {
+        room.addAgentMessage('system', fallback);
+        responses.push({ agentName: 'system', content: fallback, phase: 'fallback' });
+      }
       return { responses, evaluations };
     }
 
-    this.onBeforeRespond?.(primary.agentName, 'primary');
-    room.activeResponder = primary.agentName;
-
-    const primaryContent = await this.generateResponse(
-      primaryParticipant,
-      [...history, { role: 'user' as const, content: message.content }],
-    );
-
-    room.addAgentMessage(primary.agentName, primaryContent);
+    room.addAgentMessage(primaryAgentName, primaryContent);
     room.activeResponder = null;
     responses.push({
-      agentName: primary.agentName,
+      agentName: primaryAgentName,
       content: primaryContent,
       phase: 'primary',
     });
 
-    // Phase 4: FOLLOW-UPS
+    // Phase 4: FOLLOW-UPS (skip agents that already tried as primary)
     const standby = willing
-      .slice(1, this.maxResponders)
+      .slice(primaryIdx + 1, primaryIdx + this.maxResponders)
       .filter(e => e.confidence >= this.followUpMinConfidence);
 
     for (const candidate of standby) {
@@ -166,27 +231,31 @@ export class TurnManager {
       this.onBeforeRespond?.(candidate.agentName, 'follow-up');
       room.activeResponder = candidate.agentName;
 
-      const followUpContent = await this.generateFollowUp(
-        participant,
-        message,
-        primary.agentName,
-        primaryContent,
-        room.historyForLLM(),
-      );
+      try {
+        const followUpContent = await this.generateFollowUp(
+          participant,
+          message,
+          primaryAgentName,
+          primaryContent,
+          room.historyForLLM(),
+        );
 
-      room.activeResponder = null;
+        room.activeResponder = null;
 
-      // Agent said "PASS" — nothing to add.
-      if (!followUpContent || followUpContent.trim().toUpperCase() === 'PASS') {
-        continue;
+        if (!followUpContent || followUpContent.trim().toUpperCase() === 'PASS') {
+          continue;
+        }
+
+        room.addAgentMessage(candidate.agentName, followUpContent);
+        responses.push({
+          agentName: candidate.agentName,
+          content: followUpContent,
+          phase: 'follow-up',
+        });
+      } catch {
+        // Follow-up LLM failed — skip this agent, don't kill the turn.
+        room.activeResponder = null;
       }
-
-      room.addAgentMessage(candidate.agentName, followUpContent);
-      responses.push({
-        agentName: candidate.agentName,
-        content: followUpContent,
-        phase: 'follow-up',
-      });
     }
 
     return { responses, evaluations };
@@ -213,17 +282,19 @@ export class TurnManager {
 
   private async generateFollowUp(
     participant: RoomParticipant,
-    userMessage: RoomMessage,
-    primaryAgent: string,
-    primaryResponse: string,
+    _userMessage: RoomMessage,
+    _primaryAgent: string,
+    _primaryResponse: string,
     history: { role: 'user' | 'assistant'; content: string }[],
   ): Promise<string | null> {
+    // R1 FIX: system prompt no longer contains the primary response or user
+    // message as interpolated strings. The history already has both — the
+    // primary's response was added via room.addAgentMessage(), and the user
+    // message was added at the top of handleMessage(). The LLM sees them as
+    // normal conversation turns, not as system-level instructions.
     const systemPrompt = FOLLOW_UP_SYSTEM_TEMPLATE
       .replace('{agentName}', participant.card.name)
-      .replace('{description}', participant.card.description)
-      .replace('{userMessage}', userMessage.content)
-      .replace('{primaryAgent}', primaryAgent)
-      .replace('{primaryResponse}', primaryResponse);
+      .replace('{description}', participant.card.description);
 
     const llmMessages: LLMMessage[] = history.map(m => ({
       role: m.role,

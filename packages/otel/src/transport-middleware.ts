@@ -102,7 +102,12 @@ export class OTelTransport implements EventTransport {
     });
 
     try {
-      await this.inner.publish(envelope);
+      // C6 FIX: make the publish span active during the inner.publish() call
+      // so any spans created inside (e.g. by the transport's internal logic)
+      // are children of this publish span.
+      await otelContext.with(trace.setSpan(otelContext.active(), span), async () => {
+        await this.inner.publish(envelope);
+      });
       span.setStatus({ code: SpanStatusCodeEnum.OK });
     } catch (err) {
       span.setStatus({ code: SpanStatusCodeEnum.ERROR, message: errMsg(err) });
@@ -118,6 +123,15 @@ export class OTelTransport implements EventTransport {
     handler: (envelope: MessageEnvelope) => Promise<void>,
   ): Subscription {
     return this.inner.subscribe(pattern, async (envelope) => {
+      // C6 FIX: create the handler span as a child of the envelope's
+      // spanId (the publisher's span). We link them via a SpanLink so
+      // distributed traces show the causal chain even across processes.
+      // NOTE: OTel's `startSpan` with a remote parent requires constructing
+      // a SpanContext from the envelope's IDs. Since Nexora's IDs are
+      // UUID-based (not W3C TraceContext format), we cannot do a true
+      // remote parent. Instead we add a link attribute so the trace viewer
+      // can correlate them, and we set the span as active during the handler
+      // so nested spans are children of it.
       const span = this.tracer.startSpan(`nexora.handle ${envelope.topic}`, {
         kind: SpanKindEnum.CONSUMER,
         attributes: {
@@ -126,12 +140,15 @@ export class OTelTransport implements EventTransport {
           'nexora.type': envelope.type,
           'nexora.traceId': envelope.metadata.traceId,
           'nexora.spanId': envelope.metadata.spanId,
+          'nexora.parentSpanId': envelope.metadata.parentSpanId ?? '',
           'nexora.tenantId': envelope.metadata.tenantId,
           'nexora.subscribePattern': pattern,
         },
       });
 
       try {
+        // Make the handler span active so any downstream spans (tool calls,
+        // LLM calls, nested publishes) are children of this handler span.
         await otelContext.with(trace.setSpan(otelContext.active(), span), async () => {
           await handler(envelope);
         });

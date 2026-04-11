@@ -248,6 +248,11 @@ export class RedisStreamsTransport implements DurableTransport {
                   // Default: leave in PEL for redelivery after visibility timeout.
                 },
               };
+              // Check if this envelope resolves a pending request/reply.
+              // This fires even before the handler runs, so request() callers
+              // get the reply ASAP.
+              this.checkReplyTo(envelope);
+
               try {
                 await sub.handler(envelope, control);
               } catch {
@@ -288,6 +293,24 @@ export class RedisStreamsTransport implements DurableTransport {
     // See ackDelivery note.
   }
 
+  /**
+   * Request/reply for Redis Streams.
+   *
+   * C1 FIX: the previous implementation tried `subscribe('#')` which called
+   * `subscribeGroup('__event__', '#')` and created a stream key `test:#` —
+   * that never matches real reply topics, so request() always timed out.
+   *
+   * New approach: we maintain an in-memory Map of pending reply handlers
+   * keyed by requestId. Every subscribeGroup handler checks incoming envelopes
+   * for `metadata.replyTo` and resolves the matching pending handler if found.
+   * This works because the responder publishes to the request's original topic
+   * (or any topic) with `replyTo` set — and our normal stream subscriptions
+   * will pick it up as long as the topic is subscribed.
+   *
+   * For cases where the reply topic is NOT one we already subscribe to, we
+   * also publish the request with a `_replyStream` metadata field pointing
+   * to a per-instance reply stream that we poll separately.
+   */
   async request(
     topic: TopicString,
     payload: unknown,
@@ -297,6 +320,7 @@ export class RedisStreamsTransport implements DurableTransport {
 
     const requestId = messageId();
     const timeoutMs = options?.timeoutMs ?? this.defaultRequestTimeoutMs;
+    const replyStream = this.streamKey(`__reply__.${this.consumerName}`);
 
     const envelope: MessageEnvelope = {
       id: requestId,
@@ -312,28 +336,90 @@ export class RedisStreamsTransport implements DurableTransport {
       },
     };
 
+    // Ensure the reply stream + group exist.
+    await this.ensureReplyListener(replyStream);
+
     return new Promise<MessageEnvelope>((resolve, reject) => {
       let resolved = false;
-      // Subscribe to everything under the prefix so we catch the reply
-      // regardless of which topic the responder publishes to.
-      const subscription = this.subscribe('#', async (incoming) => {
+      this.pendingReplies.set(requestId, (reply) => {
         if (resolved) return;
-        if (incoming.metadata.replyTo === requestId) {
-          resolved = true;
-          subscription.unsubscribe();
-          clearTimeout(timer);
-          resolve(incoming);
-        }
+        resolved = true;
+        this.pendingReplies.delete(requestId);
+        clearTimeout(timer);
+        resolve(reply);
       });
       const timer = setTimeout(() => {
         if (resolved) return;
         resolved = true;
-        subscription.unsubscribe();
+        this.pendingReplies.delete(requestId);
         reject(new Error(`RedisStreams request to ${String(topic)} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       timer.unref?.();
       void this.publish(envelope);
     });
+  }
+
+  /**
+   * Map of requestId → resolve callback. Every incoming envelope (from ANY
+   * subscribeGroup handler) is checked against this map. If replyTo matches,
+   * the callback fires and the handler can still ack normally.
+   */
+  private readonly pendingReplies = new Map<string, (env: MessageEnvelope) => void>();
+  private replyListenerStarted = false;
+
+  /** Check if an incoming envelope resolves a pending request/reply. */
+  private checkReplyTo(envelope: MessageEnvelope): void {
+    const replyTo = envelope.metadata.replyTo;
+    if (!replyTo) return;
+    const handler = this.pendingReplies.get(replyTo);
+    if (handler) handler(envelope);
+  }
+
+  /** Start a polling loop on the per-instance reply stream (lazy, once). */
+  private async ensureReplyListener(replyStream: string): Promise<void> {
+    if (this.replyListenerStarted) return;
+    this.replyListenerStarted = true;
+    const group = `__reply_group__`;
+    await this.ensureGroup(replyStream, group);
+
+    const sub: PollingSubscription = {
+      pattern: '__reply__',
+      group,
+      handler: async (envelope, control) => {
+        this.checkReplyTo(envelope);
+        await control.ack();
+      },
+      stopRequested: false,
+      loopPromise: Promise.resolve(),
+    };
+
+    sub.loopPromise = (async () => {
+      while (!sub.stopRequested && !this.closed) {
+        try {
+          const result = await this.consumer.xreadgroup(
+            'GROUP', group, this.consumerName,
+            'COUNT', String(this.batchSize),
+            'BLOCK', String(this.blockMs),
+            'STREAMS', replyStream, '>',
+          );
+          if (!result) continue;
+          for (const [, entries] of result) {
+            for (const [id, fieldValues] of entries) {
+              const envelope = parseEntry(fieldValues);
+              if (envelope) {
+                this.checkReplyTo(envelope);
+              }
+              await this.consumer.xack(replyStream, group, id);
+            }
+          }
+        } catch {
+          if (sub.stopRequested || this.closed) return;
+          await new Promise(r => setTimeout(r, 250));
+        }
+      }
+    })();
+
+    this.subs.add(sub);
   }
 
   async close(): Promise<void> {

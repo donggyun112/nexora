@@ -23,5 +23,5 @@ export type {
   HandraiseReplyPayload,
 } from './handraise.js';
 
-export { createDelegateTool, DELEGATION_DEPTH_KEY } from './delegate.js';
+export { createDelegateTool } from './delegate.js';
 export type { DelegateToolOptions } from './delegate.js';

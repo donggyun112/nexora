@@ -1,5 +1,5 @@
 /**
- * 8 builtin tools: file I/O + exec + knowledge + web search + handraise.
+ * 9 builtin tools: file I/O + exec + knowledge + web search + handraise + delegate.
  */
 
 export { createExecTool } from './exec.js';
@@ -22,3 +22,6 @@ export type {
   HandraiseRequestPayload,
   HandraiseReplyPayload,
 } from './handraise.js';
+
+export { createDelegateTool, DELEGATION_DEPTH_KEY } from './delegate.js';
+export type { DelegateToolOptions } from './delegate.js';

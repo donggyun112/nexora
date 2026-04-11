@@ -1,31 +1,27 @@
 {
-  "name": "@nexora/gateway",
+  "name": "@nexora-examples/helpdesk",
   "version": "0.1.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
+  "private": true,
+  "main": "./dist/main.js",
   "scripts": {
     "build": "tsc",
+    "start": "node dist/main.js",
     "test": "vitest run",
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
     "@nexora/adapters": "workspace:*",
-    "@nexora/contracts": "workspace:*",
-    "@nexora/registry": "workspace:*"
-  },
-  "devDependencies": {
     "@nexora/architectures": "workspace:*",
     "@nexora/context": "workspace:*",
+    "@nexora/contracts": "workspace:*",
     "@nexora/core": "workspace:*",
+    "@nexora/gateway": "workspace:*",
+    "@nexora/store-json": "workspace:*",
     "@nexora/tools": "workspace:*",
-    "@nexora/transport": "workspace:*",
+    "@nexora/transport": "workspace:*"
+  },
+  "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   },

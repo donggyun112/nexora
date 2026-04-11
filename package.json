@@ -7,6 +7,8 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "test": "turbo test",
+    "test:stable": "turbo test --filter='!@nexora/conversation' --filter='!@nexora/otel'",
+    "test:experimental": "turbo test --filter=@nexora/conversation --filter=@nexora/otel",
     "clean": "turbo clean"
   },
   "devDependencies": {

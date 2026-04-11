@@ -28,6 +28,7 @@ import type {
 } from '@nexora/contracts';
 import { messageId, spanId, matchTopic } from '@nexora/contracts';
 import { createSchemaValidator, SchemaValidationError } from './schema.js';
+import { enforceLint } from './lint.js';
 
 export interface AgentBootstrapOptions {
   /** Agent capability declaration (subscribes / publishes / tools / architecture). */
@@ -131,6 +132,11 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
   } = options;
   const logger = options.logger ?? NOOP_LOGGER;
 
+  // #6 PHILOSOPHY AS CONSTRAINTS: lint the AgentCard on every bootstrap.
+  // This catches misconfigured agents (bad topic names, missing schemas,
+  // invalid agent names) at startup instead of at 2 AM during an incident.
+  enforceLint(card, logger);
+
   // Build schema validators once at boot. No-op if the card declares no schemas.
   const validateSchemas = options.validateSchemas ?? (
     card.inputSchema !== undefined || card.outputSchema !== undefined
@@ -138,10 +144,6 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
   const { validateInput, validateOutput } = validateSchemas
     ? createSchemaValidator(card)
     : { validateInput: () => {}, validateOutput: () => {} };
-
-  if (card.subscribes.length === 0) {
-    logger.warn(`Agent ${card.name} has no subscribes`);
-  }
 
   // Auto-register to the registry before taking any traffic. If the registry
   // is a remote service and the call fails, we fail the whole bootstrap —

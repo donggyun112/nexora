@@ -18,17 +18,35 @@ importers:
         specifier: ^4.1.2
         version: 4.1.2(@opentelemetry/api@1.9.1)(@types/node@22.19.17)(vite@8.0.3(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@types/node@22.19.17))
 
-  agents/example-echo:
+  examples/helpdesk:
     dependencies:
+      '@nexora/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
       '@nexora/architectures':
         specifier: workspace:*
         version: link:../../packages/architectures
+      '@nexora/context':
+        specifier: workspace:*
+        version: link:../../packages/context
       '@nexora/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@nexora/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@nexora/gateway':
+        specifier: workspace:*
+        version: link:../../platform/gateway
+      '@nexora/store-json':
+        specifier: workspace:*
+        version: link:../../packages/store-json
+      '@nexora/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      '@nexora/transport':
+        specifier: workspace:*
+        version: link:../../packages/transport
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

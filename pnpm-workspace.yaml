@@ -5,3 +5,4 @@ packages:
   - "platform/gateway"
   - "platform/registry"
   - "platform/cli"
+  - "examples/*"

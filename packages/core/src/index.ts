@@ -56,3 +56,6 @@ export { bootstrapAgent } from './bootstrap.js';
 export type { AgentBootstrapOptions, RunningAgent } from './bootstrap.js';
 
 export { createSchemaValidator, SchemaValidationError } from './schema.js';
+
+export { lintAgentCard, enforceLint } from './lint.js';
+export type { LintResult } from './lint.js';

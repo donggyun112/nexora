@@ -85,6 +85,16 @@ export default defineAgent({
   capabilities: [],
   subscribes: [topic('${name}.requested')],
   publishes: [topic('${name}.completed')],
+  // Schema enforcement: define these to get automatic payload validation.
+  // Malformed inbound messages → <topic>.schema-rejected (agent never runs).
+  // Malformed outbound results → <topic>.failed (agent bug detected early).
+  inputSchema: {
+    type: 'object',
+    properties: {
+      prompt: { type: 'string' },
+    },
+    required: ['prompt'],
+  },
 });
 `;
 }

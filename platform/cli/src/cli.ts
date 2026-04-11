@@ -3,10 +3,12 @@
  * nexora CLI entry point.
  *
  * Usage:
- *   nexora create agent <name> [--arch <react|deep-research|plan-execute|loop>] [--tools a,b,c] [--force]
+ *   nexora create agent <name> [options]    Scaffold a new agent
+ *   nexora dev [options]                    Start all agents + gateway
  */
 
 import { scaffoldAgent } from './scaffold.js';
+import { runDev } from './dev.js';
 
 interface ParsedArgs {
   command: string;
@@ -83,6 +85,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === 'dev') {
+    const port = typeof args.flags.port === 'string' ? parseInt(args.flags.port, 10) : 3000;
+    const contextDir = typeof args.flags.context === 'string' ? args.flags.context : './context';
+    const agentsDir = typeof args.flags.agents === 'string' ? args.flags.agents : './agents';
+    const model = typeof args.flags.model === 'string' ? args.flags.model : 'claude-sonnet-4-5';
+
+    await runDev({ port, contextDir, agentsDir, model });
+    return;
+  }
+
   console.error(`Unknown command: ${args.command} ${args.subcommand ?? ''}`);
   printHelp();
   process.exit(1);
@@ -92,17 +104,26 @@ function printHelp(): void {
   console.log(`nexora — multi-tenant agent framework CLI
 
 Usage:
-  nexora create agent <name> [options]
+  nexora create agent <name> [options]    Scaffold a new agent
+  nexora dev [options]                    Start all agents + gateway
 
-Options:
+Create options:
   --arch <name>      Architecture (react, deep-research, plan-execute, loop). Default: react
   --tools a,b,c      Comma-separated tool names. Default: read,grep
   --force            Overwrite existing directory
+
+Dev options:
+  --port <n>         HTTP port. Default: 3000
+  --context <dir>    Context root directory. Default: ./context
+  --agents <dir>     Agents directory. Default: ./agents
+  --model <name>     Default LLM model. Default: claude-sonnet-4-5
+
   --help             Show this help
 
 Examples:
   nexora create agent dev-agent --tools exec,read,grep
-  nexora create agent researcher --arch deep-research
+  nexora dev
+  nexora dev --port 8080 --model claude-haiku-4-5
 `);
 }
 

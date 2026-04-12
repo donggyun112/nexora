@@ -114,6 +114,11 @@ export class DLQTransport implements EventTransport {
           error: errMsg,
         });
 
+        // C4 FIX: only mark as seen AFTER successful DLQ handoff.
+        // If DLQ publish fails, the message stays un-seen so a durable
+        // transport can redeliver it on the next attempt. This prevents
+        // permanent message loss when both handler AND DLQ are broken.
+        let dlqSuccess = false;
         try {
           await this.inner.publish({
             id: messageId(),
@@ -129,17 +134,16 @@ export class DLQTransport implements EventTransport {
               timestamp: Date.now(),
             },
           });
+          dlqSuccess = true;
         } catch (dlqErr) {
-          // Can't even publish to DLQ — log and move on
-          this.logger.error('DLQ publish failed', {
+          this.logger.error('DLQ publish failed — message will be retried on next delivery', {
             envelopeId: envelope.id,
             dlqError: dlqErr instanceof Error ? dlqErr.message : String(dlqErr),
           });
         }
 
-        // Still mark as seen so retries from durable transport don't
-        // re-attempt the same failing message in a loop.
-        if (this.idempotencyWindowMs > 0) {
+        // Only mark seen after successful DLQ handoff
+        if (dlqSuccess && this.idempotencyWindowMs > 0) {
           this.markSeen(envelope.id);
         }
       }

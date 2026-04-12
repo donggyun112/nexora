@@ -72,7 +72,12 @@ export class PaperclipAdapter implements Adapter {
   private readonly heartbeatIntervalMs: number;
   private readonly tenantId: string;
   private pollingTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly registeredAgentIds = new Map<string, string>(); // nexora name → paperclip agent id
+  private readonly registeredAgentIds = new Map<string, string>();
+  /** C3 FIX: issues currently being processed — prevents reprocessing on next heartbeat. */
+  private readonly inFlightIssues = new Set<string>();
+  /** C3 FIX: issues we've already posted a comment on — prevents duplicate comments. */
+  private readonly processedIssues = new Set<string>();
+  private heartbeatRunning = false;
 
   constructor(options: PaperclipAdapterOptions) {
     this.config = options.client;
@@ -143,16 +148,32 @@ export class PaperclipAdapter implements Adapter {
   }
 
   private async heartbeat(router: MessageRouter): Promise<void> {
+    // C3 FIX: single-flight guard — if previous heartbeat is still running, skip.
+    if (this.heartbeatRunning) return;
+    this.heartbeatRunning = true;
+
+    try {
+      await this.heartbeatInner(router);
+    } finally {
+      this.heartbeatRunning = false;
+    }
+  }
+
+  private async heartbeatInner(router: MessageRouter): Promise<void> {
     for (const [agentName, agentId] of this.registeredAgentIds) {
       try {
-        // Fetch assigned issues for this agent
         const issues = await this.api(
           'GET',
           `/api/issues?assigneeAgentId=${agentId}&status=open`,
         ) as PaperclipIssue[];
 
         for (const issue of issues) {
-          // Convert Paperclip issue → Nexora InboundMessage
+          // C3 FIX: skip already-processed or in-flight issues
+          if (this.processedIssues.has(issue.id) || this.inFlightIssues.has(issue.id)) {
+            continue;
+          }
+          this.inFlightIssues.add(issue.id);
+
           const inbound: InboundMessage = {
             platform: 'paperclip',
             channelId: issue.id,
@@ -165,19 +186,19 @@ export class PaperclipAdapter implements Adapter {
 
           try {
             const response = await router.route(inbound);
-
-            // Post result back as issue comment
             await this.api('POST', `/api/issues/${issue.id}/comments`, {
               agentId,
               body: response.content,
             });
+            this.processedIssues.add(issue.id);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[Paperclip] ${agentName} failed on issue ${issue.id}:`, msg);
+          } finally {
+            this.inFlightIssues.delete(issue.id);
           }
         }
       } catch (err) {
-        // Heartbeat fetch failed — retry on next interval
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[Paperclip] Heartbeat failed for ${agentName}:`, msg);
       }

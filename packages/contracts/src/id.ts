@@ -5,7 +5,7 @@
  * crypto.randomUUID() 기반 — prefix로 용도 구분.
  */
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 
 /** prefix 붙은 UUID 생성 */
 export function createId(prefix: string): string {
@@ -60,23 +60,28 @@ export function w3cSpanId(): string {
 
 /**
  * Extract a W3C-compatible 32-hex traceId from a Nexora ID.
- * If the ID is already 32 hex chars, returns as-is.
- * If it has a prefix (e.g. 'trace_abc123...'), strips the prefix.
- * If it's too short, pads with zeros. Too long, truncates.
+ * Strips prefix, normalizes hex. If the result is not exactly 32 hex chars,
+ * hashes the input to produce a deterministic 32-hex ID instead of
+ * padding/truncating (which was collision-prone for arbitrary inputs).
+ *
+ * R6 FIX: reject all-zero results (invalid in W3C TraceContext).
  */
 export function toW3CTraceId(nexoraId: string): string {
   const hex = nexoraId.replace(/^[a-z]+_/, '').replace(/-/g, '');
-  if (hex.length === 32) return hex;
-  if (hex.length > 32) return hex.slice(0, 32);
-  return hex.padEnd(32, '0');
+  if (/^[0-9a-f]{32}$/.test(hex) && hex !== '0'.repeat(32)) return hex;
+  // Hash to 32 hex — deterministic, collision-resistant
+  const hash = createHash('md5').update(nexoraId).digest('hex');
+  return hash === '0'.repeat(32) ? '0'.repeat(31) + '1' : hash;
 }
 
 /**
  * Extract a W3C-compatible 16-hex spanId from a Nexora ID.
+ * Same approach: exact match or hash. 128-bit Nexora IDs are necessarily
+ * lossy when mapped to 64-bit W3C span IDs, but the hash is deterministic.
  */
 export function toW3CSpanId(nexoraId: string): string {
   const hex = nexoraId.replace(/^[a-z]+_/, '').replace(/-/g, '');
-  if (hex.length === 16) return hex;
-  if (hex.length > 16) return hex.slice(0, 16);
-  return hex.padEnd(16, '0');
+  if (/^[0-9a-f]{16}$/.test(hex) && hex !== '0'.repeat(16)) return hex;
+  const hash = createHash('md5').update(nexoraId).digest('hex').slice(0, 16);
+  return hash === '0'.repeat(16) ? '0'.repeat(15) + '1' : hash;
 }

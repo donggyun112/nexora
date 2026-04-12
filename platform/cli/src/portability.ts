@@ -2,8 +2,8 @@
 /**
  * nexora export / nexora import — portable agent packages.
  *
- * Export bundles: agents/ + context/ + workflows/ into a single .tar.gz
- * Import unpacks into the current workspace, merging with existing files.
+ * C1 FIX: import now validates every tar member path against targetDir
+ * before extraction. Rejects absolute paths, `..` traversal, and symlinks.
  */
 
 import fs from 'node:fs';
@@ -33,7 +33,6 @@ export async function exportPackage(options: ExportOptions = {}): Promise<string
   }
 
   const output = options.output ?? `nexora-export-${Date.now()}.tar.gz`;
-
   await execFileAsync('tar', ['-czf', output, ...existing]);
 
   const stat = fs.statSync(output);
@@ -46,11 +45,31 @@ export async function importPackage(options: ImportOptions): Promise<string[]> {
     throw new Error(`File not found: ${options.input}`);
   }
 
-  const targetDir = options.targetDir ?? process.cwd();
+  const targetDir = path.resolve(options.targetDir ?? process.cwd());
+
+  // C1 FIX: list all members and validate BEFORE extracting.
+  const { stdout: listing } = await execFileAsync('tar', ['-tzf', options.input]);
+  const files = listing.trim().split('\n').filter(Boolean);
+
+  // Reject dangerous paths: absolute, `..` traversal, symlink-adjacent patterns
+  const dangerous = files.filter(f => {
+    if (path.isAbsolute(f)) return true;
+    if (f.includes('..')) return true;
+    const resolved = path.resolve(targetDir, f);
+    if (!resolved.startsWith(targetDir + path.sep) && resolved !== targetDir) return true;
+    return false;
+  });
+
+  if (dangerous.length > 0) {
+    throw new Error(
+      `Archive contains dangerous paths that would escape targetDir:\n` +
+      dangerous.slice(0, 5).map(f => `  ${f}`).join('\n') +
+      (dangerous.length > 5 ? `\n  ... and ${dangerous.length - 5} more` : '') +
+      `\nRefusing to extract.`,
+    );
+  }
 
   if (!options.force) {
-    const { stdout: listing } = await execFileAsync('tar', ['-tzf', options.input]);
-    const files = listing.trim().split('\n').filter(Boolean);
     const conflicts = files.filter(f => fs.existsSync(path.join(targetDir, f)));
     if (conflicts.length > 0) {
       throw new Error(
@@ -64,8 +83,6 @@ export async function importPackage(options: ImportOptions): Promise<string[]> {
 
   await execFileAsync('tar', ['-xzf', options.input, '-C', targetDir]);
 
-  const { stdout: listing } = await execFileAsync('tar', ['-tzf', options.input]);
-  const files = listing.trim().split('\n').filter(Boolean);
   console.log(`Imported ${files.length} files from ${options.input} into ${targetDir}`);
   return files;
 }

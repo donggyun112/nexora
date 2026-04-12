@@ -77,25 +77,47 @@ export function createBudgetMiddleware(options: BudgetMiddlewareOptions): AgentM
     name: 'budget',
 
     async beforeExecution(): Promise<void> {
-      // Pre-check: if budget is already exceeded, block before running
-      const statuses = await tracker.check({ type: 'tenant-agent', tenantId, agentName });
-      for (const status of statuses) {
-        if (status.exceeded) {
-          const policy = (await tracker.listPolicies()).find(p => p.id === status.policyId);
-          if (policy?.onExceed === 'block') {
-            throw new BudgetExceededError(status.policyId, status.spent, status.limit);
-          }
-          if (policy?.onExceed === 'warn') {
-            logger.warn(`Budget warning: ${status.policyId} at $${status.spent.toFixed(4)} / $${status.limit.toFixed(2)}`);
+      // C5 FIX: check ALL applicable scopes, not just tenant-agent.
+      // A global policy with onExceed:'block' must also block.
+      const scopes: import('@nexora/contracts').BudgetScope[] = [
+        { type: 'global' },
+        { type: 'tenant', tenantId },
+        { type: 'agent', agentName },
+        { type: 'tenant-agent', tenantId, agentName },
+      ];
+
+      for (const scope of scopes) {
+        const statuses = await tracker.check(scope);
+        for (const status of statuses) {
+          if (status.exceeded) {
+            const policy = (await tracker.listPolicies()).find(p => p.id === status.policyId);
+            if (policy?.onExceed === 'block') {
+              throw new BudgetExceededError(status.policyId, status.spent, status.limit);
+            }
+            if (policy?.onExceed === 'warn') {
+              logger.warn(`Budget warning: ${status.policyId} at $${status.spent.toFixed(4)} / $${status.limit.toFixed(2)}`);
+            }
           }
         }
       }
     },
 
     async afterExecution(ctx: AfterContext): Promise<void> {
-      // Estimate tokens from the final content length (rough: chars/4)
+      // C6 FIX: skip recording if the execution errored — failed/blocked
+      // runs should not accrue cost. Only record when the agent actually
+      // produced a response.
+      if (ctx.error) {
+        logger.debug('budget.skip (execution errored)', { agentName, tenantId });
+        return;
+      }
+
       const contentLength = ctx.finalContent?.length ?? 0;
-      const inputEstimate = 2000; // rough system prompt + history
+      if (contentLength === 0) {
+        logger.debug('budget.skip (no content)', { agentName, tenantId });
+        return;
+      }
+
+      const inputEstimate = 2000;
       const outputTokens = Math.ceil(contentLength / 4);
 
       // Count tool calls for a more accurate input estimate

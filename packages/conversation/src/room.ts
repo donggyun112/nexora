@@ -115,7 +115,7 @@ export class ConversationRoom {
     }
   }
 
-  /** Add a user message (convenience). */
+  /** Add a user message (convenience). Routes through addMessage for persistence + eviction. */
   addUserMessage(content: string, sender = 'user'): RoomMessage {
     const msg: RoomMessage = {
       sender,
@@ -123,11 +123,11 @@ export class ConversationRoom {
       content,
       timestamp: Date.now(),
     };
-    this.messages.push(msg);
+    this.addMessage(msg);
     return msg;
   }
 
-  /** Add an agent message (convenience). */
+  /** Add an agent message (convenience). Routes through addMessage for persistence + eviction. */
   addAgentMessage(agentName: string, content: string): RoomMessage {
     const msg: RoomMessage = {
       sender: agentName,
@@ -136,7 +136,7 @@ export class ConversationRoom {
       timestamp: Date.now(),
       agentName,
     };
-    this.messages.push(msg);
+    this.addMessage(msg);
     return msg;
   }
 

@@ -14,3 +14,10 @@ export type {
   DiscordClientLike,
   DiscordMessageLike,
 } from './discord.js';
+
+export { PaperclipAdapter } from './paperclip.js';
+export type {
+  PaperclipAdapterOptions,
+  PaperclipClientConfig,
+  PaperclipIssue,
+} from './paperclip.js';

@@ -256,7 +256,7 @@ async function handleMessage(args: {
         callerAgent: (envelope.metadata as { callerAgent?: string }).callerAgent,
         topic: envelope.topic,
       });
-      await args.transport.publish({
+      const depthRejectEnvelope: MessageEnvelope = {
         id: messageId(),
         topic: `${envelope.topic}.failed`,
         type: 'result',
@@ -271,7 +271,9 @@ async function handleMessage(args: {
           sourceInstanceId: card.name,
           timestamp: Date.now(),
         },
-      });
+      };
+      await args.transport.publish(depthRejectEnvelope);
+      await mirrorToReplyStream(args.transport, envelope, depthRejectEnvelope);
       return;
     }
 
@@ -284,7 +286,7 @@ async function handleMessage(args: {
     } catch (err) {
       if (err instanceof SchemaValidationError) {
         args.logger.warn(`Schema-rejected inbound for ${card.name}`, { message: err.message });
-        await args.transport.publish({
+        const schemaRejectEnvelope: MessageEnvelope = {
           id: messageId(),
           topic: `${envelope.topic}.schema-rejected`,
           type: 'result',
@@ -299,7 +301,9 @@ async function handleMessage(args: {
             sourceInstanceId: card.name,
             timestamp: Date.now(),
           },
-        });
+        };
+        await args.transport.publish(schemaRejectEnvelope);
+        await mirrorToReplyStream(args.transport, envelope, schemaRejectEnvelope);
         return;
       }
       throw err;
@@ -367,22 +371,14 @@ async function handleMessage(args: {
 
     await transport.publish(reply);
 
-    // H1 FIX: if the request came with a _replyStream (RedisStreams request/reply),
-    // also publish the reply to that stream so the caller's reply listener picks it up.
-    // Without this, replies on topics the caller doesn't subscribe to would timeout.
-    const replyStream = (envelope.metadata as { _replyStream?: string })._replyStream;
-    if (replyStream && typeof replyStream === 'string') {
-      const replyStreamEnvelope = { ...reply, topic: replyStream };
-      await transport.publish(replyStreamEnvelope).catch(() => {
-        // Best effort — if the reply stream doesn't exist, the normal topic reply is still there
-      });
-    }
+    // H1 FIX: mirror reply to _replyStream if present
+    await mirrorToReplyStream(transport, envelope, reply);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`Agent ${card.name} failed`, { topic: envelope.topic, message });
 
     const errorTopic = `${envelope.topic}.failed`;
-    await transport.publish({
+    const errorEnvelope: MessageEnvelope = {
       id: messageId(),
       topic: errorTopic,
       type: 'result',
@@ -397,7 +393,31 @@ async function handleMessage(args: {
         sourceInstanceId: card.name,
         timestamp: Date.now(),
       },
-    });
+    };
+    await transport.publish(errorEnvelope);
+    // H1b FIX: also mirror error replies to _replyStream
+    await mirrorToReplyStream(transport, envelope, errorEnvelope);
+  }
+}
+
+/**
+ * H1 FIX: if the incoming envelope has `_replyStream` in metadata
+ * (set by RedisStreamsTransport.request()), also publish the reply
+ * envelope to that topic so the caller's dedicated reply listener
+ * picks it up. This covers ALL reply paths: success, schema-rejected,
+ * delegation-rejected, and .failed errors.
+ */
+async function mirrorToReplyStream(
+  transport: EventTransport,
+  original: MessageEnvelope,
+  reply: MessageEnvelope,
+): Promise<void> {
+  const replyStream = (original.metadata as { _replyStream?: string })._replyStream;
+  if (!replyStream || typeof replyStream !== 'string') return;
+  try {
+    await transport.publish({ ...reply, topic: replyStream });
+  } catch {
+    // Best effort — the normal topic reply is still there
   }
 }
 

@@ -331,7 +331,10 @@ export class RedisStreamsTransport implements DurableTransport {
 
     const requestId = messageId();
     const timeoutMs = options?.timeoutMs ?? this.defaultRequestTimeoutMs;
-    const replyStream = this.streamKey(`__reply__.${this.consumerName}`);
+    // H1a FIX: store the TOPIC, not the prefixed key. publish() adds the prefix.
+    // Previous bug: _replyStream was already prefixed, then publish() prefixed again.
+    const replyTopic = `__reply__.${this.consumerName}`;
+    const replyStream = this.streamKey(replyTopic);
 
     const envelope: MessageEnvelope = {
       id: requestId,
@@ -349,11 +352,11 @@ export class RedisStreamsTransport implements DurableTransport {
         // reply stream instead of (or in addition to) the normal result topic.
         // Without this, replies only resolve if the caller happens to be
         // subscribed to the responder's publish topic.
-        _replyStream: replyStream,
+        _replyStream: replyTopic, // TOPIC, not key — publish() adds the prefix
       } as MessageEnvelope['metadata'] & { _replyStream: string },
     };
 
-    // Ensure the reply stream + group exist.
+    // Ensure the reply stream + group exist (uses the full key for XREADGROUP).
     await this.ensureReplyListener(replyStream);
 
     return new Promise<MessageEnvelope>((resolve, reject) => {

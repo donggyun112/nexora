@@ -10,8 +10,8 @@
 <p align="center">
   <a href="docs/getting-started.md"><strong>Getting Started</strong></a> ·
   <a href="examples/helpdesk/"><strong>Reference App</strong></a> ·
-  <a href="docs/architecture/"><strong>Architecture</strong></a> ·
-  <a href="https://github.com/donggyun112/nexora"><strong>GitHub</strong></a>
+  <a href="examples/personal-assistant/"><strong>OpenClaw-style Demo</strong></a> ·
+  <a href="docs/architecture/"><strong>Architecture</strong></a>
 </p>
 
 ---
@@ -35,7 +35,14 @@ curl POST /messages → HttpAdapter → GatewayRouter → Transport
 | Same agent, different customers | **Multi-tenant context** — same binary, different persona/tools/limits per tenant |
 | "What did the agent do?" | **OTel tracing** — every tool call, every LLM invocation, one trace in Jaeger |
 | Workflow crashes mid-flight | **Checkpoint/resume** — pick up from the last completed step |
-| Message lost when subscriber is down | **Redis Streams transport** — at-least-once delivery with consumer groups |
+| Message lost when subscriber is down | **Durable transport** — at-least-once delivery with consumer groups (Redis Streams or in-memory) |
+| LLM costs spiral out of control | **Budget tracking** — per-agent, per-tenant cost limits with block/warn/pause |
+| Failed messages disappear | **DLQ + idempotency** — dead letter queue captures failures, dedup prevents retries |
+| "Why is the agent doing this?" | **Goal hierarchy** — every task traces back to a company goal |
+
+### Can I build OpenClaw with this?
+
+[Yes. Here's the 30-line version.](examples/personal-assistant/)
 
 ## Quickstart
 
@@ -43,7 +50,8 @@ curl POST /messages → HttpAdapter → GatewayRouter → Transport
 # 1. Create an agent
 npx @nexora/cli create agent my-agent --tools read,grep
 
-# 2. Wire it up (see docs/getting-started.md for the full 30-line main.ts)
+# 2. Start everything
+npx @nexora/cli dev
 
 # 3. Send a message
 curl -X POST http://localhost:3000/messages \
@@ -53,74 +61,78 @@ curl -X POST http://localhost:3000/messages \
 
 See the [full getting started guide](docs/getting-started.md) and the [helpdesk reference app](examples/helpdesk/).
 
-## Packages
-
-### Stable
+## Packages (17, all stable)
 
 | Package | Purpose |
 |---|---|
-| `@nexora/contracts` | Shared interfaces — the single source of truth |
-| `@nexora/core` | AgentRunner, LLM providers (Anthropic/OpenAI/Fallback), ToolExecutor, Compaction, Middleware, Bootstrap, Schema validation, Lint |
-| `@nexora/transport` | LocalTransport (dev), RedisTransport (pub/sub), RedisStreamsTransport (durable, consumer groups), TracingTransport |
+| `@nexora/contracts` | Shared interfaces, ID helpers, budget, goal, workflow-state, registry contracts |
+| `@nexora/core` | AgentRunner, LLM providers (Anthropic/OpenAI/Fallback), ToolExecutor, Compaction, Middleware, Bootstrap, Schema validation, Lint, BudgetTracker |
+| `@nexora/transport` | LocalTransport, RedisTransport (pub/sub), RedisStreamsTransport (durable), **InMemoryDurableTransport** (no Redis needed), TracingTransport, DLQTransport |
 | `@nexora/context` | PersonaLoader, SkillLoader, TenantConfigStore, CoreContextLoader |
-| `@nexora/store` / `@nexora/store-json` | 6-store abstraction (conversation, knowledge, schedule, context, audit, tool-context) + JSON file implementations |
-| `@nexora/orchestrator` | WorkflowEngine (retry, goto, timeout, checkpoint/resume) + CronScheduler |
+| `@nexora/store` / `@nexora/store-json` | 6-store abstraction + JSON file implementations |
+| `@nexora/orchestrator` | WorkflowEngine (retry, goto, timeout, **checkpoint/resume**) + CronScheduler |
 | `@nexora/architectures` | ReAct, Loop, Plan-Execute, Deep Research |
-| `@nexora/tools` | ToolRegistry + 9 builtins (exec, read, grep, write, edit, knowledge, web-search, handraise, delegate) + MCP bridge |
-| `@nexora/adapters` | HttpAdapter (node:http, no Express) |
-| `@nexora/gateway` | GatewayRouter, LocalRuntimeRouter |
+| `@nexora/tools` | ToolRegistry + 9 builtins (exec, read, grep, write, edit, knowledge, web-search, **handraise**, **delegate**) + MCP bridge |
+| `@nexora/conversation` | ConversationRoom (persistent), TurnManager (mutex, failover, evaluate timeout) |
+| `@nexora/otel` | OTelTransport (W3C TraceContext), agent execution + tool call spans |
+| `@nexora/adapters` | **HttpAdapter**, **DiscordAdapter**, **SlackAdapter**, **PaperclipAdapter** |
+| `@nexora/gateway` | GatewayRouter, LocalRuntimeRouter, **StreamingGatewayRouter** (true SSE) |
 | `@nexora/registry` | InMemoryAgentRegistry |
-| `@nexora/cli` | `nexora create agent` scaffolding |
-
-### Experimental
-
-| Package | Purpose | Status |
-|---|---|---|
-| `@nexora/conversation` | Multi-agent group chat turn-taking (evaluate → select → respond → follow-up) | API may change |
-| `@nexora/otel` | OpenTelemetry spans for transport + agent execution | Trace parenting uses attributes, not W3C remote parent |
+| `@nexora/cli` | `create agent`, `dev`, `export`, `import` |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Adapter (HTTP / Discord / Slack)                       │
-│    ↓                                                    │
-│  Gateway (route by topic / intent)                      │
-│    ↓                                                    │
-│  Transport (Local / Redis PubSub / Redis Streams)       │
-│    ↓                                    ↑               │
-│  Bootstrap (auto-subscribe, schema validate, tenant)    │
-│    ↓                                    │               │
-│  ContextLoader (persona + limits + tools per tenant)    │
-│    ↓                                    │               │
-│  AgentRunner (architecture loop + middleware)            │
-│    ↓                                    │               │
-│  Tools (read/grep/exec/handraise/delegate/...)          │
-│    ↓                                    │               │
-│  Store (conversation/knowledge/audit)   │               │
-│                                         │               │
-│  Result → publish to topic ─────────────┘               │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  Adapter (HTTP / Discord / Slack / Paperclip)            │
+│    ↓                                                     │
+│  Gateway (route by topic / intent / streaming)           │
+│    ↓                                                     │
+│  Transport (Local / Redis / InMemoryDurable / DLQ)       │
+│    ↓                                     ↑               │
+│  Bootstrap (subscribe, schema, tenant, lint, budget)     │
+│    ↓                                     │               │
+│  ContextLoader (persona + limits + tools + goals)        │
+│    ↓                                     │               │
+│  AgentRunner (architecture loop + middleware + abort)     │
+│    ↓                                     │               │
+│  Tools (read/grep/exec/handraise/delegate/...)           │
+│    ↓                                     │               │
+│  Store (conversation/knowledge/audit)    │               │
+│                                          │               │
+│  Result → publish to topic ──────────────┘               │
+│                                                          │
+│  ┌─ Conversation Protocol ─────────────────────────┐     │
+│  │ Evaluate (50 tokens) → Select → Respond → Follow│     │
+│  └─────────────────────────────────────────────────┘     │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## Core Principles
 
 1. **Agents know only contracts, not each other.** Communication via topic pub/sub. No direct agent-to-agent calls.
 2. **Same agent, different tenants.** `ContextLoader.load(tenantId)` injects tenant-specific persona, tools, and limits.
-3. **Schema at the boundary.** `inputSchema` / `outputSchema` on AgentCard → AJV validation before the agent sees the message.
-4. **Workflow is data.** `WorkflowContract` is a declarative JSON structure — versionable, validatable, replayable.
+3. **Schema at the boundary.** `inputSchema`/`outputSchema` on AgentCard → AJV validation before the agent runs.
+4. **Workflow is data.** `WorkflowContract` is declarative JSON — versionable, validatable, replayable.
 5. **Silence > noise.** In conversation mode, agents that have nothing to add stay quiet.
-6. **Ask, don't guess.** The `handraise` tool lets agents pause and request human input instead of hallucinating.
+6. **Ask, don't guess.** `handraise` lets agents pause and request human input instead of hallucinating.
+7. **Redis is optional.** `InMemoryDurableTransport` provides at-least-once delivery without external deps.
 
 ## Multi-tenant
 
 ```bash
-# Same agent, different customers
 curl -H "X-Tenant-Id: startup" -d '{"content": "help"}' ...
 curl -H "X-Tenant-Id: enterprise" -d '{"content": "help"}' ...
 ```
 
-Each tenant gets its own persona, tool allowlist, model selection, and execution limits — loaded from `context/tenants/{id}/`.
+Each tenant gets its own persona, tool allowlist, model, execution limits, and budget — loaded from `context/tenants/{id}/`.
+
+## Examples
+
+| Example | What it proves |
+|---|---|
+| [helpdesk](examples/helpdesk/) | Full-stack E2E: HTTP → Gateway → Transport → Agent → Tool → Reply. Multi-tenant. 5 tests. |
+| [personal-assistant](examples/personal-assistant/) | OpenClaw-style 1:1 companion in 30 lines. Conversation + budget. 3 tests. |
 
 ## Development
 
@@ -129,17 +141,19 @@ git clone https://github.com/donggyun112/nexora.git
 cd nexora
 pnpm install
 pnpm build
-pnpm test          # 240 tests, all packages
-pnpm test:stable   # stable packages only
+pnpm test          # 274 tests, 17 packages, 32 turbo tasks
 ```
 
 ## Security
 
-6 rounds of independent code review (Codex/GPT). Key hardening:
-- exec tool: allowList required, 44 interpreter/exec-surface blocklist, version normalization, scrubbed env
-- File I/O: O_NOFOLLOW fd-based reads/writes, atomic edit via temp+rename, mode preservation
-- Cancellation: AbortSignal plumbed through LLM/tools/architectures, idle timeout kills in-flight work
-- Transport: delivery guarantees explicit in type system (`EventTransport` vs `DurableTransport`)
+9 rounds of independent code review (Codex/GPT). Key hardening:
+- **exec**: allowList required, 44 interpreter blocklist, version normalization, scrubbed env
+- **File I/O**: O_NOFOLLOW fd-based reads/writes, atomic edit via temp+rename, mode preservation
+- **Cancellation**: AbortSignal plumbed through LLM/tools/architectures, idle timeout kills in-flight work
+- **Transport**: delivery guarantees explicit in type system (`EventTransport` vs `DurableTransport`)
+- **Budget**: per-agent/tenant cost limits, pre-execution block on exceeded policies
+- **Import**: tar member path validation prevents traversal/escape
+- **Delegation**: cross-process cycle detection via envelope metadata depth counter
 
 See [safe-path.ts](packages/tools/src/builtin/safe-path.ts) threat model for known limitations.
 

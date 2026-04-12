@@ -250,16 +250,15 @@ export class InMemoryDurableTransport implements DurableTransport {
           topicGroups.set(sub.group, { cursors: new Map() });
         }
 
-        const groupState = topicGroups.get(sub.group)!;
         const consumerName = `c-${sub.group}`;
-        const cursor = groupState.cursors.get(consumerName) ?? 0;
 
-        // Deliver unprocessed entries
-        for (let i = cursor; i < entries.length; i++) {
+        // Scan ALL entries (not just from cursor) to catch nack'd/timed-out
+        // entries that need redelivery.
+        for (let i = 0; i < entries.length; i++) {
           const entry = entries[i];
           if (entry.ackedBy.has(sub.group)) continue;
 
-          // Check if claimed by another consumer and not yet timed out
+          // Check if claimed and not yet timed out
           const claim = entry.claimedBy.get(sub.group);
           if (claim && Date.now() - claim.claimedAt < this.visibilityTimeoutMs) {
             continue; // Still claimed, skip
@@ -267,7 +266,6 @@ export class InMemoryDurableTransport implements DurableTransport {
 
           // Claim it
           entry.claimedBy.set(sub.group, { consumer: consumerName, claimedAt: Date.now() });
-          groupState.cursors.set(consumerName, i + 1);
 
           // Deliver (fire-and-forget — errors leave it unacked for redelivery)
           const entryRef = entry;

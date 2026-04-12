@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/conversation" },
+    { "path": "../../packages/adapters" },
+    { "path": "../../packages/tools" },
+    { "path": "../../packages/transport" },
+    { "path": "../../packages/architectures" }
+  ]
+}

@@ -55,6 +55,37 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  examples/personal-assistant:
+    dependencies:
+      '@nexora/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@nexora/architectures':
+        specifier: workspace:*
+        version: link:../../packages/architectures
+      '@nexora/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@nexora/conversation':
+        specifier: workspace:*
+        version: link:../../packages/conversation
+      '@nexora/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@nexora/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      '@nexora/transport':
+        specifier: workspace:*
+        version: link:../../packages/transport
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   packages/adapters:
     dependencies:
       '@nexora/contracts':

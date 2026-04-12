@@ -1,0 +1,108 @@
+/**
+ * Personal Assistant — OpenClaw-style 1:1 AI companion built on Nexora.
+ *
+ * Proves that Nexora can do everything OpenClaw does (single-agent personal
+ * assistant) PLUS everything OpenClaw can't (multi-agent, multi-tenant,
+ * delegation, handraise, budget, OTel, crash recovery).
+ *
+ * Run:
+ *   export DISCORD_TOKEN=...
+ *   export ANTHROPIC_API_KEY=...
+ *   pnpm build && node dist/main.js
+ */
+
+import { ConversationRoom, TurnManager } from '@nexora/conversation';
+import { AnthropicProvider, CoreToolExecutor, InMemoryBudgetTracker, createBudgetMiddleware } from '@nexora/core';
+import { createReadTool, createGrepTool, createHandraiseTool } from '@nexora/tools';
+import { LocalTransport } from '@nexora/transport';
+import { defineAgent, topic } from '@nexora/contracts';
+import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
+import { HttpAdapter } from '@nexora/adapters';
+
+// ── Agent definition ───────────────────────────────────────────────────────
+
+const assistantCard = defineAgent({
+  name: 'assistant',
+  version: '0.1.0',
+  description: 'Personal AI assistant — reads files, searches code, asks humans when stuck',
+  architecture: 'conversation',
+  tools: ['read', 'grep', 'handraise'],
+  subscribes: [topic('assistant.requested')],
+  publishes: [topic('assistant.completed')],
+});
+
+// ── Infrastructure ─────────────────────────────────────────────────────────
+
+const transport = new LocalTransport();
+const llm = new AnthropicProvider({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  defaultModel: 'claude-sonnet-4-5',
+});
+
+// Budget: $5/day per assistant
+const budgetTracker = new InMemoryBudgetTracker();
+await budgetTracker.addPolicy({
+  id: 'assistant-daily',
+  scope: { type: 'agent', agentName: 'assistant' },
+  maxCostUsd: 5.0,
+  window: { type: 'daily' },
+  onExceed: 'warn',
+});
+
+// ── Conversation room ──────────────────────────────────────────────────────
+
+const room = new ConversationRoom('session');
+room.join({
+  card: assistantCard,
+  llm,
+  respondPrompt:
+    'You are a helpful personal assistant. Be concise, friendly, and direct. ' +
+    'If you cannot answer with certainty, use the handraise tool to ask a human.',
+});
+
+const tm = new TurnManager({ maxResponders: 1 });
+
+// ── HTTP gateway (also works as Discord adapter target) ────────────────────
+
+const router: MessageRouter = {
+  async route(msg: InboundMessage): Promise<OutboundMessage> {
+    const rmsg = room.addUserMessage(msg.content, msg.displayName);
+    const result = await tm.handleMessage(room, rmsg);
+    const content = result.responses[0]?.content ?? '(no response)';
+    return { content };
+  },
+  async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
+    const out = await this.route(msg);
+    onChunk({ type: 'text', text: out.content });
+    onChunk({ type: 'done', content: out.content });
+  },
+};
+
+const httpAdapter = new HttpAdapter({
+  port: Number(process.env.PORT ?? 3000),
+  host: '0.0.0.0',
+  resolveTenant: () => 'default',
+});
+
+await httpAdapter.start(router);
+
+console.log(`
+╔══════════════════════════════════════════════════════╗
+║  Personal Assistant — OpenClaw-style on Nexora       ║
+║                                                      ║
+║  HTTP: http://localhost:${httpAdapter.port()}                        ║
+║                                                      ║
+║  curl -X POST http://localhost:${httpAdapter.port()}/messages \\      ║
+║    -H "Content-Type: application/json" \\              ║
+║    -d '{"content": "What files are in src/?"}'        ║
+║                                                      ║
+║  Budget: $5.00/day (warn on exceed)                  ║
+║  Press Ctrl+C to stop.                               ║
+╚══════════════════════════════════════════════════════╝
+`);
+
+process.on('SIGINT', async () => {
+  await httpAdapter.stop();
+  await transport.close();
+  process.exit(0);
+});

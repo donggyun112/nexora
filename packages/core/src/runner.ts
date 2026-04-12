@@ -105,11 +105,17 @@ export class AgentRunner implements AgentRuntime {
     let loopGen: AsyncGenerator<AgentEvent> | null = null;
 
     try {
-      await this.pipeline.runBeforeExecution({
+      // R4 FIX: pass the actual tool list + system prompt to beforeExecution
+      // so middleware like toolFilterMiddleware can mutate them. The mutations
+      // are read back and the service-level tool executor is NOT rebuilt here
+      // (that's the caller's job at createRuntime time), but the tool list
+      // is available for logging/auditing middleware.
+      const beforeCtx = {
         input,
-        tools: [],
+        tools: services.tools.list() as unknown as import('@nexora/contracts').ToolDefinition[],
         systemPrompt: '',
-      });
+      };
+      await this.pipeline.runBeforeExecution(beforeCtx);
 
       loopGen = this.architecture.loop(services, input);
       const events = raceAgainstAbort(loopGen, controller.signal);

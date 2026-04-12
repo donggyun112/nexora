@@ -130,30 +130,18 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       });
 
       try {
-        // C3 + C2: propagate depth + caller identity in request options.
-        // These flow into the MessageEnvelope.metadata on the transport side.
-        // The receiving bootstrap reads them and can: (1) refuse if depth is
-        // too high, (2) check if callerAgent is allowed to invoke the capability.
-        //
-        // NOTE: transport.request() puts traceId/tenantId/conversationId into
-        // metadata. We need delegationDepth and callerAgent to also land there.
-        // Since RequestOptions doesn't have these fields, we pass them as part
-        // of the payload wrapper. The receiving bootstrap extracts them.
-        const delegationPayload = {
-          ...((typeof params.input === 'object' && params.input !== null) ? params.input : { _input: params.input }),
-          __nexora_delegation__: {
-            depth: nextDepth,
-            caller: callerAgentName,
-            capability: params.capability,
-          },
-        };
-
+        // C3 FIX: propagate depth + caller identity via RequestOptions
+        // (not payload wrapping). RequestOptions now has delegationDepth +
+        // callerAgent fields. These flow into the MessageEnvelope metadata
+        // which bootstrap reads and enforces.
         const reply = await transport.request(
           targetTopic as TopicString,
-          delegationPayload,
+          params.input,
           {
             timeoutMs,
             tenantId: ctx.tenantId,
+            delegationDepth: nextDepth,
+            callerAgent: callerAgentName,
           },
         );
 

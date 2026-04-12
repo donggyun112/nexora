@@ -186,13 +186,15 @@ export class RedisStreamsTransport implements DurableTransport {
   }
 
   /**
-   * Subscribe as part of a durable consumer group. The handler MUST call
-   * control.ack() on success. Unacked messages are redelivered.
+   * Subscribe as part of a durable consumer group.
    *
-   * NOTE: the current implementation resolves `pattern` to a single stream
-   * key (wildcards are treated as exact match). Pattern-based stream
-   * subscription would need XREAD on a list of keys, which is feasible but
-   * deferred until we have a concrete multi-topic use case.
+   * C1 FIX: RedisStreams does NOT support wildcard patterns. Each stream
+   * is a distinct Redis key — there is no `PSUBSCRIBE` equivalent for
+   * streams. Wildcard patterns (`*`, `#`) are now REJECTED with a clear
+   * error instead of silently creating a broken stream key.
+   *
+   * For wildcard subscription, use InMemoryDurableTransport (which supports
+   * wildcards natively) or subscribe to each concrete topic individually.
    */
   subscribeGroup(
     pattern: string,
@@ -200,6 +202,15 @@ export class RedisStreamsTransport implements DurableTransport {
     handler: (envelope: MessageEnvelope, control: DeliveryControl) => Promise<void>,
   ): Subscription {
     if (this.closed) throw new Error('RedisStreamsTransport is closed');
+
+    // C1 FIX: reject wildcards — Redis Streams does not support pattern matching
+    if (pattern.includes('*') || pattern.includes('#')) {
+      throw new Error(
+        `RedisStreamsTransport.subscribeGroup does not support wildcard patterns ("${pattern}"). ` +
+        `Redis Streams are keyed by exact topic name. Subscribe to each concrete topic individually, ` +
+        `or use InMemoryDurableTransport for wildcard support.`,
+      );
+    }
 
     const stream = this.streamKey(pattern);
     const sub: PollingSubscription = {
@@ -333,7 +344,13 @@ export class RedisStreamsTransport implements DurableTransport {
         conversationId: options?.conversationId ?? conversationId(),
         tenantId: options?.tenantId ?? 'default',
         timestamp: Date.now(),
-      },
+        // C2 FIX: tell the responder WHERE to publish the reply. The
+        // responder's bootstrap should check this field and XADD to the
+        // reply stream instead of (or in addition to) the normal result topic.
+        // Without this, replies only resolve if the caller happens to be
+        // subscribed to the responder's publish topic.
+        _replyStream: replyStream,
+      } as MessageEnvelope['metadata'] & { _replyStream: string },
     };
 
     // Ensure the reply stream + group exist.

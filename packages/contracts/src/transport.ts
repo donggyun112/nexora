@@ -212,6 +212,13 @@ export interface RequestOptions {
   traceId?: string;
   conversationId?: string;
   tenantId?: string;
+
+  /**
+   * Delegation metadata — propagated across hops for cycle detection + auth.
+   * Set by the delegate tool; read by bootstrap on the receiving end.
+   */
+  delegationDepth?: number;
+  callerAgent?: string;
 }
 
 /**

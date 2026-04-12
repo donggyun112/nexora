@@ -236,8 +236,10 @@ describe('createOTelAgentMiddleware', () => {
     const tracer = new FakeTracer();
     const mw = createOTelAgentMiddleware({ tracer: tracer as unknown as Tracer });
 
-    mw.beforeExecution!({ tools: [{}, {}, {}], systemPrompt: '', input: { prompt: 'hi' } });
-    mw.afterExecution!({ events: [1, 2, 3, 4, 5], finalContent: 'done', input: { prompt: 'hi' } });
+    // Use same input reference so WeakMap can correlate before/after
+    const input = { prompt: 'hi' };
+    mw.beforeExecution!({ tools: [{}, {}, {}], systemPrompt: '', input });
+    mw.afterExecution!({ events: [1, 2, 3, 4, 5], finalContent: 'done', input });
 
     expect(tracer.spans).toHaveLength(1);
     expect(tracer.spans[0].name).toContain('execute');
@@ -269,9 +271,10 @@ describe('createOTelAgentMiddleware', () => {
     const tracer = new FakeTracer();
     const mw = createOTelAgentMiddleware({ tracer: tracer as unknown as Tracer });
 
-    mw.beforeExecution!({ tools: [], systemPrompt: '', input: {} });
+    const input = {};
+    mw.beforeExecution!({ tools: [], systemPrompt: '', input });
     const err = new Error('llm crash');
-    mw.afterExecution!({ events: [], finalContent: '', input: {}, error: err });
+    mw.afterExecution!({ events: [], finalContent: '', input, error: err });
 
     expect(tracer.spans[0].status?.code).toBe(SpanStatusCode.ERROR);
     expect(tracer.spans[0].exceptions).toHaveLength(1);

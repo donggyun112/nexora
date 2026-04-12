@@ -247,6 +247,34 @@ async function handleMessage(args: {
   const tenantId = envelope.metadata.tenantId;
 
   try {
+    // C3 FIX: enforce delegation depth limit if the message carries delegation metadata.
+    // This works across processes because the delegate tool puts the depth into
+    // RequestOptions, which the transport propagates into envelope.metadata.
+    const delegationDepth = (envelope.metadata as { delegationDepth?: number }).delegationDepth;
+    if (delegationDepth !== undefined && delegationDepth > 10) {
+      args.logger.warn(`Delegation depth ${delegationDepth} exceeded max 10 — rejecting`, {
+        callerAgent: (envelope.metadata as { callerAgent?: string }).callerAgent,
+        topic: envelope.topic,
+      });
+      await args.transport.publish({
+        id: messageId(),
+        topic: `${envelope.topic}.failed`,
+        type: 'result',
+        payload: { error: `Delegation depth ${delegationDepth} exceeds limit` },
+        metadata: {
+          traceId: envelope.metadata.traceId,
+          spanId: spanId(),
+          parentSpanId: envelope.metadata.spanId,
+          conversationId: envelope.metadata.conversationId,
+          replyTo: envelope.id,
+          tenantId,
+          sourceInstanceId: card.name,
+          timestamp: Date.now(),
+        },
+      });
+      return;
+    }
+
     // Schema validation: reject malformed inbound payloads BEFORE we spend
     // any context-loading or LLM budget on them. Schema errors go to a
     // dedicated `.schema-rejected` topic instead of `.failed` so operators

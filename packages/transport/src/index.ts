@@ -25,3 +25,6 @@ export type { TraceContext } from './tracing.js';
 
 export { DLQTransport } from './dlq.js';
 export type { DLQTransportOptions } from './dlq.js';
+
+export { InMemoryDurableTransport } from './durable-local.js';
+export type { InMemoryDurableTransportOptions } from './durable-local.js';

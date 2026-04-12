@@ -118,3 +118,19 @@ export type {
   WorkflowStateStore,
   WorkflowCheckpoint,
 } from './workflow-state.js';
+
+export type {
+  CostEvent,
+  BudgetPolicy,
+  BudgetScope,
+  BudgetWindow,
+  BudgetStatus,
+  BudgetTracker,
+} from './budget.js';
+
+export type {
+  Goal,
+  GoalChain,
+  GoalStore,
+} from './goal.js';
+export { formatGoalChain } from './goal.js';

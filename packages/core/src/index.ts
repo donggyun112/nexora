@@ -59,3 +59,8 @@ export { createSchemaValidator, SchemaValidationError } from './schema.js';
 
 export { lintAgentCard, enforceLint } from './lint.js';
 export type { LintResult } from './lint.js';
+
+export { InMemoryBudgetTracker, estimateCostUsd } from './budget.js';
+
+export { createBudgetMiddleware, BudgetExceededError } from './budget-middleware.js';
+export type { BudgetMiddlewareOptions } from './budget-middleware.js';

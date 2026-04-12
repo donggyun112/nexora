@@ -24,6 +24,13 @@ export interface WorkflowContract {
 
   /** 워크플로우 레벨 타임아웃 (ms) */
   timeoutMs?: number;
+
+  /**
+   * Goal this workflow serves. When set, agents participating in this
+   * workflow receive the goal chain in their system prompt via ContextLoader,
+   * giving them "why am I doing this?" context for decision-making.
+   */
+  goalId?: string;
 }
 
 export type WorkflowTrigger =

@@ -22,3 +22,6 @@ export type {
 
 export { TracingTransport, currentTrace, withTrace } from './tracing.js';
 export type { TraceContext } from './tracing.js';
+
+export { DLQTransport } from './dlq.js';
+export type { DLQTransportOptions } from './dlq.js';

@@ -14,109 +14,100 @@
   <a href="docs/architecture/"><strong>Architecture</strong></a>
 </p>
 
+> **v0.1** — The core works and is tested (288 tests). APIs may still change before 1.0. Feedback welcome.
+
 ---
 
 ## What is Nexora?
 
-Nexora is a TypeScript framework for running **multiple AI agents as a coordinated team**. Agents communicate via topic pub/sub, serve multiple tenants with isolated contexts, and every action is traceable.
+Nexora is a TypeScript framework for running **multiple AI agents as a coordinated team**.
 
 ```
-curl POST /messages → HttpAdapter → GatewayRouter → Transport
-  → Agent (ReAct + tools) → result topic → HTTP response
+nexora create agent my-agent
+nexora dev
+curl localhost:3000/messages -d '{"content": "hello"}'
 ```
 
-### Why Nexora?
+## Start here
+
+You only need **3 packages** to run your first agent:
+
+```
+@nexora/core          — agent runtime + LLM providers
+@nexora/contracts     — shared types
+@nexora/transport     — message bus (LocalTransport for dev)
+```
+
+That's it. Everything else is optional and added when you need it.
+
+| When you need... | Add... |
+|---|---|
+| Per-tenant personas and limits | `@nexora/context` |
+| Workflow chains with retry/checkpoint | `@nexora/orchestrator` |
+| HTTP API entry point | `@nexora/adapters` + `@nexora/gateway` |
+| Multi-agent conversation (who answers?) | `@nexora/conversation` |
+| Agent delegates to another agent | `delegate` tool (in `@nexora/tools`) |
+| Agent asks a human when stuck | `handraise` tool (in `@nexora/tools`) |
+| Tracing in Jaeger/Tempo | `@nexora/otel` |
+| Cost control | `BudgetTracker` (in `@nexora/core`) |
+| Discord/Slack/Paperclip | `@nexora/adapters` |
+| Scaffold + dev server | `@nexora/cli` |
+
+See the [full getting started guide](docs/getting-started.md) — zero to running agent in 5 steps.
+
+## Why Nexora?
 
 | Problem | Nexora's answer |
 |---|---|
-| Agents all respond at once in group chat | **Conversation protocol** — agents evaluate relevance, only the best one speaks |
-| Agent doesn't know → hallucinates | **Handraise** — agent pauses and asks a human instead of guessing |
-| One agent can't do it alone | **Delegate** — agent finds another by capability, not by name |
-| Same agent, different customers | **Multi-tenant context** — same binary, different persona/tools/limits per tenant |
-| "What did the agent do?" | **OTel tracing** — every tool call, every LLM invocation, one trace in Jaeger |
-| Workflow crashes mid-flight | **Checkpoint/resume** — pick up from the last completed step |
-| Message lost when subscriber is down | **Durable transport** — at-least-once delivery with consumer groups (Redis Streams or in-memory) |
-| LLM costs spiral out of control | **Budget tracking** — per-agent, per-tenant cost limits with block/warn/pause |
-| Failed messages disappear | **DLQ + idempotency** — dead letter queue captures failures, dedup prevents retries |
-| "Why is the agent doing this?" | **Goal hierarchy** — every task traces back to a company goal |
+| Agents all respond at once in group chat | **Conversation protocol** — agents evaluate relevance, best one speaks |
+| Agent doesn't know → hallucinates | **Handraise** — pause and ask a human instead of guessing |
+| One agent can't do it alone | **Delegate** — find another by capability, not by name |
+| Same agent, different customers | **Multi-tenant context** — same binary, different persona/tools/limits |
+| "What did the agent do?" | **OTel tracing** — every call, one trace in Jaeger |
+| Workflow crashes mid-flight | **Checkpoint/resume** — pick up from the last step |
+| LLM costs spiral | **Budget tracking** — per-agent/tenant limits with block/warn |
 
 ### Can I build OpenClaw with this?
 
 [Yes. Here's the 30-line version.](examples/personal-assistant/)
 
-## Quickstart
-
-```bash
-# 1. Create an agent
-npx @nexora/cli create agent my-agent --tools read,grep
-
-# 2. Start everything
-npx @nexora/cli dev
-
-# 3. Send a message
-curl -X POST http://localhost:3000/messages \
-  -H "Content-Type: application/json" \
-  -d '{"content": "What files are in src/?"}'
-```
-
-See the [full getting started guide](docs/getting-started.md) and the [helpdesk reference app](examples/helpdesk/).
-
-## Packages (17, all stable)
-
-| Package | Purpose |
-|---|---|
-| `@nexora/contracts` | Shared interfaces, ID helpers, budget, goal, workflow-state, registry contracts |
-| `@nexora/core` | AgentRunner, LLM providers (Anthropic/OpenAI/Fallback), ToolExecutor, Compaction, Middleware, Bootstrap, Schema validation, Lint, BudgetTracker |
-| `@nexora/transport` | LocalTransport, RedisTransport (pub/sub), RedisStreamsTransport (durable), **InMemoryDurableTransport** (no Redis needed), TracingTransport, DLQTransport |
-| `@nexora/context` | PersonaLoader, SkillLoader, TenantConfigStore, CoreContextLoader |
-| `@nexora/store` / `@nexora/store-json` | 6-store abstraction + JSON file implementations |
-| `@nexora/orchestrator` | WorkflowEngine (retry, goto, timeout, **checkpoint/resume**) + CronScheduler |
-| `@nexora/architectures` | ReAct, Loop, Plan-Execute, Deep Research |
-| `@nexora/tools` | ToolRegistry + 9 builtins (exec, read, grep, write, edit, knowledge, web-search, **handraise**, **delegate**) + MCP bridge |
-| `@nexora/conversation` | ConversationRoom (persistent), TurnManager (mutex, failover, evaluate timeout) |
-| `@nexora/otel` | OTelTransport (W3C TraceContext), agent execution + tool call spans |
-| `@nexora/adapters` | **HttpAdapter**, **DiscordAdapter**, **SlackAdapter**, **PaperclipAdapter** |
-| `@nexora/gateway` | GatewayRouter, LocalRuntimeRouter, **StreamingGatewayRouter** (true SSE) |
-| `@nexora/registry` | InMemoryAgentRegistry |
-| `@nexora/cli` | `create agent`, `dev`, `export`, `import` |
-
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Adapter (HTTP / Discord / Slack / Paperclip)            │
-│    ↓                                                     │
-│  Gateway (route by topic / intent / streaming)           │
-│    ↓                                                     │
-│  Transport (Local / Redis / InMemoryDurable / DLQ)       │
-│    ↓                                     ↑               │
-│  Bootstrap (subscribe, schema, tenant, lint, budget)     │
-│    ↓                                     │               │
-│  ContextLoader (persona + limits + tools + goals)        │
-│    ↓                                     │               │
-│  AgentRunner (architecture loop + middleware + abort)     │
-│    ↓                                     │               │
-│  Tools (read/grep/exec/handraise/delegate/...)           │
-│    ↓                                     │               │
-│  Store (conversation/knowledge/audit)    │               │
-│                                          │               │
-│  Result → publish to topic ──────────────┘               │
-│                                                          │
-│  ┌─ Conversation Protocol ─────────────────────────┐     │
-│  │ Evaluate (50 tokens) → Select → Respond → Follow│     │
-│  └─────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────┘
+Adapter (HTTP / Discord / Slack)
+  → Gateway (route by topic)
+    → Transport (Local / Redis / InMemoryDurable)
+      → Bootstrap (subscribe, validate, tenant)
+        → ContextLoader (persona + limits + tools)
+          → AgentRunner (ReAct / PlanExecute / DeepResearch)
+            → Tools (read / grep / exec / handraise / delegate)
+            → Store (conversation / knowledge / audit)
+          → Result → publish to topic
 ```
 
-## Core Principles
+## All packages
 
-1. **Agents know only contracts, not each other.** Communication via topic pub/sub. No direct agent-to-agent calls.
-2. **Same agent, different tenants.** `ContextLoader.load(tenantId)` injects tenant-specific persona, tools, and limits.
-3. **Schema at the boundary.** `inputSchema`/`outputSchema` on AgentCard → AJV validation before the agent runs.
-4. **Workflow is data.** `WorkflowContract` is declarative JSON — versionable, validatable, replayable.
-5. **Silence > noise.** In conversation mode, agents that have nothing to add stay quiet.
-6. **Ask, don't guess.** `handraise` lets agents pause and request human input instead of hallucinating.
-7. **Redis is optional.** `InMemoryDurableTransport` provides at-least-once delivery without external deps.
+<details>
+<summary>17 packages (click to expand)</summary>
+
+| Package | Purpose |
+|---|---|
+| `@nexora/contracts` | Shared interfaces, ID helpers, budget, goal, registry contracts |
+| `@nexora/core` | AgentRunner, LLM providers, ToolExecutor, Compaction, Middleware, Bootstrap, Schema, Lint, Budget |
+| `@nexora/transport` | LocalTransport, RedisTransport, RedisStreamsTransport, InMemoryDurableTransport, TracingTransport, DLQTransport |
+| `@nexora/context` | PersonaLoader, SkillLoader, TenantConfigStore, CoreContextLoader |
+| `@nexora/store` / `@nexora/store-json` | 6-store abstraction + JSON file implementations |
+| `@nexora/orchestrator` | WorkflowEngine (checkpoint/resume) + CronScheduler |
+| `@nexora/architectures` | ReAct, Loop, Plan-Execute, Deep Research |
+| `@nexora/tools` | ToolRegistry + 9 builtins + MCP bridge + handraise + delegate |
+| `@nexora/conversation` | ConversationRoom, TurnManager (turn-taking protocol) |
+| `@nexora/otel` | OTelTransport (W3C TraceContext), agent span middleware |
+| `@nexora/adapters` | HttpAdapter, DiscordAdapter, SlackAdapter, PaperclipAdapter |
+| `@nexora/gateway` | GatewayRouter, StreamingGatewayRouter |
+| `@nexora/registry` | InMemoryAgentRegistry |
+| `@nexora/cli` | `create agent`, `dev`, `export`, `import` |
+
+</details>
 
 ## Multi-tenant
 
@@ -125,37 +116,29 @@ curl -H "X-Tenant-Id: startup" -d '{"content": "help"}' ...
 curl -H "X-Tenant-Id: enterprise" -d '{"content": "help"}' ...
 ```
 
-Each tenant gets its own persona, tool allowlist, model, execution limits, and budget — loaded from `context/tenants/{id}/`.
+Each tenant gets its own persona, tool allowlist, model, limits, and budget.
 
 ## Examples
 
-| Example | What it proves |
+| Example | What it shows |
 |---|---|
-| [helpdesk](examples/helpdesk/) | Full-stack E2E: HTTP → Gateway → Transport → Agent → Tool → Reply. Multi-tenant. 5 tests. |
-| [personal-assistant](examples/personal-assistant/) | OpenClaw-style 1:1 companion in 30 lines. Conversation + budget. 3 tests. |
+| [helpdesk](examples/helpdesk/) | Full-stack E2E: HTTP → Agent → Tools → Reply. Multi-tenant. |
+| [personal-assistant](examples/personal-assistant/) | OpenClaw-style 1:1 companion in 30 lines. |
 
 ## Development
 
 ```bash
 git clone https://github.com/donggyun112/nexora.git
-cd nexora
-pnpm install
-pnpm build
-pnpm test          # 274 tests, 17 packages, 32 turbo tasks
+cd nexora && pnpm install && pnpm build && pnpm test
 ```
 
 ## Security
 
-9 rounds of independent code review (Codex/GPT). Key hardening:
-- **exec**: allowList required, 44 interpreter blocklist, version normalization, scrubbed env
-- **File I/O**: O_NOFOLLOW fd-based reads/writes, atomic edit via temp+rename, mode preservation
-- **Cancellation**: AbortSignal plumbed through LLM/tools/architectures, idle timeout kills in-flight work
-- **Transport**: delivery guarantees explicit in type system (`EventTransport` vs `DurableTransport`)
-- **Budget**: per-agent/tenant cost limits, pre-execution block on exceeded policies
-- **Import**: tar member path validation prevents traversal/escape
-- **Delegation**: cross-process cycle detection via envelope metadata depth counter
+10 rounds of code review. Key hardening: exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), AbortSignal cancellation, typed transport guarantees, budget enforcement, import path validation, delegation cycle detection.
 
-See [safe-path.ts](packages/tools/src/builtin/safe-path.ts) threat model for known limitations.
+## Status
+
+This is **v0.1** — the architecture is proven and the tests pass, but the APIs are not frozen. We expect breaking changes before 1.0 based on real-world usage feedback.
 
 ## License
 

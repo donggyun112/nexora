@@ -21,3 +21,10 @@ export type {
   PaperclipClientConfig,
   PaperclipIssue,
 } from './paperclip.js';
+
+export { SlackAdapter } from './slack.js';
+export type {
+  SlackAdapterOptions,
+  SlackClientLike,
+  SlackMessageEvent,
+} from './slack.js';

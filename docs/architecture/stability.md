@@ -21,19 +21,21 @@ its `package.json` under `nexora.stability`.
 | `@nexora/registry` | InMemoryAgentRegistry |
 | `@nexora/cli` | `nexora create agent` scaffolding |
 
-## Experimental packages (API may change at any time)
+## Recently promoted to stable
 
-| Package | Why experimental | Path to stable |
+| Package | Was experimental because | Promoted after |
 |---|---|---|
-| `@nexora/conversation` | Turn-taking protocol is new, concurrency model untested at scale | Needs: real adapter integration, persistent room state, production load test |
-| `@nexora/otel` | OTel trace parenting uses attributes not true remote parent (Nexora UUIDs ≠ W3C TraceContext) | Needs: W3C TraceContext bridge or Nexora ID format alignment |
+| `@nexora/conversation` | Concurrency model untested | Round-7: per-room mutex, primary failover, message ownership, evaluate timeout. Round-8: persistence via ConversationStore, maxHistory eviction |
+| `@nexora/otel` | Trace parenting was attribute-only | Round-8: W3C TraceContext bridge via toW3CTraceId/toW3CSpanId + remote SpanContext construction |
+
+## Experimental packages
+
+None currently. All packages are stable.
 
 ## Running tests
 
 ```bash
-pnpm test              # ALL packages (stable + experimental)
-pnpm test:stable       # Stable packages only (CI default)
-pnpm test:experimental # Experimental packages only
+pnpm test              # ALL packages
 ```
 
 ## Rules

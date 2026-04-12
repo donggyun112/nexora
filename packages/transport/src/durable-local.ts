@@ -87,9 +87,9 @@ export class InMemoryDurableTransport implements DurableTransport {
     return {
       kind: 'in-memory-durable',
       deliveryGuarantee: 'at-least-once',
-      durable: true,
+      durable: false, // H2 FIX: data does NOT survive restart — honest about it
       supportsConsumerGroups: true,
-      notes: 'In-process durable transport. No Redis required. Data lost on restart.',
+      notes: 'In-process at-least-once transport. Consumer groups + redelivery within a process lifetime. Data lost on restart. No Redis required.',
     };
   }
 
@@ -150,14 +150,18 @@ export class InMemoryDurableTransport implements DurableTransport {
   }
 
   async ackDelivery(envelope: MessageEnvelope): Promise<void> {
-    // Find and ack across all matching topic logs
+    // H2 FIX: ack only for the group that claimed it, not all groups.
+    // Since we don't know which group the caller belongs to from the
+    // envelope alone, we ack for the first group that has this entry claimed.
+    // For proper per-group ack, callers should use DeliveryControl.ack()
+    // from subscribeGroup (which is the primary API).
     for (const [, entries] of this.logs) {
       for (const entry of entries) {
         if (entry.envelope.id === envelope.id) {
-          // Ack for all groups (simplified — in practice you'd want per-group ack)
-          for (const [, groupMap] of this.groups) {
-            for (const [groupName] of groupMap) {
+          for (const [groupName, claim] of entry.claimedBy) {
+            if (!entry.ackedBy.has(groupName)) {
               entry.ackedBy.add(groupName);
+              break; // ack one group per call
             }
           }
         }

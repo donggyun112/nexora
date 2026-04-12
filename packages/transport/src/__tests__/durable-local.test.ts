@@ -33,7 +33,7 @@ describe('InMemoryDurableTransport', () => {
     const t = new InMemoryDurableTransport({ pollIntervalMs: 10 });
     const d = t.describe();
     expect(d.deliveryGuarantee).toBe('at-least-once');
-    expect(d.durable).toBe(true);
+    expect(d.durable).toBe(false); // honest: data lost on restart
     expect(d.supportsConsumerGroups).toBe(true);
     expect(d.kind).toBe('in-memory-durable');
     await t.close();

@@ -1,12 +1,12 @@
 /**
- * OTel Agent Middleware — per-execution span isolation.
+ * OTel Agent Middleware — per-execution span isolation via AsyncLocalStorage.
  *
- * R3 FIX: previous versions used a shared stack/array for execution spans,
- * which broke under concurrent executions (interleaved push/pop). Now each
- * execution is keyed by its input object reference, and tool spans are
- * parented to their own execution's span via a WeakMap lookup.
+ * M1 FIX: previous versions used shared state (stack, WeakMap + lastExecutionSpan)
+ * that wasn't concurrent-safe for tool span parenting. Now uses AsyncLocalStorage
+ * so each execution's context is fully isolated from concurrent runs.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Tracer, Span } from '@opentelemetry/api';
 import {
   trace,
@@ -28,18 +28,27 @@ export interface OTelAgentMiddlewareOptions {
   defaultAttributes?: Record<string, string>;
 }
 
+interface ExecutionContext {
+  executionSpan: Span;
+}
+
+/**
+ * Per-execution span storage. beforeExecution sets it, afterExecution clears it,
+ * and beforeToolCall reads it. AsyncLocalStorage ensures concurrent executions
+ * each see their own span without interference.
+ */
+const executionStorage = new AsyncLocalStorage<ExecutionContext>();
+
 export function createOTelAgentMiddleware(
   options: OTelAgentMiddlewareOptions = {},
 ): AgentMiddleware & { name: string } {
   const tracer = options.tracer ?? trace.getTracer('nexora');
   const defaultAttrs = options.defaultAttributes ?? {};
-
-  // R3 FIX: key execution spans by input object reference.
-  // This is concurrent-safe because each execute() call gets a unique input object.
-  const executionSpans = new WeakMap<object, Span>();
-  // Fallback for non-object inputs (rare but possible)
-  let lastExecutionSpan: Span | null = null;
   const toolSpans = new Map<string, Span>();
+
+  // Fallback for environments where AsyncLocalStorage doesn't propagate
+  // (e.g. test mocks that call before/afterExecution synchronously).
+  let fallbackSpan: Span | null = null;
 
   return {
     name: 'otel',
@@ -52,21 +61,20 @@ export function createOTelAgentMiddleware(
           'nexora.agent.tools': String(ctx.tools.length),
         },
       });
-      if (ctx.input && typeof ctx.input === 'object') {
-        executionSpans.set(ctx.input as object, span);
-      }
-      lastExecutionSpan = span;
+      fallbackSpan = span;
+
+      // Enter the execution context. The MiddlewarePipeline calls
+      // the agent loop within the same async context, so tool calls
+      // issued during this execution will inherit this storage.
+      executionStorage.enterWith({ executionSpan: span });
     },
 
     afterExecution(ctx: { events: unknown[]; finalContent: string; error?: Error; input: unknown }): void {
-      const span = (ctx.input && typeof ctx.input === 'object')
-        ? executionSpans.get(ctx.input as object)
-        : lastExecutionSpan;
+      const execCtx = executionStorage.getStore();
+      const span = execCtx?.executionSpan ?? fallbackSpan;
       if (!span) return;
-      if (ctx.input && typeof ctx.input === 'object') {
-        executionSpans.delete(ctx.input as object);
-      }
-      lastExecutionSpan = null;
+
+      fallbackSpan = null;
 
       span.setAttribute('nexora.agent.events', ctx.events.length);
       if (ctx.error) {
@@ -79,7 +87,9 @@ export function createOTelAgentMiddleware(
     },
 
     beforeToolCall(ctx: { toolName: string; callId: string; input: unknown; tool: unknown }): void {
-      const parentSpan = lastExecutionSpan;
+      // M1 FIX: get the execution span from AsyncLocalStorage, not shared state
+      const execCtx = executionStorage.getStore();
+      const parentSpan = execCtx?.executionSpan ?? fallbackSpan;
       const parentCtx = parentSpan
         ? trace.setSpan(otelContext.active(), parentSpan)
         : otelContext.active();

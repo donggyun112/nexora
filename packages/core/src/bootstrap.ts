@@ -366,6 +366,17 @@ async function handleMessage(args: {
     };
 
     await transport.publish(reply);
+
+    // H1 FIX: if the request came with a _replyStream (RedisStreams request/reply),
+    // also publish the reply to that stream so the caller's reply listener picks it up.
+    // Without this, replies on topics the caller doesn't subscribe to would timeout.
+    const replyStream = (envelope.metadata as { _replyStream?: string })._replyStream;
+    if (replyStream && typeof replyStream === 'string') {
+      const replyStreamEnvelope = { ...reply, topic: replyStream };
+      await transport.publish(replyStreamEnvelope).catch(() => {
+        // Best effort — if the reply stream doesn't exist, the normal topic reply is still there
+      });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`Agent ${card.name} failed`, { topic: envelope.topic, message });

@@ -8,6 +8,10 @@ export {
   conversationId,
   auditId,
   jobId,
+  w3cTraceId,
+  w3cSpanId,
+  toW3CTraceId,
+  toW3CSpanId,
 } from './id.js';
 
 export type { AgentDefinition } from './define.js';

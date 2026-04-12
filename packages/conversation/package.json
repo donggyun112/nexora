@@ -23,6 +23,6 @@
     "typescript": "^5.8.0"
   },
   "nexora": {
-    "stability": "experimental"
+    "stability": "stable"
   }
 }

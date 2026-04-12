@@ -41,3 +41,42 @@ export function auditId(): string {
 export function jobId(): string {
   return createId('job');
 }
+
+// ─── W3C TraceContext compatible IDs ───────────────────────────────────────
+// OTel requires 32-hex traceId and 16-hex spanId (no prefix, no dashes).
+// These are used by @nexora/otel to bridge Nexora traces into W3C format.
+
+import { randomBytes } from 'node:crypto';
+
+/** 32-char hex trace ID (W3C TraceContext compatible) */
+export function w3cTraceId(): string {
+  return randomBytes(16).toString('hex');
+}
+
+/** 16-char hex span ID (W3C TraceContext compatible) */
+export function w3cSpanId(): string {
+  return randomBytes(8).toString('hex');
+}
+
+/**
+ * Extract a W3C-compatible 32-hex traceId from a Nexora ID.
+ * If the ID is already 32 hex chars, returns as-is.
+ * If it has a prefix (e.g. 'trace_abc123...'), strips the prefix.
+ * If it's too short, pads with zeros. Too long, truncates.
+ */
+export function toW3CTraceId(nexoraId: string): string {
+  const hex = nexoraId.replace(/^[a-z]+_/, '').replace(/-/g, '');
+  if (hex.length === 32) return hex;
+  if (hex.length > 32) return hex.slice(0, 32);
+  return hex.padEnd(32, '0');
+}
+
+/**
+ * Extract a W3C-compatible 16-hex spanId from a Nexora ID.
+ */
+export function toW3CSpanId(nexoraId: string): string {
+  const hex = nexoraId.replace(/^[a-z]+_/, '').replace(/-/g, '');
+  if (hex.length === 16) return hex;
+  if (hex.length > 16) return hex.slice(0, 16);
+  return hex.padEnd(16, '0');
+}

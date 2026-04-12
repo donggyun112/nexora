@@ -50,6 +50,7 @@ import type {
   TopicString,
   TransportDescription,
 } from '@nexora/contracts';
+import { toW3CTraceId, toW3CSpanId } from '@nexora/contracts';
 
 export interface OTelTransportOptions {
   /**
@@ -123,15 +124,17 @@ export class OTelTransport implements EventTransport {
     handler: (envelope: MessageEnvelope) => Promise<void>,
   ): Subscription {
     return this.inner.subscribe(pattern, async (envelope) => {
-      // C6 FIX: create the handler span as a child of the envelope's
-      // spanId (the publisher's span). We link them via a SpanLink so
-      // distributed traces show the causal chain even across processes.
-      // NOTE: OTel's `startSpan` with a remote parent requires constructing
-      // a SpanContext from the envelope's IDs. Since Nexora's IDs are
-      // UUID-based (not W3C TraceContext format), we cannot do a true
-      // remote parent. Instead we add a link attribute so the trace viewer
-      // can correlate them, and we set the span as active during the handler
-      // so nested spans are children of it.
+      // W3C TRACE PARENT: construct a remote SpanContext from the envelope's
+      // Nexora IDs (converted to W3C format), so the handler span is a true
+      // child of the publisher's span in the trace viewer.
+      const remoteSpanContext: SpanContext = {
+        traceId: toW3CTraceId(envelope.metadata.traceId),
+        spanId: toW3CSpanId(envelope.metadata.spanId),
+        traceFlags: 1, // sampled
+        isRemote: true,
+      };
+      const remoteParentCtx = trace.setSpanContext(ROOT_CONTEXT, remoteSpanContext);
+
       const span = this.tracer.startSpan(`nexora.handle ${envelope.topic}`, {
         kind: SpanKindEnum.CONSUMER,
         attributes: {
@@ -144,7 +147,7 @@ export class OTelTransport implements EventTransport {
           'nexora.tenantId': envelope.metadata.tenantId,
           'nexora.subscribePattern': pattern,
         },
-      });
+      }, remoteParentCtx);
 
       try {
         // Make the handler span active so any downstream spans (tool calls,

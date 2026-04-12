@@ -12,7 +12,7 @@
  */
 
 export { ConversationRoom } from './room.js';
-export type { RoomMessage, RoomParticipant } from './room.js';
+export type { RoomMessage, RoomParticipant, ConversationRoomOptions } from './room.js';
 
 export { TurnManager } from './turn-manager.js';
 export type { TurnManagerOptions, TurnResult } from './turn-manager.js';

@@ -9,6 +9,7 @@
 
 import { scaffoldAgent } from './scaffold.js';
 import { runDev } from './dev.js';
+import { exportPackage, importPackage } from './portability.js';
 
 interface ParsedArgs {
   command: string;
@@ -95,6 +96,34 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === 'export') {
+    const output = typeof args.flags.output === 'string' ? args.flags.output : undefined;
+    try {
+      await exportPackage({ output });
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (args.command === 'import') {
+    const input = args.subcommand ?? args.positional[0];
+    if (!input) {
+      console.error('Error: input file required');
+      console.error('Usage: nexora import <file.tar.gz> [--force]');
+      process.exit(1);
+    }
+    const force = args.flags.force === true || args.flags.force === 'true';
+    try {
+      await importPackage({ input, force });
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   console.error(`Unknown command: ${args.command} ${args.subcommand ?? ''}`);
   printHelp();
   process.exit(1);
@@ -106,6 +135,8 @@ function printHelp(): void {
 Usage:
   nexora create agent <name> [options]    Scaffold a new agent
   nexora dev [options]                    Start all agents + gateway
+  nexora export [--output file.tar.gz]   Bundle agents + context for sharing
+  nexora import <file.tar.gz> [--force]  Unpack a shared bundle
 
 Create options:
   --arch <name>      Architecture (react, deep-research, plan-execute, loop). Default: react

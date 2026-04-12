@@ -10,3 +10,6 @@ export type { ScaffoldOptions, ScaffoldResult } from './scaffold.js';
 
 export { runDev } from './dev.js';
 export type { DevOptions } from './dev.js';
+
+export { exportPackage, importPackage } from './portability.js';
+export type { ExportOptions, ImportOptions } from './portability.js';

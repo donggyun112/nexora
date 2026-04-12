@@ -12,7 +12,19 @@
  * feeds messages into the Room and posts agent responses out.
  */
 
-import type { AgentCard, LLMProvider } from '@nexora/contracts';
+import type { AgentCard, LLMProvider, ConversationStore, ChatMessage } from '@nexora/contracts';
+
+/** Default max messages before oldest are evicted. */
+const DEFAULT_MAX_HISTORY = 200;
+
+export interface ConversationRoomOptions {
+  /** Max messages to keep in history. Oldest evicted first. Default: 200. */
+  maxHistory?: number;
+  /** Optional store for persistence. If set, messages are saved on every add. */
+  store?: ConversationStore;
+  /** Conversation ID for the store (defaults to room.id). */
+  conversationId?: string;
+}
 
 export interface RoomMessage {
   /** Who sent the message. 'user' for humans, agent name for agents. */
@@ -53,9 +65,15 @@ export class ConversationRoom {
   private readonly participants = new Map<string, RoomParticipant>();
   private readonly messages: RoomMessage[] = [];
   private _activeResponder: string | null = null;
+  private readonly maxHistory: number;
+  private readonly store?: ConversationStore;
+  private readonly conversationId: string;
 
-  constructor(id: string) {
+  constructor(id: string, options: ConversationRoomOptions = {}) {
     this.id = id;
+    this.maxHistory = options.maxHistory ?? DEFAULT_MAX_HISTORY;
+    this.store = options.store;
+    this.conversationId = options.conversationId ?? id;
   }
 
   /** Add an agent to the room. */
@@ -83,9 +101,18 @@ export class ConversationRoom {
     return this.participants.get(name);
   }
 
-  /** Add a message to the shared history. */
+  /** Add a message to the shared history. Persists if store is configured. */
   addMessage(msg: RoomMessage): void {
     this.messages.push(msg);
+    // Evict oldest when over capacity
+    while (this.messages.length > this.maxHistory) {
+      this.messages.shift();
+    }
+    // Persist asynchronously (fire-and-forget — don't block the turn)
+    if (this.store) {
+      const chatMsg: ChatMessage = { role: msg.role, content: msg.agentName ? `[${msg.agentName}]: ${msg.content}` : msg.content };
+      void this.store.appendMessage(this.conversationId, chatMsg).catch(() => {});
+    }
   }
 
   /** Add a user message (convenience). */
@@ -140,5 +167,34 @@ export class ConversationRoom {
   /** Number of messages. */
   get length(): number {
     return this.messages.length;
+  }
+
+  /**
+   * Load history from the persistent store (if configured). Call this once
+   * after constructing the room to restore state from a previous session.
+   * Subsequent messages are persisted automatically via addMessage().
+   */
+  async loadHistory(): Promise<void> {
+    if (!this.store) return;
+    const stored = await this.store.getHistory(this.conversationId, this.maxHistory);
+    for (const msg of stored) {
+      // Parse the [agentName]: prefix back out
+      let agentName: string | undefined;
+      let content = msg.content;
+      if (msg.role === 'assistant') {
+        const match = content.match(/^\[([^\]]+)\]: ([\s\S]*)$/);
+        if (match) {
+          agentName = match[1];
+          content = match[2];
+        }
+      }
+      this.messages.push({
+        sender: agentName ?? (msg.role === 'user' ? 'user' : 'unknown'),
+        role: msg.role,
+        content,
+        timestamp: Date.now(),
+        agentName,
+      });
+    }
   }
 }

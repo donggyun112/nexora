@@ -78,12 +78,18 @@ export type { AgentTeamOptions, AgentTeam } from './team.js';
 export {
   ExecutionTracker,
   LearningEngine,
+  SafeSkillWriter,
+  ResultsLedger,
   createImprovementLoop,
+  scanSkillContent,
+  validateSkillFrontmatter,
 } from './self-improve.js';
 export type {
   ExecutionRecord,
   LearningOutcome,
   PerformanceSnapshot,
+  LedgerEntry,
   LearningEngineOptions,
   ImprovementLoopOptions,
+  SafeSkillWriterOptions,
 } from './self-improve.js';

@@ -2,22 +2,32 @@
  * Self-Improvement Engine — agents learn from execution results.
  *
  * Philosophy: "Honest agents learn from their limits."
- * - Failed → analyze root cause → save as skill (prevent repeat)
- * - Succeeded → extract approach → save as skill (replicate faster)
- * - Handraise answered → save human answer as knowledge (don't ask again)
- * - Budget exceeded → record pattern → optimize next time
  *
- * Three feedback loops:
- * 1. Execution Loop — after each agent run, evaluate and learn
- * 2. Reflection Loop — periodic review of recent performance
- * 3. Improvement Loop — meta-agent improves agent configuration
+ * Three layers, each from a different reference:
  *
- * Based on:
- * - AutoAgent: baseline → analyze → improve → verify → keep/discard
- * - Hermes: skill_manage (create/patch from successful tasks)
- * - auto-work-flow: knowledge.tool + pm-memory + deep-research eval loop
+ * 1. ExecutionTracker + ResultsLedger (AutoAgent)
+ *    - Persistent TSV ledger of every run (not just in-memory)
+ *    - Keep/discard framework with overfitting guard
+ *    - "One change at a time" discipline
+ *
+ * 2. SafeSkillWriter (Hermes skill_manager_tool.py)
+ *    - Atomic writes (temp file → rename)
+ *    - Security scanning (threat pattern blocklist)
+ *    - Size limits (100K chars)
+ *    - Name collision detection
+ *    - Frontmatter validation before persist
+ *    - Patch action (not just create)
+ *
+ * 3. LearningEngine (auto-work-flow knowledge.tool + pm-memory)
+ *    - Structured skill extraction with schema validation
+ *    - Decision logging (persistent, not transient)
+ *    - Evaluation grading (pass/fail with retry)
  */
 
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
 import type {
   AgentEvent,
   AgentInput,
@@ -26,66 +36,333 @@ import type {
   LLMUsage,
 } from '@nexora/contracts';
 
+// ─── Constants ─────────────────────────────────────────────────────────
+
+const MAX_SKILL_CONTENT_CHARS = 100_000;
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+/**
+ * Threat patterns in agent-generated skill content.
+ * Based on Hermes skills_guard (70+ patterns).
+ * Blocks shell injection, exfiltration, destructive commands, reverse shells.
+ */
+const THREAT_PATTERNS: RegExp[] = [
+  // Shell injection
+  /\$\(.*\)/,
+  /`[^`]*`/,
+  /\beval\s*\(/,
+  /\bexec\s*\(/,
+  /\bchild_process\b/,
+  /\bspawn\s*\(/,
+  // Exfiltration
+  /\bcurl\s+.*-d\b/,
+  /\bwget\s+.*--post/,
+  /\bfetch\s*\(.*method.*POST/i,
+  /process\.env\[/,
+  // Destructive
+  /\brm\s+-rf\s+\//,
+  /\brmdir\b.*\/\b/,
+  /DROP\s+TABLE/i,
+  /DELETE\s+FROM/i,
+  /TRUNCATE\s+/i,
+  // Reverse shell
+  /\bnc\s+-[elp]/,
+  /\/dev\/tcp\//,
+  /\bmkfifo\b/,
+  /\bsocat\b.*exec/i,
+  // Path traversal
+  /\.\.\//,
+  /\.\.\\/,
+  // Credential access
+  /\/etc\/passwd/,
+  /\/etc\/shadow/,
+  /\.ssh\/id_/,
+  /AWS_SECRET/i,
+  /ANTHROPIC_API_KEY/i,
+  /OPENAI_API_KEY/i,
+];
+
 // ─── Types ─────────────────────────────────────────────────────────────
 
 export interface ExecutionRecord {
-  /** Agent that ran */
   agentName: string;
-  /** What was asked */
   input: string;
-  /** What happened */
   events: AgentEvent[];
-  /** Final content (empty if failed) */
   result: string;
-  /** Did it succeed? */
   success: boolean;
-  /** Error message if failed */
   error?: string;
-  /** Token usage */
   usage?: LLMUsage;
-  /** Duration in ms */
   durationMs: number;
-  /** Timestamp */
   timestamp: number;
-  /** Was handraise used? */
   usedHandraise: boolean;
-  /** Tools that were called */
   toolsCalled: string[];
 }
 
-export interface LearningOutcome {
-  type: 'skill-created' | 'skill-patched' | 'knowledge-saved' | 'no-action';
-  /** What was learned */
+/** AutoAgent-style results ledger entry */
+export interface LedgerEntry {
+  timestamp: number;
+  agentName: string;
+  success: boolean;
+  score: number;
+  passed: string;
+  error: string;
+  skillAction: string;
   description: string;
-  /** Skill or knowledge name (if created/saved) */
+}
+
+export interface LearningOutcome {
+  type: 'skill-created' | 'skill-patched' | 'knowledge-saved' | 'discarded' | 'no-action';
+  description: string;
   name?: string;
+  /** AutoAgent keep/discard decision */
+  decision?: 'keep' | 'discard';
+  reason?: string;
 }
 
 export interface PerformanceSnapshot {
-  /** Time window start */
   since: number;
-  /** Total executions */
   total: number;
-  /** Successful executions */
   succeeded: number;
-  /** Success rate (0-1) */
   successRate: number;
-  /** Average duration */
   avgDurationMs: number;
-  /** Total cost */
   totalCostUsd: number;
-  /** Most common failure patterns */
   failurePatterns: Array<{ pattern: string; count: number }>;
-  /** Most used tools */
   topTools: Array<{ name: string; count: number }>;
+}
+
+// ─── Security Scanner (Hermes skills_guard) ────────────────────────────
+
+/**
+ * Scan skill content for threat patterns.
+ * Returns null if safe, error message if blocked.
+ */
+export function scanSkillContent(content: string): string | null {
+  for (const pattern of THREAT_PATTERNS) {
+    const match = content.match(pattern);
+    if (match) {
+      return `Blocked: skill content matches threat pattern "${pattern.source}" near "${match[0].slice(0, 50)}"`;
+    }
+  }
+  if (content.length > MAX_SKILL_CONTENT_CHARS) {
+    return `Blocked: skill content exceeds ${MAX_SKILL_CONTENT_CHARS} chars (got ${content.length})`;
+  }
+  return null;
+}
+
+// ─── Frontmatter Validation ────────────────────────────────────────────
+
+/**
+ * Validate SKILL.md has proper frontmatter with required fields.
+ * Returns extracted name or throws.
+ */
+export function validateSkillFrontmatter(content: string): { name: string; description: string } {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) {
+    throw new Error('Invalid SKILL.md: missing frontmatter (---\\n...\\n---)');
+  }
+
+  const fm = match[1];
+  const nameMatch = fm.match(/^name:\s*(.+)$/m);
+  const descMatch = fm.match(/^description:\s*(.+)$/m);
+
+  if (!nameMatch) throw new Error('Invalid SKILL.md: missing "name" in frontmatter');
+  if (!descMatch) throw new Error('Invalid SKILL.md: missing "description" in frontmatter');
+
+  const name = nameMatch[1].trim().replace(/^["']|["']$/g, '');
+  const description = descMatch[1].trim().replace(/^["']|["']$/g, '');
+
+  if (!SKILL_NAME_RE.test(name)) {
+    throw new Error(`Invalid skill name "${name}": must match ${SKILL_NAME_RE}`);
+  }
+
+  return { name, description };
+}
+
+// ─── Safe Skill Writer (Hermes atomic write + security) ────────────────
+
+export interface SafeSkillWriterOptions {
+  /** Root directory for agent-created skills */
+  skillsDir: string;
+  /** Optional: callback when skill cache should be invalidated */
+  onCacheInvalidate?: () => void;
+  logger?: AgentLogger;
+}
+
+/**
+ * Writes skills safely with all Hermes guarantees:
+ * - Atomic write (temp file → rename)
+ * - Security scan before persist
+ * - Size limits
+ * - Frontmatter validation
+ * - Name collision detection
+ * - Patch support (not just create)
+ */
+export class SafeSkillWriter {
+  private readonly skillsDir: string;
+  private readonly onCacheInvalidate?: () => void;
+  private readonly logger: AgentLogger;
+
+  constructor(options: SafeSkillWriterOptions) {
+    this.skillsDir = options.skillsDir;
+    this.onCacheInvalidate = options.onCacheInvalidate;
+    this.logger = options.logger ?? NOOP_LOGGER;
+  }
+
+  /**
+   * Create a new skill. Validates, scans, writes atomically.
+   * Returns the skill name or throws.
+   */
+  async create(content: string): Promise<string> {
+    // 1. Validate frontmatter
+    const { name } = validateSkillFrontmatter(content);
+
+    // 2. Security scan
+    const threat = scanSkillContent(content);
+    if (threat) throw new Error(threat);
+
+    // 3. Name collision detection
+    const skillDir = path.join(this.skillsDir, name);
+    if (fs.existsSync(skillDir)) {
+      throw new Error(`Skill "${name}" already exists at ${skillDir}. Use patch() instead.`);
+    }
+
+    // 4. Path containment check
+    const resolved = path.resolve(skillDir);
+    const root = path.resolve(this.skillsDir);
+    if (!resolved.startsWith(root + path.sep)) {
+      throw new Error(`Skill name "${name}" resolves outside skills directory`);
+    }
+
+    // 5. Atomic write: mkdir → write to temp → rename
+    await fsp.mkdir(skillDir, { recursive: true });
+    const skillFile = path.join(skillDir, 'SKILL.md');
+    await atomicWrite(skillFile, content);
+
+    // 6. Invalidate cache
+    this.onCacheInvalidate?.();
+    this.logger.info(`Skill created: ${name}`);
+    return name;
+  }
+
+  /**
+   * Patch an existing skill: find oldText, replace with newText.
+   * More surgical than full rewrite — preserves surrounding content.
+   */
+  async patch(name: string, oldText: string, newText: string): Promise<void> {
+    const skillFile = path.join(this.skillsDir, name, 'SKILL.md');
+    if (!fs.existsSync(skillFile)) {
+      throw new Error(`Skill "${name}" not found for patching`);
+    }
+
+    const current = await fsp.readFile(skillFile, 'utf-8');
+
+    // Fuzzy match: normalize whitespace for comparison
+    const normalizedCurrent = current.replace(/\s+/g, ' ');
+    const normalizedOld = oldText.replace(/\s+/g, ' ');
+    if (!normalizedCurrent.includes(normalizedOld) && !current.includes(oldText)) {
+      throw new Error(`Patch target not found in skill "${name}"`);
+    }
+
+    const patched = current.includes(oldText)
+      ? current.replace(oldText, newText)
+      : current.replace(
+          new RegExp(oldText.replace(/\s+/g, '\\s+').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+          newText,
+        );
+
+    // Re-validate after patch
+    validateSkillFrontmatter(patched);
+    const threat = scanSkillContent(patched);
+    if (threat) throw new Error(`Patch blocked: ${threat}`);
+
+    await atomicWrite(skillFile, patched);
+    this.onCacheInvalidate?.();
+    this.logger.info(`Skill patched: ${name}`);
+  }
+
+  /** Check if a skill name already exists */
+  exists(name: string): boolean {
+    return fs.existsSync(path.join(this.skillsDir, name, 'SKILL.md'));
+  }
+}
+
+/** Atomic write: write to temp file, then rename. Prevents corruption on crash. */
+async function atomicWrite(filePath: string, content: string): Promise<void> {
+  const dir = path.dirname(filePath);
+  const tmpFile = path.join(dir, `.${path.basename(filePath)}.tmp.${process.pid}`);
+  try {
+    await fsp.writeFile(tmpFile, content, 'utf-8');
+    await fsp.rename(tmpFile, filePath);
+  } catch (err) {
+    try { await fsp.unlink(tmpFile); } catch { /* ignore cleanup failure */ }
+    throw err;
+  }
+}
+
+// ─── Results Ledger (AutoAgent results.tsv) ────────────────────────────
+
+/**
+ * Persistent TSV ledger of all execution results and learning decisions.
+ * Survives process restart. One line per execution.
+ */
+export class ResultsLedger {
+  private readonly filePath: string;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+  }
+
+  async append(entry: LedgerEntry): Promise<void> {
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) await fsp.mkdir(dir, { recursive: true });
+
+    const header = 'timestamp\tagent\tsuccess\tscore\tpassed\terror\tskill_action\tdescription\n';
+    if (!fs.existsSync(this.filePath)) {
+      await fsp.writeFile(this.filePath, header, 'utf-8');
+    }
+
+    const line = [
+      entry.timestamp,
+      entry.agentName,
+      entry.success,
+      entry.score.toFixed(4),
+      entry.passed,
+      entry.error.replace(/\t/g, ' ').replace(/\n/g, ' ').slice(0, 200),
+      entry.skillAction,
+      entry.description.replace(/\t/g, ' ').replace(/\n/g, ' ').slice(0, 200),
+    ].join('\t') + '\n';
+
+    fs.appendFileSync(this.filePath, line, 'utf-8');
+  }
+
+  async readAll(): Promise<LedgerEntry[]> {
+    if (!fs.existsSync(this.filePath)) return [];
+    const content = await fsp.readFile(this.filePath, 'utf-8');
+    const lines = content.split('\n').filter(l => l.trim() && !l.startsWith('timestamp'));
+    return lines.map(line => {
+      const [ts, agent, success, score, passed, error, action, desc] = line.split('\t');
+      return {
+        timestamp: parseInt(ts, 10),
+        agentName: agent,
+        success: success === 'true',
+        score: parseFloat(score),
+        passed,
+        error: error ?? '',
+        skillAction: action ?? 'no-action',
+        description: desc ?? '',
+      };
+    });
+  }
+
+  /** Get recent entries for keep/discard baseline comparison */
+  async getBaseline(limit = 10): Promise<LedgerEntry[]> {
+    const all = await this.readAll();
+    return all.filter(e => e.skillAction !== 'discarded').slice(-limit);
+  }
 }
 
 // ─── Execution Tracker ─────────────────────────────────────────────────
 
-/**
- * Tracks execution results and extracts learning signals.
- * Call recordExecution() after every agent run.
- */
 export class ExecutionTracker {
   private records: ExecutionRecord[] = [];
   private readonly maxRecords: number;
@@ -96,13 +373,11 @@ export class ExecutionTracker {
 
   record(record: ExecutionRecord): void {
     this.records.push(record);
-    // Evict old records
     if (this.records.length > this.maxRecords) {
       this.records = this.records.slice(-this.maxRecords);
     }
   }
 
-  /** Build execution record from agent events */
   static fromEvents(
     agentName: string,
     input: AgentInput,
@@ -114,7 +389,6 @@ export class ExecutionTracker {
     const toolCalls = events
       .filter(e => e.type === 'tool_call')
       .map(e => (e as { name: string }).name);
-    const usedHandraise = toolCalls.includes('handraise');
 
     return {
       agentName,
@@ -125,63 +399,46 @@ export class ExecutionTracker {
       error: errorEvent?.type === 'error' ? errorEvent.message : undefined,
       durationMs,
       timestamp: Date.now(),
-      usedHandraise,
+      usedHandraise: toolCalls.includes('handraise'),
       toolsCalled: [...new Set(toolCalls)],
     };
   }
 
-  /** Get performance snapshot for a time window */
   getSnapshot(sinceMs?: number): PerformanceSnapshot {
-    const since = sinceMs ?? Date.now() - 24 * 60 * 60 * 1000; // default: last 24h
+    const since = sinceMs ?? Date.now() - 24 * 60 * 60 * 1000;
     const recent = this.records.filter(r => r.timestamp >= since);
-
     const succeeded = recent.filter(r => r.success).length;
     const avgDuration = recent.length > 0
-      ? recent.reduce((s, r) => s + r.durationMs, 0) / recent.length
-      : 0;
+      ? recent.reduce((s, r) => s + r.durationMs, 0) / recent.length : 0;
     const totalCost = recent.reduce((s, r) => {
       if (!r.usage) return s;
-      // Rough cost estimate: $3/M input, $15/M output (Claude Sonnet pricing)
       return s + (r.usage.promptTokens * 3 + r.usage.completionTokens * 15) / 1_000_000;
     }, 0);
 
-    // Failure pattern extraction
     const failureCounts = new Map<string, number>();
     for (const r of recent.filter(r => !r.success)) {
-      const pattern = categorizeFailure(r);
-      failureCounts.set(pattern, (failureCounts.get(pattern) ?? 0) + 1);
+      const p = categorizeFailure(r);
+      failureCounts.set(p, (failureCounts.get(p) ?? 0) + 1);
     }
-
-    // Tool usage
     const toolCounts = new Map<string, number>();
     for (const r of recent) {
-      for (const tool of r.toolsCalled) {
-        toolCounts.set(tool, (toolCounts.get(tool) ?? 0) + 1);
-      }
+      for (const t of r.toolsCalled) toolCounts.set(t, (toolCounts.get(t) ?? 0) + 1);
     }
 
     return {
-      since,
-      total: recent.length,
-      succeeded,
+      since, total: recent.length, succeeded,
       successRate: recent.length > 0 ? succeeded / recent.length : 0,
-      avgDurationMs: avgDuration,
-      totalCostUsd: totalCost,
+      avgDurationMs: avgDuration, totalCostUsd: totalCost,
       failurePatterns: [...failureCounts.entries()]
         .map(([pattern, count]) => ({ pattern, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10),
+        .sort((a, b) => b.count - a.count).slice(0, 10),
       topTools: [...toolCounts.entries()]
         .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 10),
+        .sort((a, b) => b.count - a.count).slice(0, 10),
     };
   }
 
-  getRecords(): readonly ExecutionRecord[] {
-    return this.records;
-  }
-
+  getRecords(): readonly ExecutionRecord[] { return this.records; }
   getRecentFailures(limit = 10): ExecutionRecord[] {
     return this.records.filter(r => !r.success).slice(-limit);
   }
@@ -190,201 +447,275 @@ export class ExecutionTracker {
 // ─── Learning Engine ───────────────────────────────────────────────────
 
 export interface LearningEngineOptions {
-  /** LLM for analyzing failures and generating skills */
   llm: LLMProvider;
-  /** Skill creation callback (integrate with SkillCreator) */
-  onSkillCreate?: (name: string, content: string) => Promise<void>;
-  /** Knowledge save callback (integrate with KnowledgeStore) */
+  /** Safe skill writer (with atomic write + security scan) */
+  skillWriter: SafeSkillWriter;
+  /** Knowledge save callback */
   onKnowledgeSave?: (topic: string, content: string) => Promise<void>;
-  /** Minimum tool calls for a task to be "complex enough" to learn from */
+  /** Decision log callback — persists learning decisions */
+  onDecisionLog?: (decision: string) => Promise<void>;
+  /** Results ledger for keep/discard tracking */
+  ledger?: ResultsLedger;
   minToolCallsForSkill?: number;
-  /** Logger */
   logger?: AgentLogger;
 }
 
-/**
- * Analyzes execution records and generates learning outcomes.
- *
- * Learning triggers:
- * - Complex task succeeded (5+ tool calls) → extract as skill
- * - Task failed with diagnosable pattern → save prevention skill
- * - Handraise was used and answered → save answer as knowledge
- * - Same failure pattern repeated 3+ times → escalate
- */
 export class LearningEngine {
   private readonly llm: LLMProvider;
-  private readonly onSkillCreate: LearningEngineOptions['onSkillCreate'];
+  private readonly skillWriter: SafeSkillWriter;
   private readonly onKnowledgeSave: LearningEngineOptions['onKnowledgeSave'];
+  private readonly onDecisionLog: LearningEngineOptions['onDecisionLog'];
+  private readonly ledger?: ResultsLedger;
   private readonly minToolCalls: number;
   private readonly logger: AgentLogger;
 
   constructor(options: LearningEngineOptions) {
     this.llm = options.llm;
-    this.onSkillCreate = options.onSkillCreate;
+    this.skillWriter = options.skillWriter;
     this.onKnowledgeSave = options.onKnowledgeSave;
+    this.onDecisionLog = options.onDecisionLog;
+    this.ledger = options.ledger;
     this.minToolCalls = options.minToolCallsForSkill ?? 5;
-    this.logger = options.logger ?? { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+    this.logger = options.logger ?? NOOP_LOGGER;
   }
 
-  /**
-   * Analyze a single execution and decide whether to learn from it.
-   */
   async analyze(record: ExecutionRecord): Promise<LearningOutcome> {
-    // Successful complex task → extract as skill
+    // Complex success → extract skill
     if (record.success && record.toolsCalled.length >= this.minToolCalls) {
       return this.learnFromSuccess(record);
     }
-
-    // Failed task → analyze and save prevention
+    // Failure → prevention skill
     if (!record.success && record.error) {
       return this.learnFromFailure(record);
     }
-
-    // Handraise used → save the interaction as knowledge
+    // Handraise answered → knowledge
     if (record.usedHandraise && record.success) {
       return this.learnFromHandraise(record);
     }
-
     return { type: 'no-action', description: 'No learning signal' };
   }
 
   /**
-   * Periodic reflection — analyze recent performance and suggest improvements.
+   * Evaluate a learning outcome: should we keep or discard?
+   * AutoAgent overfitting guard: "If this exact task disappeared,
+   * would this still be a worthwhile improvement?"
    */
+  async evaluateAndDecide(
+    outcome: LearningOutcome,
+    record: ExecutionRecord,
+    baselineRate: number,
+    currentRate: number,
+  ): Promise<LearningOutcome> {
+    if (outcome.type === 'no-action') return outcome;
+
+    // Keep/discard rules (AutoAgent):
+    // - Success rate improved → KEEP
+    // - Same rate, but skill is generally useful → KEEP
+    // - Rate dropped → DISCARD
+    if (currentRate > baselineRate) {
+      outcome.decision = 'keep';
+      outcome.reason = `Success rate improved: ${(baselineRate * 100).toFixed(1)}% → ${(currentRate * 100).toFixed(1)}%`;
+    } else if (currentRate === baselineRate) {
+      // Overfitting check: is this task-specific or general?
+      const isGeneral = await this.checkGenerality(outcome, record);
+      outcome.decision = isGeneral ? 'keep' : 'discard';
+      outcome.reason = isGeneral
+        ? 'Same rate but skill is generally applicable'
+        : 'Same rate and skill appears task-specific (overfitting)';
+    } else {
+      outcome.decision = 'discard';
+      outcome.reason = `Success rate dropped: ${(baselineRate * 100).toFixed(1)}% → ${(currentRate * 100).toFixed(1)}%`;
+    }
+
+    // Log decision
+    if (this.ledger) {
+      await this.ledger.append({
+        timestamp: Date.now(),
+        agentName: record.agentName,
+        success: record.success,
+        score: currentRate,
+        passed: `${Math.round(currentRate * 100)}%`,
+        error: record.error ?? '',
+        skillAction: outcome.decision === 'keep' ? outcome.type : 'discarded',
+        description: outcome.reason,
+      });
+    }
+
+    if (this.onDecisionLog) {
+      await this.onDecisionLog(
+        `[${outcome.decision}] ${outcome.type}: ${outcome.description} — ${outcome.reason}`,
+      ).catch(() => {});
+    }
+
+    return outcome;
+  }
+
   async reflect(snapshot: PerformanceSnapshot): Promise<string> {
     if (snapshot.total < 5) return 'Not enough data for reflection.';
 
     const prompt = `You are analyzing an AI agent team's recent performance.
 
-Performance data:
-- Total executions: ${snapshot.total}
-- Success rate: ${(snapshot.successRate * 100).toFixed(1)}%
-- Avg duration: ${(snapshot.avgDurationMs / 1000).toFixed(1)}s
-- Total cost: $${snapshot.totalCostUsd.toFixed(4)}
+Performance: ${snapshot.total} executions, ${(snapshot.successRate * 100).toFixed(1)}% success, avg ${(snapshot.avgDurationMs / 1000).toFixed(1)}s, $${snapshot.totalCostUsd.toFixed(4)} total cost.
 
-Top failure patterns:
-${snapshot.failurePatterns.map(f => `- ${f.pattern} (${f.count}x)`).join('\n')}
+Failure patterns:
+${snapshot.failurePatterns.map(f => `- ${f.pattern} (${f.count}x)`).join('\n') || '(none)'}
 
-Top tools used:
-${snapshot.topTools.map(t => `- ${t.name} (${t.count}x)`).join('\n')}
+Top tools: ${snapshot.topTools.map(t => `${t.name}(${t.count})`).join(', ') || '(none)'}
 
-Based on this data, provide:
-1. The single most impactful improvement to make
-2. Any failure patterns that suggest a missing skill or tool
-3. Whether the cost/performance ratio is reasonable
+Provide:
+1. Single most impactful improvement
+2. Missing skills/tools suggested by failure patterns
+3. Cost/performance assessment
+Under 200 words. Actionable only.`;
 
-Be concise (under 200 words). Focus on actionable recommendations.`;
-
-    const response = await this.llm.complete([{ role: 'user', content: prompt }], {
-      maxTokens: 500,
-    });
+    const response = await this.llm.complete([{ role: 'user', content: prompt }], { maxTokens: 500 });
     return response.content;
   }
 
   private async learnFromSuccess(record: ExecutionRecord): Promise<LearningOutcome> {
-    if (!this.onSkillCreate) {
-      return { type: 'no-action', description: 'Skill creation callback not configured' };
-    }
-
-    const toolSequence = record.toolsCalled.join(' → ');
-    const prompt = `An AI agent successfully completed this task:
+    const prompt = `An AI agent successfully completed a complex task.
 
 Task: ${record.input.slice(0, 500)}
-Tools used: ${toolSequence}
+Tools used (in order): ${record.toolsCalled.join(' → ')}
 Result: ${record.result.slice(0, 500)}
 
-Extract the reusable approach as a SKILL.md file. Include:
-1. A clear skill name (kebab-case)
-2. Steps the agent took
-3. Which tools were used and why
-4. Any patterns that would help with similar future tasks
+Create a reusable SKILL.md. REQUIRED format:
+---
+name: kebab-case-name
+description: One line description
+tags: [relevant, tags]
+version: 1
+author: agent
+---
 
-Output ONLY the SKILL.md content (with --- frontmatter).`;
+# Skill Title
+
+## Steps
+1. Step one
+2. Step two
+...
+
+Output ONLY the SKILL.md content. Nothing else.`;
 
     try {
-      const response = await this.llm.complete([{ role: 'user', content: prompt }], {
-        maxTokens: 1000,
-      });
+      const response = await this.llm.complete([{ role: 'user', content: prompt }], { maxTokens: 1500 });
+      const content = response.content;
 
-      const nameMatch = response.content.match(/name:\s*(.+)/);
-      const name = nameMatch?.[1]?.trim() ?? `auto-${Date.now()}`;
+      // Validate before writing
+      const { name } = validateSkillFrontmatter(content);
 
-      await this.onSkillCreate(name, response.content);
-      this.logger.info(`Skill created from successful task: ${name}`);
+      // Check if skill already exists → patch instead
+      if (this.skillWriter.exists(name)) {
+        this.logger.info(`Skill "${name}" already exists, skipping duplicate`);
+        return { type: 'no-action', description: `Skill "${name}" already exists` };
+      }
+
+      // Safe write (atomic + security scan + size limit)
+      await this.skillWriter.create(content);
 
       return {
         type: 'skill-created',
-        description: `Extracted skill "${name}" from successful ${record.toolsCalled.length}-tool task`,
+        description: `Extracted skill "${name}" from ${record.toolsCalled.length}-tool task`,
         name,
       };
     } catch (err) {
-      this.logger.warn(`Failed to create skill from success: ${err}`);
-      return { type: 'no-action', description: 'Skill extraction failed' };
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Skill extraction failed: ${msg}`);
+      return { type: 'no-action', description: `Skill extraction failed: ${msg}` };
     }
   }
 
   private async learnFromFailure(record: ExecutionRecord): Promise<LearningOutcome> {
-    if (!this.onSkillCreate) {
-      return { type: 'no-action', description: 'Skill creation callback not configured' };
-    }
-
-    const prompt = `An AI agent FAILED this task:
+    const prompt = `An AI agent FAILED a task.
 
 Task: ${record.input.slice(0, 500)}
-Error: ${record.error}
+Error: ${record.error?.slice(0, 300)}
 Tools attempted: ${record.toolsCalled.join(', ')}
 
-Analyze the failure and create a prevention skill. Include:
-1. What went wrong (root cause)
-2. How to avoid this in the future
-3. The correct approach for this type of task
+Create a PREVENTION skill. REQUIRED format:
+---
+name: prevent-kebab-case-name
+description: Prevents [specific failure type]
+tags: [prevention, error-handling]
+version: 1
+author: agent
+---
 
-Output ONLY the SKILL.md content (with --- frontmatter).
-Name it with a "prevent-" prefix.`;
+# Preventing [Failure Type]
+
+## Root Cause
+[What went wrong]
+
+## Prevention Steps
+1. Before attempting this type of task, check...
+2. If you encounter..., do...
+
+## Correct Approach
+[How to handle this correctly]
+
+Output ONLY the SKILL.md content. Nothing else.`;
 
     try {
-      const response = await this.llm.complete([{ role: 'user', content: prompt }], {
-        maxTokens: 1000,
-      });
+      const response = await this.llm.complete([{ role: 'user', content: prompt }], { maxTokens: 1500 });
+      const content = response.content;
 
-      const nameMatch = response.content.match(/name:\s*(.+)/);
-      const name = nameMatch?.[1]?.trim() ?? `prevent-${Date.now()}`;
+      const { name } = validateSkillFrontmatter(content);
+      if (this.skillWriter.exists(name)) {
+        return { type: 'no-action', description: `Prevention skill "${name}" already exists` };
+      }
 
-      await this.onSkillCreate(name, response.content);
-      this.logger.info(`Prevention skill created from failure: ${name}`);
-
+      await this.skillWriter.create(content);
       return {
         type: 'skill-created',
-        description: `Created prevention skill "${name}" from failure: ${record.error?.slice(0, 100)}`,
+        description: `Prevention skill "${name}" from failure: ${record.error?.slice(0, 80)}`,
         name,
       };
     } catch (err) {
-      this.logger.warn(`Failed to create skill from failure: ${err}`);
-      return { type: 'no-action', description: 'Failure skill extraction failed' };
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Prevention skill creation failed: ${msg}`);
+      return { type: 'no-action', description: `Prevention skill failed: ${msg}` };
     }
   }
 
   private async learnFromHandraise(record: ExecutionRecord): Promise<LearningOutcome> {
     if (!this.onKnowledgeSave) {
-      return { type: 'no-action', description: 'Knowledge save callback not configured' };
+      return { type: 'no-action', description: 'Knowledge save not configured' };
     }
 
-    // The handraise answer is in the result
     const topic = `handraise-${record.agentName}-${Date.now()}`;
-    const content = `# Learned from handraise\n\n**Question context:** ${record.input.slice(0, 300)}\n\n**Answer:** ${record.result.slice(0, 1000)}`;
+    const content = [
+      `# Learned from handraise`,
+      ``,
+      `**Agent:** ${record.agentName}`,
+      `**Date:** ${new Date(record.timestamp).toISOString()}`,
+      `**Question context:** ${record.input.slice(0, 500)}`,
+      ``,
+      `**Answer:** ${record.result.slice(0, 2000)}`,
+    ].join('\n');
 
     try {
       await this.onKnowledgeSave(topic, content);
-      this.logger.info(`Knowledge saved from handraise: ${topic}`);
-
-      return {
-        type: 'knowledge-saved',
-        description: `Saved handraise answer as knowledge: ${topic}`,
-        name: topic,
-      };
+      return { type: 'knowledge-saved', description: `Saved handraise answer: ${topic}`, name: topic };
     } catch (err) {
-      this.logger.warn(`Failed to save handraise knowledge: ${err}`);
-      return { type: 'no-action', description: 'Knowledge save failed' };
+      return { type: 'no-action', description: `Knowledge save failed: ${err}` };
+    }
+  }
+
+  /** Overfitting check: would this skill be useful beyond this specific task? */
+  private async checkGenerality(outcome: LearningOutcome, record: ExecutionRecord): Promise<boolean> {
+    const prompt = `A skill was created from a specific task. Determine if it's GENERAL or TASK-SPECIFIC.
+
+Skill: ${outcome.name ?? '(unnamed)'}
+Description: ${outcome.description}
+Original task: ${record.input.slice(0, 300)}
+
+Answer with ONE word: GENERAL or SPECIFIC`;
+
+    try {
+      const response = await this.llm.complete([{ role: 'user', content: prompt }], { maxTokens: 10 });
+      return response.content.trim().toUpperCase().includes('GENERAL');
+    } catch {
+      return true; // default to keeping on evaluation failure
     }
   }
 }
@@ -392,41 +723,17 @@ Name it with a "prevent-" prefix.`;
 // ─── Improvement Loop ──────────────────────────────────────────────────
 
 export interface ImprovementLoopOptions {
-  /** Execution tracker to analyze */
   tracker: ExecutionTracker;
-  /** Learning engine for generating skills/knowledge */
   learner: LearningEngine;
-  /** Logger */
   logger?: AgentLogger;
-  /** Auto-learn after every execution? Default: true */
   autoLearn?: boolean;
-  /** Reflection interval in ms. Default: 24h. Set 0 to disable. */
   reflectionIntervalMs?: number;
 }
 
-/**
- * Wires together tracking + learning into a continuous improvement loop.
- *
- * Usage:
- * ```typescript
- * const loop = createImprovementLoop({
- *   tracker: new ExecutionTracker(),
- *   learner: new LearningEngine({ llm, onSkillCreate: ... }),
- * });
- *
- * // After each agent run:
- * const record = ExecutionTracker.fromEvents(agentName, input, events, duration);
- * await loop.recordAndLearn(record);
- *
- * // Periodic reflection (or call manually):
- * const insights = await loop.reflect();
- * ```
- */
 export function createImprovementLoop(options: ImprovementLoopOptions) {
   const { tracker, learner } = options;
   const autoLearn = options.autoLearn ?? true;
-  const logger = options.logger ?? { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
-
+  const logger = options.logger ?? NOOP_LOGGER;
   let reflectionTimer: ReturnType<typeof setInterval> | null = null;
   const reflectionInterval = options.reflectionIntervalMs ?? 24 * 60 * 60 * 1000;
 
@@ -436,39 +743,35 @@ export function createImprovementLoop(options: ImprovementLoopOptions) {
         const snapshot = tracker.getSnapshot();
         const insights = await learner.reflect(snapshot);
         logger.info('Self-improvement reflection', { insights });
-      } catch {
-        // Reflection failure is non-critical
-      }
+      } catch { /* non-critical */ }
     }, reflectionInterval);
   }
 
   return {
-    /** Record execution and optionally learn from it */
     async recordAndLearn(record: ExecutionRecord): Promise<LearningOutcome> {
       tracker.record(record);
-      if (autoLearn) {
-        return learner.analyze(record);
-      }
-      return { type: 'no-action', description: 'Auto-learn disabled' };
+      if (!autoLearn) return { type: 'no-action', description: 'Auto-learn disabled' };
+
+      const outcome = await learner.analyze(record);
+
+      // Keep/discard evaluation using recent success rate as baseline
+      const snapshot = tracker.getSnapshot(Date.now() - 3600_000); // last hour
+      const prevSnapshot = tracker.getSnapshot(Date.now() - 7200_000); // hour before
+      const baselineRate = prevSnapshot.total > 0 ? prevSnapshot.successRate : 0.5;
+
+      return learner.evaluateAndDecide(outcome, record, baselineRate, snapshot.successRate);
     },
 
-    /** Manual reflection trigger */
     async reflect(): Promise<string> {
-      const snapshot = tracker.getSnapshot();
-      return learner.reflect(snapshot);
+      return learner.reflect(tracker.getSnapshot());
     },
 
-    /** Get current performance snapshot */
     getSnapshot(sinceMs?: number): PerformanceSnapshot {
       return tracker.getSnapshot(sinceMs);
     },
 
-    /** Stop the reflection timer */
     stop(): void {
-      if (reflectionTimer) {
-        clearInterval(reflectionTimer);
-        reflectionTimer = null;
-      }
+      if (reflectionTimer) { clearInterval(reflectionTimer); reflectionTimer = null; }
     },
   };
 }
@@ -487,3 +790,7 @@ function categorizeFailure(record: ExecutionRecord): string {
   if (record.toolsCalled.length === 0) return 'no-tools-used';
   return 'unknown';
 }
+
+const NOOP_LOGGER: AgentLogger = {
+  info: () => {}, warn: () => {}, error: () => {}, debug: () => {},
+};

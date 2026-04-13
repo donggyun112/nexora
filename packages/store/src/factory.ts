@@ -64,11 +64,9 @@ function isDescribable(store: unknown): store is DescribableStore {
   );
 }
 
-export interface StoreConfig {
-  type: 'json';
-  /** 데이터 루트 디렉토리 (json 타입에서 사용) */
-  dataDir: string;
-}
+export type StoreConfig =
+  | { type: 'json'; dataDir: string }
+  | { type: 'pg'; connectionString: string };
 
 /**
  * 설정 기반으로 StoreProvider 생성.
@@ -79,12 +77,22 @@ export interface StoreConfig {
 export async function createStoreProvider(config: StoreConfig): Promise<StoreProvider> {
   switch (config.type) {
     case 'json': {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const mod: { createJsonStoreProvider: (dataDir: string) => StoreProvider } =
         await (import('@nexora/store-json' as string) as Promise<{ createJsonStoreProvider: (dataDir: string) => StoreProvider }>);
       return mod.createJsonStoreProvider(config.dataDir);
     }
+    case 'pg': {
+      const mod: {
+        createPgClient: (opts: { connectionString: string }) => Promise<{ sql: unknown }>;
+        createPgStoreProvider: (sql: unknown) => StoreProvider;
+      } = await (import('@nexora/store-pg' as string) as Promise<{
+        createPgClient: (opts: { connectionString: string }) => Promise<{ sql: unknown }>;
+        createPgStoreProvider: (sql: unknown) => StoreProvider;
+      }>);
+      const { sql } = await mod.createPgClient({ connectionString: config.connectionString });
+      return mod.createPgStoreProvider(sql);
+    }
     default:
-      throw new Error(`Unknown store type: ${String((config as StoreConfig).type)}`);
+      throw new Error(`Unknown store type: ${String((config as { type: string }).type)}`);
   }
 }

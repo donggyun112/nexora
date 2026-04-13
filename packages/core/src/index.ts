@@ -68,3 +68,6 @@ export { InMemoryBudgetTracker, estimateCostUsd } from './budget.js';
 
 export { createBudgetMiddleware, BudgetExceededError } from './budget-middleware.js';
 export type { BudgetMiddlewareOptions } from './budget-middleware.js';
+
+export { InMemoryExtensionRegistry, loadExtensions, unloadExtensions } from './extension-loader.js';
+export type { ExtensionLoaderOptions } from './extension-loader.js';

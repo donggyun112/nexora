@@ -20,6 +20,22 @@ services:
       timeout: 3s
       retries: 5
 
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=nexora
+      - POSTGRES_USER=nexora
+      - POSTGRES_PASSWORD=nexora
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   nexora:
     build:
       context: .
@@ -29,10 +45,14 @@ services:
     environment:
       - NODE_ENV=production
       - NEXORA_TRANSPORT=redis
+      - NEXORA_STORE=pg
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgres://nexora:nexora@postgres:5432/nexora
       - PORT=3000
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     volumes:
       - ./agents:/app/agents:ro
@@ -52,4 +72,5 @@ services:
 
 volumes:
   redis-data:
+  pg-data:
   nexora-data:

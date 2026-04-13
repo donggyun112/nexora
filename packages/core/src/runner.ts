@@ -94,8 +94,9 @@ export class AgentRunner implements AgentRuntime {
 
     // Per-execute services snapshot — signal injected so architectures can forward.
     // Wrap the shared ToolExecutor so its execute() always sees this call's signal.
+    // Wrap LLM with middleware so afterLLMCall actually fires.
     const services: RuntimeServices = {
-      llm: this.llm,
+      llm: wrapLLMWithMiddleware(this.llm, this.pipeline),
       tools: wrapToolExecutorWithSignal(this.tools, controller.signal),
       memory: this.memory,
       logger: this.logger,
@@ -206,6 +207,27 @@ class NullMemory implements MemoryProvider {
   async getHistory(): Promise<[]> { return []; }
   async compact(): Promise<null> { return null; }
   async clear(): Promise<void> {}
+}
+
+/**
+ * Wrap an LLMProvider so afterLLMCall middleware fires on every complete() call.
+ */
+function wrapLLMWithMiddleware(
+  inner: LLMProvider,
+  pipeline: MiddlewarePipeline,
+): LLMProvider {
+  return {
+    stream: (messages, options) => inner.stream(messages, options),
+    async complete(messages, options) {
+      const response = await inner.complete(messages, options);
+      try {
+        await pipeline.runAfterLLMCall({ response, usage: response.usage });
+      } catch {
+        // middleware failure must not break the LLM call
+      }
+      return response;
+    },
+  };
 }
 
 /**

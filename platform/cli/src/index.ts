@@ -13,3 +13,16 @@ export type { DevOptions } from './dev.js';
 
 export { exportPackage, importPackage } from './portability.js';
 export type { ExportOptions, ImportOptions } from './portability.js';
+
+export { runDoctor, viewDlq, viewBudget, viewHandraises } from './ops.js';
+export type {
+  DoctorOptions,
+  DoctorResult,
+  DoctorCheck,
+  DlqViewOptions,
+  DlqEntry,
+  BudgetViewOptions,
+  BudgetSummary,
+  HandraiseViewOptions,
+  HandraiseEntry,
+} from './ops.js';

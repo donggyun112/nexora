@@ -116,6 +116,14 @@ export class HttpAdapter implements Adapter {
       const out = await router.route(inbound);
       this.sendJson(res, 200, out);
     } catch (err) {
+      if (isRateLimitError(err)) {
+        res.writeHead(429, {
+          'Content-Type': 'application/json',
+          'Retry-After': String(Math.ceil((err as { retryAfterMs: number }).retryAfterMs / 1000)),
+        });
+        res.end(JSON.stringify({ error: 'rate limit exceeded' }));
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.sendJson(res, 400, { error: message });
     }
@@ -127,7 +135,20 @@ export class HttpAdapter implements Adapter {
     router: MessageRouter,
   ): Promise<void> {
     try {
-      const tenantId = await this.resolveTenant(req);
+      let tenantId: string | null;
+      try {
+        tenantId = await this.resolveTenant(req);
+      } catch (err) {
+        if (isRateLimitError(err)) {
+          res.writeHead(429, {
+            'Content-Type': 'application/json',
+            'Retry-After': String(Math.ceil((err as { retryAfterMs: number }).retryAfterMs / 1000)),
+          });
+          res.end(JSON.stringify({ error: 'rate limit exceeded' }));
+          return;
+        }
+        throw err;
+      }
       if (tenantId === null) {
         this.sendJson(res, 401, { error: 'unauthorized' });
         return;
@@ -203,6 +224,10 @@ function normalizeInbound(
     tenantId,
     conversationId: typeof body.conversationId === 'string' ? body.conversationId : undefined,
   };
+}
+
+function isRateLimitError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'RateLimitError';
 }
 
 function isImage(x: unknown): x is { data: string; mimeType: string } {

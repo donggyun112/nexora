@@ -66,6 +66,7 @@ export type {
   LLMChunk,
   LLMOptions,
   LLMResponse,
+  LLMUsage,
   ToolExecutor,
   ToolDefinitionSummary,
   MemoryProvider,
@@ -138,3 +139,15 @@ export type {
   GoalStore,
 } from './goal.js';
 export { formatGoalChain } from './goal.js';
+
+export type {
+  StoreBackendType,
+  StoreBackendInfo,
+  DescribableStore,
+} from './store-backend.js';
+
+export type {
+  NexoraExtension,
+  ExtensionContext,
+  ExtensionRegistry,
+} from './extension.js';

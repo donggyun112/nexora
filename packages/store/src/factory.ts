@@ -11,6 +11,9 @@ import type {
   ContextStore,
   AuditStore,
   ToolContextStore,
+  DescribableStore,
+  StoreBackendInfo,
+  AgentLogger,
 } from '@nexora/contracts';
 
 export interface StoreProvider {
@@ -20,6 +23,45 @@ export interface StoreProvider {
   context: ContextStore;
   audit: AuditStore;
   toolContext: ToolContextStore;
+}
+
+/**
+ * Check all stores in the provider for dev-only backends and log warnings.
+ * Call this at bootstrap time so operators notice before going to production.
+ */
+export function warnDevStores(
+  provider: StoreProvider,
+  logger: AgentLogger,
+): void {
+  const stores: [string, unknown][] = [
+    ['conversation', provider.conversation],
+    ['knowledge', provider.knowledge],
+    ['schedule', provider.schedule],
+    ['context', provider.context],
+    ['audit', provider.audit],
+    ['toolContext', provider.toolContext],
+  ];
+  for (const [name, store] of stores) {
+    if (isDescribable(store)) {
+      const info = store.describeBackend();
+      if (info.type === 'dev') {
+        logger.warn(
+          `Store "${name}" uses dev-only backend "${info.name}" ` +
+          `(durable=${info.durable}, multiProcess=${info.multiProcess}). ` +
+          `Not recommended for production.`,
+        );
+      }
+    }
+  }
+}
+
+function isDescribable(store: unknown): store is DescribableStore {
+  return (
+    store !== null &&
+    typeof store === 'object' &&
+    'describeBackend' in store &&
+    typeof (store as DescribableStore).describeBackend === 'function'
+  );
 }
 
 export interface StoreConfig {

@@ -8,13 +8,17 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { AuditStore, AuditEntry, AuditFilter } from '@nexora/contracts';
+import type { AuditStore, AuditEntry, AuditFilter, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
 
-export class AuditStoreJson implements AuditStore {
+export class AuditStoreJson implements AuditStore, DescribableStore {
   private readonly dir: string;
 
   constructor(dataDir: string) {
     this.dir = path.join(dataDir, 'audit');
+  }
+
+  describeBackend(): StoreBackendInfo {
+    return { name: 'json-file', type: 'dev', durable: true, multiProcess: false };
   }
 
   private filePath(namespace: string): string {

@@ -8,13 +8,17 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ContextStore, DailyContext } from '@nexora/contracts';
+import type { ContextStore, DailyContext, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
 
-export class ContextStoreJson implements ContextStore {
+export class ContextStoreJson implements ContextStore, DescribableStore {
   private readonly baseDir: string;
 
   constructor(dataDir: string) {
     this.baseDir = path.join(dataDir, 'context');
+  }
+
+  describeBackend(): StoreBackendInfo {
+    return { name: 'json-file', type: 'dev', durable: true, multiProcess: false };
   }
 
   private filePath(namespace: string, date: string): string {

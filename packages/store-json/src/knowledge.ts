@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { KnowledgeStore, KnowledgeTopic } from '@nexora/contracts';
+import type { KnowledgeStore, KnowledgeTopic, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
 
 function sanitizeName(name: string): string {
   if (name.includes('/') || name.includes('..')) {
@@ -17,11 +17,15 @@ function sanitizeName(name: string): string {
   return name;
 }
 
-export class KnowledgeStoreJson implements KnowledgeStore {
+export class KnowledgeStoreJson implements KnowledgeStore, DescribableStore {
   private readonly baseDir: string;
 
   constructor(dataDir: string) {
     this.baseDir = path.join(dataDir, 'knowledge');
+  }
+
+  describeBackend(): StoreBackendInfo {
+    return { name: 'json-file', type: 'dev', durable: true, multiProcess: false };
   }
 
   private nsDir(namespace: string): string {

@@ -34,7 +34,7 @@ describe('FallbackLLMProvider', () => {
 
     const result = await fallback.complete([{ role: 'user', content: 'hi' }]);
     expect(result.content).toBe('secondary saved the day');
-    expect(onFallback).toHaveBeenCalledWith('primary', 'secondary', 'auth failed');
+    expect(onFallback).toHaveBeenCalledWith('primary', 'secondary', '[unknown] auth failed');
   });
 
   it('throws when all providers fail', async () => {

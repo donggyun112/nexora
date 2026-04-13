@@ -8,13 +8,17 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ScheduleStore, ScheduledJob } from '@nexora/contracts';
+import type { ScheduleStore, ScheduledJob, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
 
-export class ScheduleStoreJson implements ScheduleStore {
+export class ScheduleStoreJson implements ScheduleStore, DescribableStore {
   private readonly dir: string;
 
   constructor(dataDir: string) {
     this.dir = path.join(dataDir, 'schedules');
+  }
+
+  describeBackend(): StoreBackendInfo {
+    return { name: 'json-file', type: 'dev', durable: true, multiProcess: false };
   }
 
   private filePath(namespace: string): string {

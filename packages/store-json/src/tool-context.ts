@@ -13,13 +13,19 @@ import type {
   ToolCallRecord,
   ToolResultRecord,
   ToolContextRecord,
+  StoreBackendInfo,
+  DescribableStore,
 } from '@nexora/contracts';
 
-export class ToolContextStoreJson implements ToolContextStore {
+export class ToolContextStoreJson implements ToolContextStore, DescribableStore {
   private readonly baseDir: string;
 
   constructor(dataDir: string) {
     this.baseDir = path.join(dataDir, 'tool-context');
+  }
+
+  describeBackend(): StoreBackendInfo {
+    return { name: 'json-file', type: 'dev', durable: true, multiProcess: false };
   }
 
   private turnFile(scope: string, turnId: string): string {

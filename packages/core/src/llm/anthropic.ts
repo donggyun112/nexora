@@ -115,6 +115,13 @@ export class AnthropicProvider implements LLMProvider {
         name: t.name,
         arguments: t.input,
       })),
+      usage: {
+        promptTokens: response.usage.input_tokens
+          + ((response.usage as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0)
+          + ((response.usage as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0),
+        completionTokens: response.usage.output_tokens,
+        cachedTokens: (response.usage as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0,
+      },
     };
   }
 

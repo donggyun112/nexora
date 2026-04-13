@@ -24,6 +24,9 @@ export {
   estimateContextSize,
   shouldCompact,
   truncateLargeContent,
+  compressToolOutputs,
+  sanitizeToolPairs,
+  sanitizeLLMToolPairs,
   findCutPoint,
 } from './compaction.js';
 export type {
@@ -44,6 +47,7 @@ export type {
   BeforeToolCallContext,
   AfterToolCallContext,
   BeforeLLMCallContext,
+  AfterLLMCallContext,
 } from './middleware.js';
 
 export { createIdleTimeout, IdleTimeoutError } from './idle-timeout.js';

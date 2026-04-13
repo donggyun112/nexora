@@ -11,6 +11,8 @@ import type {
   ChatMessage,
   ToolDefinition,
   ToolResult,
+  LLMResponse,
+  LLMUsage,
 } from '@nexora/contracts';
 
 // ─── 훅 컨텍스트 ────────────────────────────────────────────────────────────
@@ -53,6 +55,13 @@ export interface BeforeLLMCallContext {
   systemPrompt: string;
 }
 
+export interface AfterLLMCallContext {
+  /** The LLM response (inspect/modify content, usage, etc.) */
+  response: LLMResponse;
+  /** Token usage from this call */
+  usage?: LLMUsage;
+}
+
 // ─── Middleware 인터페이스 ─────────────────────────────────────────────────
 
 export interface AgentMiddleware {
@@ -62,6 +71,7 @@ export interface AgentMiddleware {
   beforeToolCall?(ctx: BeforeToolCallContext): Promise<void> | void;
   afterToolCall?(ctx: AfterToolCallContext): Promise<void> | void;
   beforeLLMCall?(ctx: BeforeLLMCallContext): Promise<void> | void;
+  afterLLMCall?(ctx: AfterLLMCallContext): Promise<void> | void;
 }
 
 // ─── Pipeline ───────────────────────────────────────────────────────────────
@@ -107,6 +117,13 @@ export class MiddlewarePipeline {
   async runBeforeLLMCall(ctx: BeforeLLMCallContext): Promise<void> {
     for (const m of this.middlewares) {
       if (m.beforeLLMCall) await m.beforeLLMCall(ctx);
+    }
+  }
+
+  async runAfterLLMCall(ctx: AfterLLMCallContext): Promise<void> {
+    for (let i = this.middlewares.length - 1; i >= 0; i--) {
+      const m = this.middlewares[i];
+      if (m.afterLLMCall) await m.afterLLMCall(ctx);
     }
   }
 

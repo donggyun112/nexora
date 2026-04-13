@@ -1,5 +1,5 @@
 {
-  "name": "@nexora/store-json",
+  "name": "@nexora/skills",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,6 +23,6 @@
     "typescript": "^5.8.0"
   },
   "nexora": {
-    "stability": "advanced"
+    "stability": "experimental"
   }
 }

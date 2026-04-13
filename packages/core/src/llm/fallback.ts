@@ -26,11 +26,48 @@ export interface FallbackProviderEntry {
   provider: LLMProvider;
 }
 
+/**
+ * Error classification — determines whether to retry, fallback, or abort.
+ * Enables smarter handling than "any error → next provider".
+ */
+export type ErrorClass = 'rate-limit' | 'auth' | 'server' | 'network' | 'abort' | 'unknown';
+
+export function classifyError(err: Error, signal?: AbortSignal): ErrorClass {
+  if (isAbortError(err, signal)) return 'abort';
+
+  const msg = err.message.toLowerCase();
+  const code = (err as Error & { status?: number; statusCode?: number }).status
+    ?? (err as Error & { status?: number; statusCode?: number }).statusCode;
+
+  if (code === 429 || msg.includes('rate limit') || msg.includes('too many requests')) {
+    return 'rate-limit';
+  }
+  if (code === 401 || code === 403 || msg.includes('unauthorized') || msg.includes('invalid api key') || msg.includes('authentication')) {
+    return 'auth';
+  }
+  if (code !== undefined && code >= 500) return 'server';
+  if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('timeout') || msg.includes('network')) {
+    return 'network';
+  }
+  return 'unknown';
+}
+
 export interface FallbackLLMProviderOptions {
   /** 우선순위 순서로 정렬된 provider 목록 */
   providers: FallbackProviderEntry[];
   /** fallback 발생 시 호출 */
   onFallback?: (from: string, to: string, reason: string) => void;
+  /**
+   * Optional callback when auth error occurs. Can attempt credential refresh
+   * and return true if the provider should be retried with new credentials.
+   * If not provided or returns false, the provider is skipped.
+   */
+  onAuthError?: (providerName: string) => boolean | Promise<boolean>;
+  /**
+   * Delay in ms before retrying after a rate-limit error.
+   * Default: 1000. Set to 0 to skip retry and fallback immediately.
+   */
+  rateLimitRetryMs?: number;
 }
 
 class AbortedBeforeCallError extends Error {
@@ -43,6 +80,8 @@ class AbortedBeforeCallError extends Error {
 export class FallbackLLMProvider implements LLMProvider {
   private readonly entries: FallbackProviderEntry[];
   private readonly onFallback?: FallbackLLMProviderOptions['onFallback'];
+  private readonly onAuthError?: FallbackLLMProviderOptions['onAuthError'];
+  private readonly rateLimitRetryMs: number;
 
   constructor(options: FallbackLLMProviderOptions) {
     if (options.providers.length === 0) {
@@ -50,6 +89,8 @@ export class FallbackLLMProvider implements LLMProvider {
     }
     this.entries = options.providers;
     this.onFallback = options.onFallback;
+    this.onAuthError = options.onAuthError;
+    this.rateLimitRetryMs = options.rateLimitRetryMs ?? 1000;
   }
 
   async *stream(messages: LLMMessage[], options?: LLMOptions): AsyncGenerator<LLMChunk> {
@@ -60,6 +101,7 @@ export class FallbackLLMProvider implements LLMProvider {
     }
 
     let lastError: Error | null = null;
+    let retried = false;
 
     for (let i = 0; i < this.entries.length; i++) {
       // Re-check before each provider attempt (signal may have aborted between attempts)
@@ -92,12 +134,33 @@ export class FallbackLLMProvider implements LLMProvider {
         return; // 성공
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        // Cancellation must NOT trigger fallback — the caller intentionally aborted.
-        // Trying the next provider would just re-fail (or worse, do work the user gave up on).
-        if (isAbortError(lastError, options?.signal)) throw lastError;
+        const errorClass = classifyError(lastError, options?.signal);
+
+        // Cancellation must NOT trigger fallback
+        if (errorClass === 'abort') throw lastError;
+
+        // Rate-limit: wait then retry same provider once before fallback
+        if (errorClass === 'rate-limit' && this.rateLimitRetryMs > 0 && !retried) {
+          retried = true;
+          await delay(this.rateLimitRetryMs);
+          i--; // retry same provider
+          continue;
+        }
+
+        // Auth: attempt credential refresh before fallback
+        if (errorClass === 'auth' && this.onAuthError && !retried) {
+          retried = true;
+          const refreshed = await this.onAuthError(entry.name);
+          if (refreshed) {
+            i--; // retry same provider
+            continue;
+          }
+        }
+
         if (isLast) throw lastError;
         const next = this.entries[i + 1];
-        this.onFallback?.(entry.name, next.name, lastError.message);
+        this.onFallback?.(entry.name, next.name, `[${errorClass}] ${lastError.message}`);
+        retried = false;
       }
     }
 
@@ -110,6 +173,7 @@ export class FallbackLLMProvider implements LLMProvider {
     }
 
     let lastError: Error | null = null;
+    let retried = false;
 
     for (let i = 0; i < this.entries.length; i++) {
       if (options?.signal?.aborted) {
@@ -122,8 +186,6 @@ export class FallbackLLMProvider implements LLMProvider {
       try {
         const response = await entry.provider.complete(messages, options);
 
-        // If the signal aborted during the call, throw instead of returning
-        // what may be a partial/empty response.
         if (options?.signal?.aborted) {
           throw new AbortedBeforeCallError();
         }
@@ -141,10 +203,32 @@ export class FallbackLLMProvider implements LLMProvider {
         return response;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        if (isAbortError(lastError, options?.signal)) throw lastError;
+        const errorClass = classifyError(lastError, options?.signal);
+
+        if (errorClass === 'abort') throw lastError;
+
+        // Rate-limit: wait then retry same provider once
+        if (errorClass === 'rate-limit' && this.rateLimitRetryMs > 0 && !retried) {
+          retried = true;
+          await delay(this.rateLimitRetryMs);
+          i--;
+          continue;
+        }
+
+        // Auth: attempt credential refresh
+        if (errorClass === 'auth' && this.onAuthError && !retried) {
+          retried = true;
+          const refreshed = await this.onAuthError(entry.name);
+          if (refreshed) {
+            i--;
+            continue;
+          }
+        }
+
         if (isLast) throw lastError;
         const next = this.entries[i + 1];
-        this.onFallback?.(entry.name, next.name, lastError.message);
+        this.onFallback?.(entry.name, next.name, `[${errorClass}] ${lastError.message}`);
+        retried = false;
       }
     }
 
@@ -157,6 +241,10 @@ export class FallbackLLMProvider implements LLMProvider {
  * accept the case where the caller's signal has already been aborted (the SDK
  * may not always rebrand its rejection consistently).
  */
+function delay(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
+}
+
 function isAbortError(err: Error, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
   if (err.name === 'AbortError') return true;

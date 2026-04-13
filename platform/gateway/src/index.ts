@@ -17,3 +17,16 @@ export type {
 
 export { StreamingGatewayRouter } from './streaming-router.js';
 export type { StreamingGatewayRouterOptions } from './streaming-router.js';
+
+export {
+  createApiKeyAuth,
+  createRateLimiter,
+  createSecureResolver,
+  RateLimitError,
+} from './middleware.js';
+export type {
+  ApiKeyAuthOptions,
+  RateLimitOptions,
+  RateLimiter,
+  SecureResolverOptions,
+} from './middleware.js';

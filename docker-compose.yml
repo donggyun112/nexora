@@ -1,0 +1,55 @@
+# Nexora — local development compose
+#
+# Starts Redis (for durable transport) + the Nexora dev server.
+# For pure local dev (no Redis), just run `nexora dev` directly.
+#
+# Usage:
+#   docker compose up        — start everything
+#   docker compose down -v   — stop and remove volumes
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  nexora:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXORA_TRANSPORT=redis
+      - REDIS_URL=redis://redis:6379
+      - PORT=3000
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./agents:/app/agents:ro
+      - ./context:/app/context:ro
+      - nexora-data:/app/data
+
+  # Optional: Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.53
+    ports:
+      - "16686:16686"  # UI
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    profiles:
+      - tracing
+
+volumes:
+  redis-data:
+  nexora-data:

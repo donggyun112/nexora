@@ -10,6 +10,7 @@
 import { scaffoldAgent } from './scaffold.js';
 import { runDev } from './dev.js';
 import { exportPackage, importPackage } from './portability.js';
+import { runDoctor, viewDlq, viewBudget, viewHandraises } from './ops.js';
 
 interface ParsedArgs {
   command: string;
@@ -124,6 +125,76 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.command === 'doctor') {
+    const contextDir = typeof args.flags.context === 'string' ? args.flags.context : './context';
+    const agentsDir = typeof args.flags.agents === 'string' ? args.flags.agents : './agents';
+    try {
+      const result = await runDoctor({ contextDir, agentsDir });
+      for (const check of result.checks) {
+        const icon = check.status === 'pass' ? 'OK' : check.status === 'warn' ? 'WARN' : 'FAIL';
+        console.log(`  [${icon}] ${check.name}: ${check.message}`);
+      }
+      console.log(result.ok ? '\nAll checks passed.' : '\nSome checks failed.');
+      if (!result.ok) process.exit(1);
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (args.command === 'ops') {
+    const dataDir = typeof args.flags.data === 'string' ? args.flags.data : './data';
+    const limit = typeof args.flags.limit === 'string' ? parseInt(args.flags.limit, 10) : 20;
+
+    if (args.subcommand === 'dlq') {
+      const entries = await viewDlq({ dataDir, limit });
+      if (entries.length === 0) {
+        console.log('No DLQ entries.');
+      } else {
+        for (const e of entries) {
+          console.log(`  [${new Date(e.timestamp).toISOString()}] ${e.topic}: ${e.error}`);
+        }
+        console.log(`\n${entries.length} entries.`);
+      }
+      return;
+    }
+
+    if (args.subcommand === 'budget') {
+      const summaries = await viewBudget({ dataDir });
+      if (summaries.length === 0) {
+        console.log('No budget data.');
+      } else {
+        console.log('  Scope                 Spent      Limit      Usage');
+        console.log('  ' + '-'.repeat(60));
+        for (const s of summaries) {
+          const scope = s.scope.padEnd(20);
+          const spent = `$${s.spent.toFixed(4)}`.padEnd(10);
+          const limit = s.limit !== null ? `$${s.limit.toFixed(4)}`.padEnd(10) : 'unlimited'.padEnd(10);
+          console.log(`  ${scope} ${spent} ${limit} ${s.utilization}`);
+        }
+      }
+      return;
+    }
+
+    if (args.subcommand === 'handraise') {
+      const entries = await viewHandraises({ dataDir });
+      if (entries.length === 0) {
+        console.log('No pending handraises.');
+      } else {
+        for (const e of entries) {
+          console.log(`  [${e.id}] ${e.agentName} (${e.tenantId}): ${e.question}`);
+        }
+        console.log(`\n${entries.length} pending.`);
+      }
+      return;
+    }
+
+    console.error('Usage: nexora ops <dlq|budget|handraise> [--data <dir>]');
+    process.exit(1);
+    return;
+  }
+
   console.error(`Unknown command: ${args.command} ${args.subcommand ?? ''}`);
   printHelp();
   process.exit(1);
@@ -135,6 +206,10 @@ function printHelp(): void {
 Usage:
   nexora create agent <name> [options]    Scaffold a new agent
   nexora dev [options]                    Start all agents + gateway
+  nexora doctor [options]                 Health check: agents, context, deps
+  nexora ops dlq [--data <dir>]          List dead-letter queue entries
+  nexora ops budget [--data <dir>]       Show budget status per scope
+  nexora ops handraise [--data <dir>]    List pending handraise requests
   nexora export [--output file.tar.gz]   Bundle agents + context for sharing
   nexora import <file.tar.gz> [--force]  Unpack a shared bundle
 
@@ -149,12 +224,19 @@ Dev options:
   --agents <dir>     Agents directory. Default: ./agents
   --model <name>     Default LLM model. Default: claude-sonnet-4-5
 
+Ops options:
+  --data <dir>       Data root directory. Default: ./data
+  --limit <n>        Max entries to show. Default: 20
+
   --help             Show this help
 
 Examples:
   nexora create agent dev-agent --tools exec,read,grep
   nexora dev
   nexora dev --port 8080 --model claude-haiku-4-5
+  nexora doctor
+  nexora ops dlq
+  nexora ops budget
 `);
 }
 

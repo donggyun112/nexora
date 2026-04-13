@@ -18,6 +18,7 @@ import type {
   AgentInput,
   RuntimeServices,
   LLMMessage,
+  LLMContentBlock,
   LLMResponse,
 } from '@nexora/contracts';
 
@@ -157,8 +158,9 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
           content: toolResultBlocks,
         });
 
-        // 컴팩션 시도
+        // 컴팩션 시도 + tool pair sanitization
         await services.memory.compact();
+        sanitizeToolPairsInPlace(history);
       }
 
       // max iterations 도달
@@ -169,6 +171,54 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
       };
     },
   };
+}
+
+/**
+ * Sanitize tool_call/tool_result pairs in-place after compaction.
+ * Ensures every tool_call has a matching tool_result (prevents API crashes).
+ */
+function sanitizeToolPairsInPlace(history: LLMMessage[]): void {
+  const callIds = new Set<string>();
+  const resultIds = new Set<string>();
+
+  for (const msg of history) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const block of msg.content as LLMContentBlock[]) {
+        if (block.type === 'tool_call') callIds.add(block.id);
+      }
+    }
+    if (msg.role === 'tool_result' && Array.isArray(msg.content)) {
+      for (const block of msg.content as LLMContentBlock[]) {
+        if (block.type === 'tool_result') resultIds.add(block.id);
+      }
+    }
+  }
+
+  // Remove orphaned tool_result messages (results without matching calls)
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== 'tool_result' || !Array.isArray(msg.content)) continue;
+    const blocks = (msg.content as LLMContentBlock[]).filter(
+      b => b.type === 'tool_result',
+    );
+    if (blocks.length > 0 && !blocks.some(b => b.type === 'tool_result' && callIds.has(b.id))) {
+      history.splice(i, 1);
+    }
+  }
+
+  // Insert stub results for orphaned calls
+  const orphanedIds = [...callIds].filter(id => !resultIds.has(id));
+  if (orphanedIds.length > 0) {
+    history.push({
+      role: 'tool_result',
+      content: orphanedIds.map(id => ({
+        type: 'tool_result' as const,
+        id,
+        content: '[result lost during context compaction]',
+        isError: false,
+      })),
+    });
+  }
 }
 
 function isErrorResult(result: unknown): boolean {

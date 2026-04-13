@@ -135,11 +135,20 @@ export interface LLMOptions {
   signal?: AbortSignal;
 }
 
+export interface LLMUsage {
+  promptTokens: number;
+  completionTokens: number;
+  /** Tokens served from prompt cache (Anthropic). 0 if not applicable. */
+  cachedTokens?: number;
+}
+
 export interface LLMResponse {
   content: string;
   model: string;
   stopReason: string;
   toolCalls?: { id: string; name: string; arguments: unknown }[];
+  /** Token usage from the API. Undefined if the provider doesn't report it. */
+  usage?: LLMUsage;
 }
 
 export interface ToolExecutor {

@@ -9,13 +9,17 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ConversationStore, ChatMessage } from '@nexora/contracts';
+import type { ConversationStore, ChatMessage, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
 
-export class ConversationStoreJson implements ConversationStore {
+export class ConversationStoreJson implements ConversationStore, DescribableStore {
   private readonly dir: string;
 
   constructor(dataDir: string) {
     this.dir = path.join(dataDir, 'conversations');
+  }
+
+  describeBackend(): StoreBackendInfo {
+    return { name: 'json-file', type: 'dev', durable: true, multiProcess: false };
   }
 
   private filePath(conversationId: string): string {

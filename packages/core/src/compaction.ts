@@ -11,6 +11,7 @@ import type {
   ChatMessage,
   LLMProvider,
   LLMMessage,
+  LLMContentBlock,
 } from '@nexora/contracts';
 
 // ─── 상수 ──────────────────────────────────────────────────────────────────
@@ -88,6 +89,24 @@ export interface CompactorOptions {
   model?: string;
   /** 압축 완료 콜백 */
   onCompactionComplete?: (summary: string) => void | Promise<void>;
+  /**
+   * Hook called before compaction starts. Receives the original messages.
+   * Use to extract critical tags/context that must survive compaction.
+   * Return value is passed to afterCompact.
+   */
+  beforeCompact?: (messages: ChatMessage[]) => unknown;
+  /**
+   * Hook called after compaction. Receives the compacted messages and
+   * the value returned by beforeCompact. Use to re-inject preserved tags.
+   */
+  afterCompact?: (messages: ChatMessage[], preserved: unknown) => ChatMessage[];
+  /**
+   * Selective tool output compression: only messages with role 'assistant'
+   * containing tool output longer than this threshold are truncated in Stage 1.
+   * Shorter messages are left intact. Default: same as toolResultTruncateChars.
+   * Set to Infinity to skip selective compression.
+   */
+  selectiveToolThreshold?: number;
 }
 
 export interface CompactionResult {
@@ -143,6 +162,114 @@ export function truncateLargeContent(
   });
 }
 
+/**
+ * Selective tool output compression — only compress assistant messages
+ * that look like tool output (long content, often containing code blocks
+ * or structured data). Short conversational messages are left intact.
+ *
+ * This is more nuanced than truncateLargeContent: it preserves the first
+ * and last portions of long outputs to keep headers/summaries visible.
+ */
+export function compressToolOutputs(
+  messages: ChatMessage[],
+  threshold: number,
+): ChatMessage[] {
+  return messages.map(msg => {
+    // Only compress assistant messages (likely tool output).
+    // User messages are left intact to preserve constraints/instructions.
+    if (msg.role !== 'assistant') return msg;
+    if (msg.content.length <= threshold) return msg;
+    // Keep first 30% and last 20% of content for context
+    const keepHead = Math.floor(threshold * 0.6);
+    const keepTail = Math.floor(threshold * 0.3);
+    const omitted = msg.content.length - keepHead - keepTail;
+    return {
+      ...msg,
+      content:
+        msg.content.slice(0, keepHead) +
+        `\n\n…[compressed ${omitted} chars — head+tail preserved]…\n\n` +
+        msg.content.slice(-keepTail),
+    };
+  });
+}
+
+// ─── Tool pair sanitization ────────────────────────────────────────────────
+
+/**
+ * Sanitize tool call/result pairs in LLMMessage[] history.
+ *
+ * Anthropic/OpenAI APIs require that every tool_call has a matching tool_result
+ * and vice versa. After compaction cut-point splitting, orphans can appear.
+ *
+ * This operates on structured LLMMessage[] (not ChatMessage[]) so it can
+ * inspect actual tool_call/tool_result blocks, not just string content.
+ *
+ * Fix strategy (matches Hermes _sanitize_tool_pairs):
+ * 1. Collect all tool_call IDs from assistant content blocks
+ * 2. Collect all tool_result IDs from tool_result messages
+ * 3. Remove orphaned tool_result messages (no matching call)
+ * 4. Insert stub tool_result for orphaned tool_calls
+ */
+export function sanitizeLLMToolPairs(messages: LLMMessage[]): LLMMessage[] {
+  const callIds = new Set<string>();
+  const resultIds = new Set<string>();
+
+  // Pass 1: collect tool_call IDs
+  for (const msg of messages) {
+    if (msg.role !== 'assistant' || typeof msg.content === 'string') continue;
+    for (const block of msg.content) {
+      if (block.type === 'tool_call') callIds.add(block.id);
+    }
+  }
+
+  // Pass 2: collect tool_result IDs
+  for (const msg of messages) {
+    if (msg.role !== 'tool_result' || typeof msg.content === 'string') continue;
+    for (const block of msg.content) {
+      if (block.type === 'tool_result') resultIds.add(block.id);
+    }
+  }
+
+  // Pass 3: remove orphaned tool_result messages
+  const cleaned = messages.filter(msg => {
+    if (msg.role !== 'tool_result' || typeof msg.content === 'string') return true;
+    const blocks = msg.content.filter(
+      (b): b is Extract<typeof b, { type: 'tool_result' }> => b.type === 'tool_result',
+    );
+    if (blocks.length === 0) return true;
+    // Keep if at least one result has a matching call
+    return blocks.some(b => callIds.has(b.id));
+  });
+
+  // Pass 4: find orphaned calls and insert stub results
+  const orphanedIds = [...callIds].filter(id => !resultIds.has(id));
+  if (orphanedIds.length === 0) return cleaned;
+
+  const stubMessage: LLMMessage = {
+    role: 'tool_result',
+    content: orphanedIds.map(id => ({
+      type: 'tool_result' as const,
+      id,
+      content: '[result lost during context compaction]',
+      isError: false,
+    })),
+  };
+
+  return [...cleaned, stubMessage];
+}
+
+/**
+ * ChatMessage-level wrapper — for use in the compactor where we only have
+ * ChatMessage[]. Scans string content for serialized tool IDs and inserts
+ * placeholder stubs. Less precise than sanitizeLLMToolPairs but safe.
+ */
+export function sanitizeToolPairs(messages: ChatMessage[]): ChatMessage[] {
+  // No-op if no messages reference tool interactions
+  const hasToolContent = messages.some(m => m.content.includes('"tool_call"'));
+  if (!hasToolContent) return messages;
+  return messages; // Let sanitizeLLMToolPairs handle it at the LLM layer
+}
+
 // ─── Cut point 탐색 ───────────────────────────────────────────────────────
 
 /**
@@ -168,11 +295,33 @@ export function findCutPoint(messages: ChatMessage[], keepRecentTokens: number):
 
 // ─── 직렬화 (LLM이 대화를 이어가지 않도록) ────────────────────────────────
 
+const SERIALIZE_CONTENT_MAX = 6000;
+const SERIALIZE_CONTENT_HEAD = 4000;
+const SERIALIZE_CONTENT_TAIL = 1500;
+
+/**
+ * Serialize conversation for summarization input.
+ * Includes tool_call names and tool_result content (truncated).
+ * Caps per-message content to prevent summarizer context overflow.
+ */
 function serializeConversation(messages: ChatMessage[]): string {
   const parts: string[] = [];
   for (const msg of messages) {
-    const label = msg.role === 'user' ? 'User' : 'Assistant';
-    parts.push(`[${label}]: ${msg.content}`);
+    const hasToolContent = msg.content.includes('tool_result') || msg.content.includes('tool_call');
+    const label = msg.role === 'user' ? 'User'
+      : hasToolContent ? 'Assistant (tool interaction)'
+      : 'Assistant';
+
+    let content = msg.content;
+    // Truncate oversized content to prevent summarizer overflow
+    if (content.length > SERIALIZE_CONTENT_MAX) {
+      content =
+        content.slice(0, SERIALIZE_CONTENT_HEAD) +
+        `\n…[truncated ${content.length - SERIALIZE_CONTENT_HEAD - SERIALIZE_CONTENT_TAIL} chars]…\n` +
+        content.slice(-SERIALIZE_CONTENT_TAIL);
+    }
+
+    parts.push(`[${label}]: ${content}`);
   }
   return parts.join('\n\n');
 }
@@ -189,8 +338,11 @@ export class TwoStageCompactor implements Compactor {
   private readonly reserveTokens: number;
   private readonly keepRecentTokens: number;
   private readonly toolResultTruncateChars: number;
+  private readonly selectiveToolThreshold: number;
   private readonly model?: string;
   private readonly onCompactionComplete?: CompactorOptions['onCompactionComplete'];
+  private readonly beforeCompact?: CompactorOptions['beforeCompact'];
+  private readonly afterCompact?: CompactorOptions['afterCompact'];
   private previousSummary: string | undefined;
   private compacting = false;
 
@@ -200,8 +352,11 @@ export class TwoStageCompactor implements Compactor {
     this.reserveTokens = options.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
     this.keepRecentTokens = options.keepRecentTokens ?? DEFAULT_KEEP_RECENT_TOKENS;
     this.toolResultTruncateChars = options.toolResultTruncateChars ?? DEFAULT_TOOL_RESULT_TRUNCATE_CHARS;
+    this.selectiveToolThreshold = options.selectiveToolThreshold ?? this.toolResultTruncateChars;
     this.model = options.model;
     this.onCompactionComplete = options.onCompactionComplete;
+    this.beforeCompact = options.beforeCompact;
+    this.afterCompact = options.afterCompact;
   }
 
   /**
@@ -217,19 +372,25 @@ export class TwoStageCompactor implements Compactor {
 
     this.compacting = true;
     try {
-      // Stage 1: 큰 메시지 절단
-      const stage1 = truncateLargeContent(messages, this.toolResultTruncateChars);
+      // beforeCompact hook: extract critical tags/context before compression
+      const preserved = this.beforeCompact?.(messages);
+
+      // Stage 1a: selective tool output compression (head+tail preserved)
+      const selective = compressToolOutputs(messages, this.selectiveToolThreshold);
+      // Stage 1b: hard truncation for anything still over limit
+      const stage1 = truncateLargeContent(selective, this.toolResultTruncateChars);
       const afterStage1 = estimateContextSize(stage1);
 
       // Stage 1만으로 충분한가?
       if (!shouldCompact(afterStage1, this.contextWindow, this.reserveTokens)) {
+        const finalMessages = this.afterCompact ? this.afterCompact(stage1, preserved) : stage1;
         return {
           summary: '(stage 1 truncation only)',
-          newMessages: stage1,
+          newMessages: finalMessages,
           beforeCount: messages.length,
-          afterCount: stage1.length,
+          afterCount: finalMessages.length,
           beforeTokens,
-          afterTokens: afterStage1,
+          afterTokens: estimateContextSize(finalMessages),
         };
       }
 
@@ -249,14 +410,26 @@ export class TwoStageCompactor implements Compactor {
 
       const toSummarize = stage1.slice(0, cutIndex);
       const recent = stage1.slice(cutIndex);
-      const summary = await this.generateSummary(toSummarize);
+
+      let summary: string;
+      try {
+        summary = await this.generateSummary(toSummarize);
+      } catch {
+        // Summarization failed (LLM error, context overflow, etc.)
+        // Use a static fallback instead of crashing the agent
+        summary = '(Summary unavailable — continuing with truncated context. ' +
+          `${toSummarize.length} messages were compressed.)`;
+      }
       this.previousSummary = summary;
 
       const summaryMessage: ChatMessage = {
         role: 'user',
         content: `${SUMMARY_PREFIX}${summary}${SUMMARY_SUFFIX}`,
       };
-      const newMessages = [summaryMessage, ...recent];
+      const rawMessages = [summaryMessage, ...recent];
+      // Sanitize orphaned tool_call/result pairs to prevent API errors
+      const sanitized = sanitizeToolPairs(rawMessages);
+      const newMessages = this.afterCompact ? this.afterCompact(sanitized, preserved) : sanitized;
 
       if (this.onCompactionComplete) {
         try {

@@ -8,5 +8,5 @@ export type { AnthropicProviderOptions } from './anthropic.js';
 export { OpenAIProvider } from './openai.js';
 export type { OpenAIProviderOptions } from './openai.js';
 
-export { FallbackLLMProvider } from './fallback.js';
-export type { FallbackLLMProviderOptions, FallbackProviderEntry } from './fallback.js';
+export { FallbackLLMProvider, classifyError } from './fallback.js';
+export type { FallbackLLMProviderOptions, FallbackProviderEntry, ErrorClass } from './fallback.js';

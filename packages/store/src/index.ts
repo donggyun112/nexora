@@ -22,5 +22,5 @@ export type {
   ToolContextRecord,
 } from '@nexora/contracts';
 
-export { createStoreProvider } from './factory.js';
+export { createStoreProvider, warnDevStores } from './factory.js';
 export type { StoreConfig, StoreProvider } from './factory.js';

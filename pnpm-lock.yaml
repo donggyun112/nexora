@@ -198,6 +198,19 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/skills:
+    dependencies:
+      '@nexora/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   packages/store:
     dependencies:
       '@nexora/contracts':

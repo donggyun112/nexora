@@ -16,6 +16,7 @@ import type {
   SessionEntry,
   SessionTreeNode,
   TreeConversationStore,
+  AppendEntryInput,
   StoreBackendInfo,
   DescribableStore,
 } from '@nexora/contracts';
@@ -63,7 +64,7 @@ export class TreeConversationStoreJson implements TreeConversationStore, Describ
    */
   async appendEntry(
     conversationId: string,
-    entry: Omit<SessionEntry, 'id'>,
+    entry: AppendEntryInput,
   ): Promise<string> {
     this.ensureDir();
     const id = messageId();

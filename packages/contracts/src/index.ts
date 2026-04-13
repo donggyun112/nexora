@@ -156,4 +156,5 @@ export type {
   SessionEntry,
   SessionTreeNode,
   TreeConversationStore,
+  AppendEntryInput,
 } from './session-tree.js';

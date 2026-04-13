@@ -135,6 +135,9 @@ async function walkDir(dir: string): Promise<Skill[]> {
       // Check for SKILL.md in this directory
       const skillFile = path.join(entryPath, 'SKILL.md');
       if (fs.existsSync(skillFile)) {
+        // Skip if SKILL.md itself is a symlink (prevent escape from discovery root)
+        const fileStat = await fsp.lstat(skillFile);
+        if (fileStat.isSymbolicLink()) continue;
         const content = await fsp.readFile(skillFile, 'utf-8');
         try {
           skills.push(parseSkillFile(content, skillFile));
@@ -147,6 +150,9 @@ async function walkDir(dir: string): Promise<Skill[]> {
         skills.push(...nested);
       }
     } else if (dirent.name.endsWith('.md') && dirent.name !== 'README.md') {
+      // Skip symlinked .md files
+      const fileStat = await fsp.lstat(entryPath);
+      if (fileStat.isSymbolicLink()) continue;
       const content = await fsp.readFile(entryPath, 'utf-8');
       try {
         skills.push(parseSkillFile(content, entryPath));
@@ -200,7 +206,8 @@ interface CacheEntry {
 
 /**
  * Cached skill loader — only re-parses files that changed since last load.
- * Reduces startup time when skill directories are large.
+ * Separates path discovery from parsing: stats files first, only parses
+ * cache misses or changed files.
  */
 export class CachedSkillLoader {
   private cache = new Map<string, CacheEntry>();
@@ -208,26 +215,34 @@ export class CachedSkillLoader {
   async loadFromDir(dir: string): Promise<Skill[]> {
     if (!fs.existsSync(dir)) return [];
 
-    const fresh = await walkDir(dir);
+    // Phase 1: discover skill file paths (no parsing)
+    const paths = await discoverSkillPaths(dir);
     const result: Skill[] = [];
     const seenPaths = new Set<string>();
 
-    for (const skill of fresh) {
-      seenPaths.add(skill.source);
-      const cached = this.cache.get(skill.source);
-      const stat = await fsp.stat(skill.source);
+    // Phase 2: stat each path, only parse on cache miss/change
+    for (const filePath of paths) {
+      seenPaths.add(filePath);
+      const stat = await fsp.stat(filePath);
       const mtime = stat.mtimeMs;
+      const cached = this.cache.get(filePath);
 
-      // Strict: only use cache if mtime matches exactly (not >=)
       if (cached && cached.mtime === mtime) {
         result.push(cached.skill);
       } else {
-        this.cache.set(skill.source, { skill, mtime });
-        result.push(skill);
+        // Cache miss or changed — parse
+        const content = await fsp.readFile(filePath, 'utf-8');
+        try {
+          const skill = parseSkillFile(content, filePath);
+          this.cache.set(filePath, { skill, mtime });
+          result.push(skill);
+        } catch {
+          // Skip malformed
+        }
       }
     }
 
-    // Evict removed paths from cache
+    // Evict removed paths
     for (const key of this.cache.keys()) {
       if (!seenPaths.has(key)) this.cache.delete(key);
     }
@@ -238,4 +253,33 @@ export class CachedSkillLoader {
   invalidate(): void {
     this.cache.clear();
   }
+}
+
+/** Discover skill file paths without parsing content. */
+async function discoverSkillPaths(dir: string): Promise<string[]> {
+  if (!fs.existsSync(dir)) return [];
+  const paths: string[] = [];
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+
+  for (const dirent of entries) {
+    if (dirent.isSymbolicLink()) continue;
+    const entryPath = path.join(dir, dirent.name);
+    const stat = await fsp.stat(entryPath);
+
+    if (stat.isDirectory()) {
+      const skillFile = path.join(entryPath, 'SKILL.md');
+      if (fs.existsSync(skillFile)) {
+        const fileStat = await fsp.lstat(skillFile);
+        if (!fileStat.isSymbolicLink()) paths.push(skillFile);
+      } else {
+        const nested = await discoverSkillPaths(entryPath);
+        paths.push(...nested);
+      }
+    } else if (dirent.name.endsWith('.md') && dirent.name !== 'README.md') {
+      const fileStat = await fsp.lstat(entryPath);
+      if (!fileStat.isSymbolicLink()) paths.push(entryPath);
+    }
+  }
+
+  return paths;
 }

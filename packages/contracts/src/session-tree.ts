@@ -14,7 +14,12 @@
 export interface SessionEntry {
   /** Unique entry ID */
   id: string;
-  /** Parent entry ID (null for root, undefined to auto-parent from active leaf) */
+  /**
+   * Parent entry ID:
+   * - `null` = explicit root (first message in conversation)
+   * - `string` = explicit parent
+   * - `undefined` = auto-parent from current active leaf
+   */
   parentId: string | null | undefined;
   /** Message role */
   role: 'user' | 'assistant';
@@ -37,12 +42,24 @@ export interface SessionTreeNode {
  * The default getHistory/append still work (they operate on the
  * "current branch" — the path from root to the active leaf).
  */
+/** Input for appendEntry — parentId is optional (auto-parents from active leaf). */
+export type AppendEntryInput = {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  metadata?: Record<string, unknown>;
+  /** null = root, string = explicit parent, omitted = auto-parent from active leaf */
+  parentId?: string | null;
+};
+
 export interface TreeConversationStore {
   /**
    * Append an entry to the current branch. Returns the new entry ID.
-   * If parentId is null/undefined, auto-parents from the active leaf.
+   * - parentId omitted/undefined → auto-parent from active leaf
+   * - parentId null → explicit root
+   * - parentId string → explicit parent
    */
-  appendEntry(conversationId: string, entry: Omit<SessionEntry, 'id'>): Promise<string>;
+  appendEntry(conversationId: string, entry: AppendEntryInput): Promise<string>;
 
   /**
    * Branch from a specific entry. Sets the active leaf to the new branch point.

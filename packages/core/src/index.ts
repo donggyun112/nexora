@@ -74,3 +74,16 @@ export type { ExtensionLoaderOptions } from './extension-loader.js';
 
 export { createAgentTeam } from './team.js';
 export type { AgentTeamOptions, AgentTeam } from './team.js';
+
+export {
+  ExecutionTracker,
+  LearningEngine,
+  createImprovementLoop,
+} from './self-improve.js';
+export type {
+  ExecutionRecord,
+  LearningOutcome,
+  PerformanceSnapshot,
+  LearningEngineOptions,
+  ImprovementLoopOptions,
+} from './self-improve.js';

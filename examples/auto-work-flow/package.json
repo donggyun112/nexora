@@ -1,0 +1,19 @@
+{
+  "name": "@nexora-examples/auto-work-flow",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo 'auto-work-flow: reference example — no automated tests'",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@nexora/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}

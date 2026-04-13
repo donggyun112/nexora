@@ -14,6 +14,7 @@ export type {
   IntentResolver,
   LocalRuntimeRouterOptions,
 } from './router.js';
+export { createMentionResolver } from './router.js';
 
 export { StreamingGatewayRouter } from './streaming-router.js';
 export type { StreamingGatewayRouterOptions } from './streaming-router.js';

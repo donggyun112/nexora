@@ -65,6 +65,18 @@ export interface DiscordAdapterOptions {
   resolveTenant?: (guildId: string | null) => string | null;
   /** Max chars per Discord message (default 1900, below Discord's 2000 limit). */
   maxMessageLength?: number;
+  /**
+   * Map of bot user IDs → agent names for @mention routing.
+   * When a user @mentions a bot, the message is routed to that agent's topic.
+   * If not provided, all mentions are ignored and messages go to the default topic.
+   */
+  agentBotMap?: ReadonlyMap<string, string>;
+  /**
+   * Agent descriptions for the !agents discovery command.
+   * Map of agent name → description. If set, the adapter responds to
+   * "!agents" with a list of available agents.
+   */
+  agentDescriptions?: ReadonlyMap<string, string>;
 }
 
 const DEFAULT_MAX_MESSAGE_LENGTH = 1900;
@@ -74,12 +86,16 @@ export class DiscordAdapter implements Adapter {
   private readonly client: DiscordClientLike;
   private readonly resolveTenant: NonNullable<DiscordAdapterOptions['resolveTenant']>;
   private readonly maxLen: number;
+  private readonly agentBotMap: ReadonlyMap<string, string>;
+  private readonly agentDescriptions: ReadonlyMap<string, string>;
   private handler: ((msg: DiscordMessageLike) => void) | null = null;
 
   constructor(options: DiscordAdapterOptions) {
     this.client = options.client;
     this.resolveTenant = options.resolveTenant ?? ((guildId) => guildId ?? 'dm');
     this.maxLen = options.maxMessageLength ?? DEFAULT_MAX_MESSAGE_LENGTH;
+    this.agentBotMap = options.agentBotMap ?? new Map();
+    this.agentDescriptions = options.agentDescriptions ?? new Map();
   }
 
   async start(router: MessageRouter): Promise<void> {
@@ -96,6 +112,28 @@ export class DiscordAdapter implements Adapter {
       const tenantId = this.resolveTenant(message.guildId);
       if (tenantId === null) return; // guild not configured
 
+      // Discovery command: !agents
+      if (message.content.trim() === '!agents' && this.agentDescriptions.size > 0) {
+        const lines = ['**Available Agents:**'];
+        for (const [name, desc] of this.agentDescriptions) {
+          lines.push(`• **${name}** — ${desc}`);
+        }
+        void message.reply(lines.join('\n')).catch(() => {});
+        return;
+      }
+
+      // Extract mentioned agent name from @mentions
+      let mentionedAgent: string | undefined;
+      if (this.agentBotMap.size > 0) {
+        for (const [userId] of message.mentions.users) {
+          const agentName = this.agentBotMap.get(userId);
+          if (agentName) {
+            mentionedAgent = agentName;
+            break;
+          }
+        }
+      }
+
       const inbound: InboundMessage = {
         platform: 'discord',
         channelId: message.channelId,
@@ -104,6 +142,8 @@ export class DiscordAdapter implements Adapter {
         content: message.content,
         tenantId,
         conversationId: message.channelId, // Discord channel = conversation
+        // Pass mentioned agent name for IntentResolver to use
+        ...(mentionedAgent ? { metadata: { mentionedAgent } } : {}),
       };
 
       // Fire and forget — we don't want to block the Discord event loop.

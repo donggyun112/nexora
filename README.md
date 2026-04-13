@@ -14,7 +14,7 @@
   <a href="docs/architecture/"><strong>Architecture</strong></a>
 </p>
 
-> **v0.1** — The core works and is tested (288 tests). APIs may still change before 1.0. Feedback welcome.
+> **v0.1** — The core works and is tested (344 tests). APIs may still change before 1.0. Feedback welcome.
 
 ---
 
@@ -52,6 +52,9 @@ That's it. Everything else is optional and added when you need it.
 | Cost control | `BudgetTracker` (in `@nexora/core`) |
 | Discord/Slack/Paperclip | `@nexora/adapters` |
 | Scaffold + dev server | `@nexora/cli` |
+| Self-learning agent skills (YAML+MD) | `@nexora/skills` |
+| Production store (PostgreSQL) | `@nexora/store-pg` |
+| Plugin-style extensibility | `NexoraExtension` + `ExtensionLoader` (in `@nexora/core`) |
 
 See the [full getting started guide](docs/getting-started.md) — zero to running agent in 5 steps.
 
@@ -66,6 +69,8 @@ See the [full getting started guide](docs/getting-started.md) — zero to runnin
 | "What did the agent do?" | **OTel tracing** — every call, one trace in Jaeger |
 | Workflow crashes mid-flight | **Checkpoint/resume** — pick up from the last step |
 | LLM costs spiral | **Budget tracking** — per-agent/tenant limits with block/warn |
+| Agent keeps making the same mistake | **Skills** — agent self-creates reusable SKILL.md files |
+| LLM provider goes down | **Smart fallback** — error classification + automatic retry on another provider |
 
 ### Can I build OpenClaw with this?
 
@@ -75,37 +80,40 @@ See the [full getting started guide](docs/getting-started.md) — zero to runnin
 
 ```
 Adapter (HTTP / Discord / Slack)
-  → Gateway (route by topic)
+  → Gateway (auth + rate limiter → route by topic)
     → Transport (Local / Redis / InMemoryDurable)
       → Bootstrap (subscribe, validate, tenant)
         → ContextLoader (persona + limits + tools)
           → AgentRunner (ReAct / PlanExecute / DeepResearch)
             → Tools (read / grep / exec / handraise / delegate)
-            → Store (conversation / knowledge / audit)
+            → Skills (SKILL.md — self-learning, auto-created)
+            → Store (conversation / knowledge / audit → JSON or PostgreSQL)
           → Result → publish to topic
 ```
 
 ## All packages
 
 <details>
-<summary>17 packages (click to expand)</summary>
+<summary>19 packages (click to expand)</summary>
 
 | Package | Purpose |
 |---|---|
 | `@nexora/contracts` | Shared interfaces, ID helpers, budget, goal, registry contracts |
-| `@nexora/core` | AgentRunner, LLM providers, ToolExecutor, Compaction, Middleware, Bootstrap, Schema, Lint, Budget |
+| `@nexora/core` | AgentRunner, LLM providers, ToolExecutor, Compaction, Middleware, Bootstrap, Schema, Lint, Budget, ExtensionLoader |
 | `@nexora/transport` | LocalTransport, RedisTransport, RedisStreamsTransport, InMemoryDurableTransport, TracingTransport, DLQTransport |
 | `@nexora/context` | PersonaLoader, SkillLoader, TenantConfigStore, CoreContextLoader |
 | `@nexora/store` / `@nexora/store-json` | 6-store abstraction + JSON file implementations |
+| `@nexora/store-pg` | PostgreSQL production store (all 6 stores + session tree + auto-migration) |
 | `@nexora/orchestrator` | WorkflowEngine (checkpoint/resume) + CronScheduler |
 | `@nexora/architectures` | ReAct, Loop, Plan-Execute, Deep Research |
-| `@nexora/tools` | ToolRegistry + 9 builtins + MCP bridge + handraise + delegate |
+| `@nexora/tools` | ToolRegistry + ToolsetRegistry + 9 builtins + MCP bridge + handraise + delegate |
+| `@nexora/skills` | Self-learning skills system (SKILL.md format, SkillLoader, SkillRegistry, SkillCreator) |
 | `@nexora/conversation` | ConversationRoom, TurnManager (turn-taking protocol) |
 | `@nexora/otel` | OTelTransport (W3C TraceContext), agent span middleware |
 | `@nexora/adapters` | HttpAdapter, DiscordAdapter, SlackAdapter, PaperclipAdapter |
-| `@nexora/gateway` | GatewayRouter, StreamingGatewayRouter |
+| `@nexora/gateway` | GatewayRouter, StreamingGatewayRouter, API key auth, rate limiter |
 | `@nexora/registry` | InMemoryAgentRegistry |
-| `@nexora/cli` | `create agent`, `dev`, `export`, `import` |
+| `@nexora/cli` | `create agent`, `dev`, `doctor`, `dlq`, `budget`, `handraise`, `export`, `import` |
 
 </details>
 
@@ -134,7 +142,7 @@ cd nexora && pnpm install && pnpm build && pnpm test
 
 ## Security
 
-10 rounds of code review. Key hardening: exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), AbortSignal cancellation, typed transport guarantees, budget enforcement, import path validation, delegation cycle detection.
+10 rounds of code review. Key hardening: exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), AbortSignal cancellation, typed transport guarantees, budget enforcement, import path validation, delegation cycle detection, tool pair sanitization, gateway API key auth + rate limiting (429), LLM error classification + smart fallback.
 
 ## Status
 

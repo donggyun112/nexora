@@ -28,6 +28,34 @@ export interface IntentResolver {
   resolve(message: InboundMessage): Promise<TopicString> | TopicString;
 }
 
+/**
+ * Mention-based intent resolver — routes messages to agent topics
+ * based on the `metadata.mentionedAgent` field set by DiscordAdapter.
+ *
+ * Usage:
+ * ```ts
+ * const router = new GatewayRouter({
+ *   transport,
+ *   defaultTopic: topic('group.requested'),
+ *   intentResolver: createMentionResolver(),
+ * });
+ * ```
+ */
+export function createMentionResolver(options?: {
+  /** Topic pattern. Default: `{agentName}.requested` */
+  topicPattern?: (agentName: string) => TopicString;
+}): IntentResolver {
+  const toTopic = options?.topicPattern ?? ((name: string) => `${name}.requested` as TopicString);
+  return {
+    resolve(message: InboundMessage): TopicString {
+      const mentioned = (message.metadata as Record<string, unknown> | undefined)?.mentionedAgent;
+      if (typeof mentioned === 'string') return toTopic(mentioned);
+      // Return empty string — GatewayRouter falls back to defaultTopic
+      return '' as TopicString;
+    },
+  };
+}
+
 export interface GatewayRouterOptions {
   transport: Transport;
   /** 기본 topic (resolver가 없거나 아무것도 매칭 안 될 때) */
@@ -97,7 +125,9 @@ export class GatewayRouter implements MessageRouter {
 
   private async resolveTopic(message: InboundMessage): Promise<TopicString> {
     if (this.intentResolver) {
-      return await this.intentResolver.resolve(message);
+      const resolved = await this.intentResolver.resolve(message);
+      // Empty/falsy result → fall back to default topic
+      if (resolved) return resolved;
     }
     return this.defaultTopic;
   }

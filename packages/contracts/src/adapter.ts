@@ -51,6 +51,9 @@ export interface InboundMessage {
 
   /** 대화 ID (스레드 기반 연속 대화 추적) */
   conversationId?: string;
+
+  /** Platform-specific metadata (e.g., mentionedAgent for Discord @mention routing) */
+  metadata?: Record<string, unknown>;
 }
 
 export interface OutboundMessage {

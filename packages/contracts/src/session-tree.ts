@@ -14,8 +14,8 @@
 export interface SessionEntry {
   /** Unique entry ID */
   id: string;
-  /** Parent entry ID (null for root) */
-  parentId: string | null;
+  /** Parent entry ID (null for root, undefined to auto-parent from active leaf) */
+  parentId: string | null | undefined;
   /** Message role */
   role: 'user' | 'assistant';
   /** Message content */
@@ -38,7 +38,10 @@ export interface SessionTreeNode {
  * "current branch" — the path from root to the active leaf).
  */
 export interface TreeConversationStore {
-  /** Append an entry to the current branch. Returns the new entry ID. */
+  /**
+   * Append an entry to the current branch. Returns the new entry ID.
+   * If parentId is null/undefined, auto-parents from the active leaf.
+   */
   appendEntry(conversationId: string, entry: Omit<SessionEntry, 'id'>): Promise<string>;
 
   /**

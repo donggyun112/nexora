@@ -57,13 +57,24 @@ export class TreeConversationStoreJson implements TreeConversationStore, Describ
     return entries;
   }
 
+  /**
+   * Append an entry to the current branch.
+   * If parentId is null/undefined, defaults to the active leaf (auto-chaining).
+   */
   async appendEntry(
     conversationId: string,
     entry: Omit<SessionEntry, 'id'>,
   ): Promise<string> {
     this.ensureDir();
     const id = messageId();
-    const full: SessionEntry = { ...entry, id };
+
+    // Auto-parent: if parentId not provided, use the active leaf
+    let parentId = entry.parentId;
+    if (parentId === undefined) {
+      parentId = await this.getActiveLeaf(conversationId);
+    }
+
+    const full: SessionEntry = { ...entry, parentId, id };
 
     fs.appendFileSync(this.filePath(conversationId), JSON.stringify(full) + '\n', 'utf-8');
     // Update active leaf
@@ -71,9 +82,17 @@ export class TreeConversationStoreJson implements TreeConversationStore, Describ
     return id;
   }
 
+  /**
+   * Branch from a specific entry. Validates that the entry exists.
+   * Subsequent appendEntry calls will auto-parent from this point.
+   */
   async branch(conversationId: string, fromEntryId: string): Promise<void> {
     this.ensureDir();
-    // Just set the active leaf to the branch point
+    // Validate the entry exists
+    const entries = await this.readAllEntries(conversationId);
+    if (!entries.some(e => e.id === fromEntryId)) {
+      throw new Error(`Entry "${fromEntryId}" not found in conversation "${conversationId}"`);
+    }
     await fsp.writeFile(this.leafPath(conversationId), fromEntryId, 'utf-8');
   }
 
@@ -90,7 +109,7 @@ export class TreeConversationStoreJson implements TreeConversationStore, Describ
 
     for (const entry of entries) {
       const node = byId.get(entry.id)!;
-      if (entry.parentId === null) {
+      if (entry.parentId == null) {
         roots.push(node);
       } else {
         const parent = byId.get(entry.parentId);
@@ -122,7 +141,7 @@ export class TreeConversationStoreJson implements TreeConversationStore, Describ
       const entry = byId.get(current);
       if (!entry) break;
       chain.unshift(entry);
-      current = entry.parentId;
+      current = entry.parentId ?? null;
     }
 
     return chain.map(e => ({ role: e.role, content: e.content }));

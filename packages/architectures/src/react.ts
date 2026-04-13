@@ -176,11 +176,19 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 /**
  * Sanitize tool_call/tool_result pairs in-place after compaction.
  * Ensures every tool_call has a matching tool_result (prevents API crashes).
+ *
+ * Strategy:
+ * 1. Collect all call IDs and result IDs
+ * 2. Remove orphaned tool_result blocks (no matching call)
+ * 3. For each orphaned tool_call, insert a stub tool_result message
+ *    IMMEDIATELY after the assistant message containing the call
+ *    (Anthropic/OpenAI require results right after their calls)
  */
 function sanitizeToolPairsInPlace(history: LLMMessage[]): void {
   const callIds = new Set<string>();
   const resultIds = new Set<string>();
 
+  // Pass 1: collect IDs
   for (const msg of history) {
     if (msg.role === 'assistant' && Array.isArray(msg.content)) {
       for (const block of msg.content as LLMContentBlock[]) {
@@ -194,30 +202,53 @@ function sanitizeToolPairsInPlace(history: LLMMessage[]): void {
     }
   }
 
-  // Remove orphaned tool_result messages (results without matching calls)
+  // Pass 2: remove orphaned tool_result messages (results without matching calls)
   for (let i = history.length - 1; i >= 0; i--) {
     const msg = history[i];
     if (msg.role !== 'tool_result' || !Array.isArray(msg.content)) continue;
-    const blocks = (msg.content as LLMContentBlock[]).filter(
-      b => b.type === 'tool_result',
+    // Filter out individual orphaned result blocks
+    const blocks = msg.content as LLMContentBlock[];
+    const surviving = blocks.filter(
+      b => b.type !== 'tool_result' || callIds.has(b.id),
     );
-    if (blocks.length > 0 && !blocks.some(b => b.type === 'tool_result' && callIds.has(b.id))) {
+    if (surviving.length === 0) {
       history.splice(i, 1);
+    } else if (surviving.length !== blocks.length) {
+      msg.content = surviving;
     }
   }
 
-  // Insert stub results for orphaned calls
-  const orphanedIds = [...callIds].filter(id => !resultIds.has(id));
-  if (orphanedIds.length > 0) {
-    history.push({
+  // Pass 3: find orphaned calls and insert stub results IMMEDIATELY after
+  // the assistant message that owns them (maintains API sequencing)
+  const orphanedIds = new Set([...callIds].filter(id => !resultIds.has(id)));
+  if (orphanedIds.size === 0) return;
+
+  // Walk forward and insert stubs right after each assistant message with orphans
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+    if (msg.role !== 'assistant' || !Array.isArray(msg.content)) continue;
+
+    const orphansInMsg = (msg.content as LLMContentBlock[])
+      .filter(b => b.type === 'tool_call' && orphanedIds.has(b.id))
+      .map(b => (b as { id: string }).id);
+
+    if (orphansInMsg.length === 0) continue;
+
+    const stubMsg: LLMMessage = {
       role: 'tool_result',
-      content: orphanedIds.map(id => ({
+      content: orphansInMsg.map(id => ({
         type: 'tool_result' as const,
         id,
         content: '[result lost during context compaction]',
         isError: false,
       })),
-    });
+    };
+
+    // Insert right after this assistant message
+    history.splice(i + 1, 0, stubMsg);
+    i++; // skip the inserted message
+
+    for (const id of orphansInMsg) orphanedIds.delete(id);
   }
 }
 

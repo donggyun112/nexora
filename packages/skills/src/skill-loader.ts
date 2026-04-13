@@ -121,10 +121,14 @@ export async function loadSkillsFromDir(dir: string): Promise<Skill[]> {
 
 async function walkDir(dir: string): Promise<Skill[]> {
   const skills: Skill[] = [];
-  const entries = await fsp.readdir(dir);
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
 
-  for (const entry of entries) {
-    const entryPath = path.join(dir, entry);
+  for (const dirent of entries) {
+    const entryPath = path.join(dir, dirent.name);
+
+    // Skip symlinks to prevent loops and directory escapes
+    if (dirent.isSymbolicLink()) continue;
+
     const stat = await fsp.stat(entryPath);
 
     if (stat.isDirectory()) {
@@ -142,7 +146,7 @@ async function walkDir(dir: string): Promise<Skill[]> {
         const nested = await walkDir(entryPath);
         skills.push(...nested);
       }
-    } else if (entry.endsWith('.md') && entry !== 'README.md') {
+    } else if (dirent.name.endsWith('.md') && dirent.name !== 'README.md') {
       const content = await fsp.readFile(entryPath, 'utf-8');
       try {
         skills.push(parseSkillFile(content, entryPath));
@@ -206,18 +210,26 @@ export class CachedSkillLoader {
 
     const fresh = await walkDir(dir);
     const result: Skill[] = [];
+    const seenPaths = new Set<string>();
 
     for (const skill of fresh) {
+      seenPaths.add(skill.source);
       const cached = this.cache.get(skill.source);
       const stat = await fsp.stat(skill.source);
       const mtime = stat.mtimeMs;
 
-      if (cached && cached.mtime >= mtime) {
+      // Strict: only use cache if mtime matches exactly (not >=)
+      if (cached && cached.mtime === mtime) {
         result.push(cached.skill);
       } else {
         this.cache.set(skill.source, { skill, mtime });
         result.push(skill);
       }
+    }
+
+    // Evict removed paths from cache
+    for (const key of this.cache.keys()) {
+      if (!seenPaths.has(key)) this.cache.delete(key);
     }
 
     return result;

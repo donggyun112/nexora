@@ -20,6 +20,18 @@ import path from 'node:path';
 import type { Skill, SkillFrontmatter } from './types.js';
 import { parseSkillFile } from './skill-loader.js';
 
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
+const SKILL_NAME_MAX_LEN = 64;
+
+function validateSkillName(name: string): void {
+  if (!name || name.length > SKILL_NAME_MAX_LEN) {
+    throw new Error(`Skill name must be 1-${SKILL_NAME_MAX_LEN} characters: "${name}"`);
+  }
+  if (!SKILL_NAME_RE.test(name)) {
+    throw new Error(`Skill name must match ${SKILL_NAME_RE}: "${name}"`);
+  }
+}
+
 /** Escape a string for safe YAML value embedding. Wraps in quotes if needed. */
 function escapeYamlValue(value: string): string {
   // If value contains special YAML chars, wrap in double quotes with escaping
@@ -60,7 +72,14 @@ export class SkillCreator {
    */
   async create(input: CreateSkillInput): Promise<Skill> {
     const name = input.name ?? this.generateName(input.taskDescription);
+    validateSkillName(name);
     const skillDir = path.join(this.outputDir, name);
+    // Path traversal prevention: resolved path must be under outputDir
+    const resolved = path.resolve(skillDir);
+    const root = path.resolve(this.outputDir);
+    if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+      throw new Error(`Skill name "${name}" resolves outside output directory`);
+    }
 
     const frontmatter: SkillFrontmatter = {
       name,

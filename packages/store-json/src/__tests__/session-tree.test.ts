@@ -17,16 +17,17 @@ afterEach(() => {
 });
 
 describe('TreeConversationStoreJson', () => {
-  it('appends entries and builds linear context', async () => {
-    const id1 = await store.appendEntry('conv1', {
+  it('appends entries with auto-parenting and builds linear context', async () => {
+    await store.appendEntry('conv1', {
       parentId: null,
       role: 'user',
       content: 'Hello',
       timestamp: Date.now(),
     });
 
-    const id2 = await store.appendEntry('conv1', {
-      parentId: id1,
+    // Auto-parent: parentId omitted, chains from active leaf
+    await store.appendEntry('conv1', {
+      parentId: undefined,
       role: 'assistant',
       content: 'Hi there',
       timestamp: Date.now(),
@@ -38,18 +39,19 @@ describe('TreeConversationStoreJson', () => {
     expect(context[1].content).toBe('Hi there');
   });
 
-  it('supports branching from a previous entry', async () => {
+  it('supports branching with auto-parenting', async () => {
     const id1 = await store.appendEntry('conv1', {
       parentId: null, role: 'user', content: 'Start', timestamp: 1,
     });
     const id2 = await store.appendEntry('conv1', {
-      parentId: id1, role: 'assistant', content: 'Path A', timestamp: 2,
+      parentId: undefined, role: 'assistant', content: 'Path A', timestamp: 2,
     });
 
     // Branch from id1 (go back before "Path A")
     await store.branch('conv1', id1);
+    // Auto-parents from branch point (id1)
     const id3 = await store.appendEntry('conv1', {
-      parentId: id1, role: 'assistant', content: 'Path B', timestamp: 3,
+      parentId: undefined, role: 'assistant', content: 'Path B', timestamp: 3,
     });
 
     // Context from branch B
@@ -63,16 +65,23 @@ describe('TreeConversationStoreJson', () => {
     expect(contextA[1].content).toBe('Path A');
   });
 
+  it('branch() rejects nonexistent entry', async () => {
+    await store.appendEntry('conv1', {
+      parentId: null, role: 'user', content: 'Root', timestamp: 1,
+    });
+    await expect(store.branch('conv1', 'nonexistent')).rejects.toThrow(/not found/);
+  });
+
   it('lists leaf entries', async () => {
     const id1 = await store.appendEntry('conv1', {
       parentId: null, role: 'user', content: 'Root', timestamp: 1,
     });
     const id2 = await store.appendEntry('conv1', {
-      parentId: id1, role: 'assistant', content: 'Leaf A', timestamp: 2,
+      parentId: undefined, role: 'assistant', content: 'Leaf A', timestamp: 2,
     });
     await store.branch('conv1', id1);
     const id3 = await store.appendEntry('conv1', {
-      parentId: id1, role: 'assistant', content: 'Leaf B', timestamp: 3,
+      parentId: undefined, role: 'assistant', content: 'Leaf B', timestamp: 3,
     });
 
     const leaves = await store.listLeaves('conv1');
@@ -84,7 +93,7 @@ describe('TreeConversationStoreJson', () => {
       parentId: null, role: 'user', content: 'Root', timestamp: 1,
     });
     await store.appendEntry('conv1', {
-      parentId: id1, role: 'assistant', content: 'Child', timestamp: 2,
+      parentId: undefined, role: 'assistant', content: 'Child', timestamp: 2,
     });
 
     const tree = await store.getTree('conv1');

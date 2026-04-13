@@ -15,6 +15,9 @@ export type {
   DiscordMessageLike,
 } from './discord.js';
 
+export { startDiscordBot } from './discord-bot.js';
+export type { DiscordAgentBotOptions, RunningDiscordBot } from './discord-bot.js';
+
 export { PaperclipAdapter } from './paperclip.js';
 export type {
   PaperclipAdapterOptions,

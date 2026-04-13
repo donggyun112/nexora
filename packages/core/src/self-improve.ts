@@ -110,11 +110,11 @@ export interface LedgerEntry {
 }
 
 export interface LearningOutcome {
-  type: 'skill-created' | 'skill-patched' | 'knowledge-saved' | 'discarded' | 'no-action';
+  type: 'skill-created' | 'skill-patched' | 'knowledge-saved' | 'discarded' | 'pending-evaluation' | 'no-action';
   description: string;
   name?: string;
-  /** AutoAgent keep/discard decision */
-  decision?: 'keep' | 'discard';
+  /** AutoAgent keep/discard decision (null = pending) */
+  decision?: 'keep' | 'discard' | 'pending';
   reason?: string;
 }
 
@@ -159,7 +159,9 @@ export function scanSkillContent(content: string): string | null {
  * Checks: name (required, regex), description (required), version, author, tags.
  */
 export function validateSkillFrontmatter(content: string): { name: string; description: string } {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  // Normalize CRLF → LF before parsing (loader uses LF only)
+  const normalized = content.replace(/\r\n/g, '\n');
+  const match = normalized.match(/^---\n([\s\S]*?)\n---/);
   if (!match) {
     throw new Error('Invalid SKILL.md: missing frontmatter (---\\n...\\n---)');
   }
@@ -185,7 +187,7 @@ export function validateSkillFrontmatter(content: string): { name: string; descr
     // Version defaults to 1 in the loader, so this is fine
   }
   if (authorMatch) {
-    const author = authorMatch[1].trim();
+    const author = authorMatch[1].trim().replace(/^["']|["']$/g, '');
     if (author !== 'system' && author !== 'agent') {
       throw new Error(`Invalid author "${author}": must be "system" or "agent"`);
     }
@@ -229,6 +231,8 @@ export class SafeSkillWriter {
    * Returns the skill name or throws.
    */
   async create(content: string): Promise<string> {
+    // 0. Normalize CRLF → LF so loader can parse
+    content = content.replace(/\r\n/g, '\n');
     // 1. Validate frontmatter
     const { name } = validateSkillFrontmatter(content);
 
@@ -578,10 +582,12 @@ export class LearningEngine {
       try {
         await this.skillWriter.delete(outcome.name);
         this.logger.info(`Skill "${outcome.name}" discarded and deleted`);
-      } catch {
-        this.logger.warn(`Failed to delete discarded skill "${outcome.name}"`);
+        outcome.type = 'discarded';
+      } catch (err) {
+        // Delete failed — skill is orphaned. Do NOT mark as discarded.
+        this.logger.error(`Failed to delete discarded skill "${outcome.name}": ${err}`);
+        outcome.reason = `Discard decided but delete failed: ${err}`;
       }
-      outcome.type = 'discarded';
     }
 
     // Log decision
@@ -799,6 +805,7 @@ export function createImprovementLoop(options: ImprovementLoopOptions) {
   const { tracker, learner } = options;
   const autoLearn = options.autoLearn ?? true;
   const logger = options.logger ?? NOOP_LOGGER;
+  let pendingSkills: Array<{ outcome: LearningOutcome; record: ExecutionRecord; createdAt: number }> = [];
   let reflectionTimer: ReturnType<typeof setInterval> | null = null;
   const reflectionInterval = options.reflectionIntervalMs ?? 24 * 60 * 60 * 1000;
 
@@ -819,23 +826,55 @@ export function createImprovementLoop(options: ImprovementLoopOptions) {
 
       const outcome = await learner.analyze(record);
 
-      // Keep/discard: compare non-overlapping windows
-      // Current window: last hour. Baseline: the hour BEFORE that (no overlap).
-      const now = Date.now();
-      const currentRecords = tracker.getRecords().filter(
-        r => r.timestamp >= now - 3600_000,
-      );
-      const baselineRecords = tracker.getRecords().filter(
-        r => r.timestamp >= now - 7200_000 && r.timestamp < now - 3600_000,
-      );
-      const currentRate = currentRecords.length > 0
-        ? currentRecords.filter(r => r.success).length / currentRecords.length
-        : 0.5;
-      const baselineRate = baselineRecords.length > 0
-        ? baselineRecords.filter(r => r.success).length / baselineRecords.length
-        : 0.5;
+      // Don't evaluate keep/discard immediately — the skill hasn't
+      // influenced any runs yet. Mark as pending for later evaluation.
+      if (outcome.type === 'skill-created') {
+        outcome.type = 'pending-evaluation';
+        outcome.decision = 'pending';
+        outcome.reason = 'Awaiting post-adoption data before keep/discard decision';
+        pendingSkills.push({ outcome, record, createdAt: Date.now() });
+      }
 
-      return learner.evaluateAndDecide(outcome, record, baselineRate, currentRate);
+      return outcome;
+    },
+
+    /**
+     * Evaluate pending skills that have had time to influence executions.
+     * Call this periodically (e.g., after N runs or on a timer).
+     * Skills created > minAgeMs ago get evaluated against post-creation data.
+     */
+    async evaluatePending(minAgeMs = 3600_000): Promise<LearningOutcome[]> {
+      const now = Date.now();
+      const ready = pendingSkills.filter(p => now - p.createdAt >= minAgeMs);
+      const results: LearningOutcome[] = [];
+
+      for (const pending of ready) {
+        // Compare: records BEFORE skill creation vs AFTER
+        const beforeRecords = tracker.getRecords().filter(
+          r => r.timestamp >= pending.createdAt - minAgeMs && r.timestamp < pending.createdAt,
+        );
+        const afterRecords = tracker.getRecords().filter(
+          r => r.timestamp >= pending.createdAt,
+        );
+
+        const baselineRate = beforeRecords.length > 0
+          ? beforeRecords.filter(r => r.success).length / beforeRecords.length
+          : 0.5;
+        const currentRate = afterRecords.length > 0
+          ? afterRecords.filter(r => r.success).length / afterRecords.length
+          : 0.5;
+
+        const result = await learner.evaluateAndDecide(
+          pending.outcome, pending.record, baselineRate, currentRate,
+        );
+        results.push(result);
+      }
+
+      // Remove evaluated from pending
+      const readySet = new Set(ready);
+      pendingSkills = pendingSkills.filter(p => !readySet.has(p));
+
+      return results;
     },
 
     async reflect(): Promise<string> {

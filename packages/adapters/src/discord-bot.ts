@@ -33,6 +33,10 @@ export interface DiscordAgentBotOptions {
     }>;
     readonly transport: {
       request(topic: string, payload: unknown, opts?: unknown): Promise<{ payload: unknown }>;
+      subscribe?(topic: string, handler: (env: unknown) => void): unknown;
+    };
+    readonly llm: {
+      complete(messages: unknown[], options?: unknown): Promise<{ content: string }>;
     };
     describeAll(): Array<{ name: string; description: string; capabilities: string[] }>;
   };
@@ -81,6 +85,35 @@ export async function startDiscordBot(options: DiscordAgentBotOptions): Promise<
   const agentDescriptions = new Map<string, string>();
   for (const info of team.describeAll()) {
     agentDescriptions.set(info.name, info.description);
+  }
+
+  // Wire group chat: subscribe to group topic and use round-robin
+  // agent selection for unmentioned messages. Full TurnManager integration
+  // requires @nexora/conversation — this provides a working fallback.
+  if (team.transport.subscribe) {
+    const agentTopics = team.cards.map(c => {
+      const sub = c.subscribes[0];
+      return typeof sub === 'string' ? sub : '';
+    }).filter(Boolean);
+
+    if (agentTopics.length > 0) {
+      let roundRobinIdx = 0;
+      team.transport.subscribe(groupTopic, async (env: unknown) => {
+        // Route to agents round-robin when no specific agent is mentioned
+        const targetTopic = agentTopics[roundRobinIdx % agentTopics.length];
+        roundRobinIdx++;
+        try {
+          const typed = env as { payload: unknown; metadata?: { tenantId?: string; conversationId?: string } };
+          await team.transport.request(targetTopic, typed.payload, {
+            tenantId: typed.metadata?.tenantId,
+            conversationId: typed.metadata?.conversationId,
+            timeoutMs: 120_000,
+          });
+        } catch {
+          // Best effort
+        }
+      });
+    }
   }
 
   // Create a router that handles mention-based routing

@@ -184,9 +184,12 @@ async function autoCreateRuntime(
     createReactArchitecture: (opts: { systemPrompt?: string; model?: string }) => import('@nexora/contracts').AgentArchitecture;
   };
   const toolsMod = await import('@nexora/tools' as string) as {
-    CoreToolExecutor: new (opts: { tools: unknown[]; workdir: string }) => import('@nexora/contracts').ToolExecutor;
-    createReadTool: () => unknown;
-    createGrepTool: () => unknown;
+    createReadTool: () => import('@nexora/contracts').ToolDefinition;
+    createGrepTool: () => import('@nexora/contracts').ToolDefinition;
+    createExecTool: (opts: { allowList: string[] }) => import('@nexora/contracts').ToolDefinition;
+    createWriteTool: () => import('@nexora/contracts').ToolDefinition;
+    createEditTool: () => import('@nexora/contracts').ToolDefinition;
+    createKnowledgeTool: (store: unknown) => import('@nexora/contracts').ToolDefinition;
   };
 
   const architecture = archMod.createReactArchitecture({
@@ -194,10 +197,36 @@ async function autoCreateRuntime(
     model: context.limits?.model,
   });
 
-  // Minimal tool setup — actual tools resolved by CoreToolExecutor in production
-  const tools = new toolsMod.CoreToolExecutor({
-    tools: [toolsMod.createReadTool(), toolsMod.createGrepTool()],
-    workdir: process.cwd(),
+  // Build tool list based on card.tools declaration
+  const toolMap: Record<string, () => import('@nexora/contracts').ToolDefinition> = {
+    read: () => toolsMod.createReadTool(),
+    grep: () => toolsMod.createGrepTool(),
+    exec: () => toolsMod.createExecTool({ allowList: ['git', 'npm', 'pnpm', 'node'] }),
+    write: () => toolsMod.createWriteTool(),
+    edit: () => toolsMod.createEditTool(),
+  };
+
+  const resolvedTools: import('@nexora/contracts').ToolDefinition[] = [];
+  for (const toolName of card.tools) {
+    const factory = toolMap[toolName];
+    if (factory) resolvedTools.push(factory());
+  }
+
+  // Fallback: if card declares no tools or none matched, give read + grep
+  if (resolvedTools.length === 0) {
+    resolvedTools.push(toolsMod.createReadTool(), toolsMod.createGrepTool());
+  }
+
+  const { CoreToolExecutor: Executor } = await import('./tool-executor.js');
+  const tools = new Executor({
+    tools: resolvedTools,
+    context: {
+      tenantId: 'default',
+      workdir: process.cwd(),
+      secrets: { get: async () => undefined },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      signal: new AbortController().signal,
+    },
   });
 
   return new AgentRunner({ architecture, llm, tools });

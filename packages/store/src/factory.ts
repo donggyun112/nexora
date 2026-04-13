@@ -11,6 +11,7 @@ import type {
   ContextStore,
   AuditStore,
   ToolContextStore,
+  TreeConversationStore,
   DescribableStore,
   StoreBackendInfo,
   AgentLogger,
@@ -23,6 +24,8 @@ export interface StoreProvider {
   context: ContextStore;
   audit: AuditStore;
   toolContext: ToolContextStore;
+  /** Session tree store (optional — only available with PG backend or store-json) */
+  sessionTree?: TreeConversationStore;
 }
 
 /**
@@ -85,12 +88,15 @@ export async function createStoreProvider(config: StoreConfig): Promise<StorePro
       const mod: {
         createPgClient: (opts: { connectionString: string }) => Promise<{ sql: unknown }>;
         createPgStoreProvider: (sql: unknown) => StoreProvider;
+        TreeConversationStorePg: new (sql: unknown) => TreeConversationStore;
       } = await (import('@nexora/store-pg' as string) as Promise<{
         createPgClient: (opts: { connectionString: string }) => Promise<{ sql: unknown }>;
         createPgStoreProvider: (sql: unknown) => StoreProvider;
+        TreeConversationStorePg: new (sql: unknown) => TreeConversationStore;
       }>);
       const { sql } = await mod.createPgClient({ connectionString: config.connectionString });
-      return mod.createPgStoreProvider(sql);
+      const provider = mod.createPgStoreProvider(sql);
+      return { ...provider, sessionTree: new mod.TreeConversationStorePg(sql) };
     }
     default:
       throw new Error(`Unknown store type: ${String((config as { type: string }).type)}`);

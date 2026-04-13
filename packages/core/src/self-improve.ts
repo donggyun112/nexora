@@ -47,9 +47,8 @@ const SKILL_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
  * Blocks shell injection, exfiltration, destructive commands, reverse shells.
  */
 const THREAT_PATTERNS: RegExp[] = [
-  // Shell injection
-  /\$\(.*\)/,
-  /`[^`]*`/,
+  // Shell injection (NOT backticks — those are valid Markdown code)
+  /\$\([^)]+\)/,
   /\beval\s*\(/,
   /\bexec\s*\(/,
   /\bchild_process\b/,
@@ -155,8 +154,12 @@ export function scanSkillContent(content: string): string | null {
  * Validate SKILL.md has proper frontmatter with required fields.
  * Returns extracted name or throws.
  */
+/**
+ * Validate SKILL.md has proper frontmatter matching the actual SkillFrontmatter schema.
+ * Checks: name (required, regex), description (required), version, author, tags.
+ */
 export function validateSkillFrontmatter(content: string): { name: string; description: string } {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) {
     throw new Error('Invalid SKILL.md: missing frontmatter (---\\n...\\n---)');
   }
@@ -164,6 +167,8 @@ export function validateSkillFrontmatter(content: string): { name: string; descr
   const fm = match[1];
   const nameMatch = fm.match(/^name:\s*(.+)$/m);
   const descMatch = fm.match(/^description:\s*(.+)$/m);
+  const versionMatch = fm.match(/^version:\s*(.+)$/m);
+  const authorMatch = fm.match(/^author:\s*(.+)$/m);
 
   if (!nameMatch) throw new Error('Invalid SKILL.md: missing "name" in frontmatter');
   if (!descMatch) throw new Error('Invalid SKILL.md: missing "description" in frontmatter');
@@ -173,6 +178,17 @@ export function validateSkillFrontmatter(content: string): { name: string; descr
 
   if (!SKILL_NAME_RE.test(name)) {
     throw new Error(`Invalid skill name "${name}": must match ${SKILL_NAME_RE}`);
+  }
+
+  // Warn but don't fail on missing optional fields (LLM may omit them)
+  if (!versionMatch) {
+    // Version defaults to 1 in the loader, so this is fine
+  }
+  if (authorMatch) {
+    const author = authorMatch[1].trim();
+    if (author !== 'system' && author !== 'agent') {
+      throw new Error(`Invalid author "${author}": must be "system" or "agent"`);
+    }
   }
 
   return { name, description };
@@ -249,35 +265,65 @@ export class SafeSkillWriter {
    * More surgical than full rewrite — preserves surrounding content.
    */
   async patch(name: string, oldText: string, newText: string): Promise<void> {
-    const skillFile = path.join(this.skillsDir, name, 'SKILL.md');
+    // Validate name (same as create — prevents path traversal)
+    if (!SKILL_NAME_RE.test(name)) {
+      throw new Error(`Invalid skill name for patch: "${name}"`);
+    }
+    const skillDir = path.join(this.skillsDir, name);
+    const resolved = path.resolve(skillDir);
+    const root = path.resolve(this.skillsDir);
+    if (!resolved.startsWith(root + path.sep)) {
+      throw new Error(`Skill name "${name}" resolves outside skills directory`);
+    }
+
+    const skillFile = path.join(skillDir, 'SKILL.md');
     if (!fs.existsSync(skillFile)) {
       throw new Error(`Skill "${name}" not found for patching`);
     }
 
     const current = await fsp.readFile(skillFile, 'utf-8');
 
+    // Try exact match first
+    if (current.includes(oldText)) {
+      const patched = current.replace(oldText, newText);
+      await this.validateAndWritePatch(skillFile, patched);
+      return;
+    }
+
     // Fuzzy match: normalize whitespace for comparison
     const normalizedCurrent = current.replace(/\s+/g, ' ');
     const normalizedOld = oldText.replace(/\s+/g, ' ');
-    if (!normalizedCurrent.includes(normalizedOld) && !current.includes(oldText)) {
+    if (!normalizedCurrent.includes(normalizedOld)) {
       throw new Error(`Patch target not found in skill "${name}"`);
     }
 
-    const patched = current.includes(oldText)
-      ? current.replace(oldText, newText)
-      : current.replace(
-          new RegExp(oldText.replace(/\s+/g, '\\s+').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-          newText,
-        );
+    // Build fuzzy regex: escape special chars FIRST, then replace literal whitespace
+    const escaped = oldText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fuzzyPattern = escaped.replace(/\s+/g, '\\s+');
+    const patched = current.replace(new RegExp(fuzzyPattern), newText);
+    await this.validateAndWritePatch(skillFile, patched);
+  }
 
-    // Re-validate after patch
+  /** Delete a skill directory (for discard rollback) */
+  async delete(name: string): Promise<void> {
+    if (!SKILL_NAME_RE.test(name)) return;
+    const skillDir = path.join(this.skillsDir, name);
+    const resolved = path.resolve(skillDir);
+    const root = path.resolve(this.skillsDir);
+    if (!resolved.startsWith(root + path.sep)) return;
+    if (fs.existsSync(skillDir)) {
+      await fsp.rm(skillDir, { recursive: true, force: true });
+      this.onCacheInvalidate?.();
+      this.logger.info(`Skill deleted: ${name}`);
+    }
+  }
+
+  private async validateAndWritePatch(skillFile: string, patched: string): Promise<void> {
     validateSkillFrontmatter(patched);
     const threat = scanSkillContent(patched);
     if (threat) throw new Error(`Patch blocked: ${threat}`);
-
     await atomicWrite(skillFile, patched);
     this.onCacheInvalidate?.();
-    this.logger.info(`Skill patched: ${name}`);
   }
 
   /** Check if a skill name already exists */
@@ -500,6 +546,10 @@ export class LearningEngine {
    * AutoAgent overfitting guard: "If this exact task disappeared,
    * would this still be a worthwhile improvement?"
    */
+  /**
+   * Evaluate keep/discard. If discard, ACTUALLY DELETE the created skill.
+   * AutoAgent rules: improved → keep, same + general → keep, else → discard + rollback.
+   */
   async evaluateAndDecide(
     outcome: LearningOutcome,
     record: ExecutionRecord,
@@ -508,15 +558,11 @@ export class LearningEngine {
   ): Promise<LearningOutcome> {
     if (outcome.type === 'no-action') return outcome;
 
-    // Keep/discard rules (AutoAgent):
-    // - Success rate improved → KEEP
-    // - Same rate, but skill is generally useful → KEEP
-    // - Rate dropped → DISCARD
     if (currentRate > baselineRate) {
       outcome.decision = 'keep';
       outcome.reason = `Success rate improved: ${(baselineRate * 100).toFixed(1)}% → ${(currentRate * 100).toFixed(1)}%`;
-    } else if (currentRate === baselineRate) {
-      // Overfitting check: is this task-specific or general?
+    } else if (currentRate >= baselineRate - 0.01) {
+      // Same rate (within 1% tolerance): check if generally useful
       const isGeneral = await this.checkGenerality(outcome, record);
       outcome.decision = isGeneral ? 'keep' : 'discard';
       outcome.reason = isGeneral
@@ -525,6 +571,17 @@ export class LearningEngine {
     } else {
       outcome.decision = 'discard';
       outcome.reason = `Success rate dropped: ${(baselineRate * 100).toFixed(1)}% → ${(currentRate * 100).toFixed(1)}%`;
+    }
+
+    // ROLLBACK on discard: actually delete the created skill
+    if (outcome.decision === 'discard' && outcome.name) {
+      try {
+        await this.skillWriter.delete(outcome.name);
+        this.logger.info(`Skill "${outcome.name}" discarded and deleted`);
+      } catch {
+        this.logger.warn(`Failed to delete discarded skill "${outcome.name}"`);
+      }
+      outcome.type = 'discarded';
     }
 
     // Log decision
@@ -702,20 +759,28 @@ Output ONLY the SKILL.md content. Nothing else.`;
   }
 
   /** Overfitting check: would this skill be useful beyond this specific task? */
+  /**
+   * Overfitting guard: would this skill be useful beyond this specific task?
+   * AutoAgent: "If this exact task disappeared, would this still be worthwhile?"
+   */
   private async checkGenerality(outcome: LearningOutcome, record: ExecutionRecord): Promise<boolean> {
-    const prompt = `A skill was created from a specific task. Determine if it's GENERAL or TASK-SPECIFIC.
+    const prompt = `A skill was created from a specific task. Determine if it would be useful for OTHER similar tasks, or if it only helps this exact task.
 
-Skill: ${outcome.name ?? '(unnamed)'}
-Description: ${outcome.description}
+Skill name: ${outcome.name ?? '(unnamed)'}
+Skill description: ${outcome.description}
 Original task: ${record.input.slice(0, 300)}
 
-Answer with ONE word: GENERAL or SPECIFIC`;
+Would this skill help with OTHER tasks beyond this specific one?
+Answer ONLY "YES" or "NO".`;
 
     try {
-      const response = await this.llm.complete([{ role: 'user', content: prompt }], { maxTokens: 10 });
-      return response.content.trim().toUpperCase().includes('GENERAL');
+      const response = await this.llm.complete([{ role: 'user', content: prompt }], { maxTokens: 5 });
+      const answer = response.content.trim().toUpperCase();
+      // Strict: only YES counts as general. NO, NOT, or anything else → specific
+      return answer === 'YES';
     } catch {
-      return true; // default to keeping on evaluation failure
+      // On LLM failure, default to DISCARD (conservative — don't accumulate junk)
+      return false;
     }
   }
 }
@@ -754,12 +819,23 @@ export function createImprovementLoop(options: ImprovementLoopOptions) {
 
       const outcome = await learner.analyze(record);
 
-      // Keep/discard evaluation using recent success rate as baseline
-      const snapshot = tracker.getSnapshot(Date.now() - 3600_000); // last hour
-      const prevSnapshot = tracker.getSnapshot(Date.now() - 7200_000); // hour before
-      const baselineRate = prevSnapshot.total > 0 ? prevSnapshot.successRate : 0.5;
+      // Keep/discard: compare non-overlapping windows
+      // Current window: last hour. Baseline: the hour BEFORE that (no overlap).
+      const now = Date.now();
+      const currentRecords = tracker.getRecords().filter(
+        r => r.timestamp >= now - 3600_000,
+      );
+      const baselineRecords = tracker.getRecords().filter(
+        r => r.timestamp >= now - 7200_000 && r.timestamp < now - 3600_000,
+      );
+      const currentRate = currentRecords.length > 0
+        ? currentRecords.filter(r => r.success).length / currentRecords.length
+        : 0.5;
+      const baselineRate = baselineRecords.length > 0
+        ? baselineRecords.filter(r => r.success).length / baselineRecords.length
+        : 0.5;
 
-      return learner.evaluateAndDecide(outcome, record, baselineRate, snapshot.successRate);
+      return learner.evaluateAndDecide(outcome, record, baselineRate, currentRate);
     },
 
     async reflect(): Promise<string> {

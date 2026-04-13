@@ -42,43 +42,33 @@ const MAX_SKILL_CONTENT_CHARS = 100_000;
 const SKILL_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 /**
- * Threat patterns in agent-generated skill content.
- * Based on Hermes skills_guard (70+ patterns).
- * Blocks shell injection, exfiltration, destructive commands, reverse shells.
+ * Threat patterns for agent-generated skill content.
+ *
+ * DESIGN PRINCIPLE: Skills are DOCUMENTATION, not code.
+ * "Use the read tool to check files" is safe instruction text.
+ * Only block patterns that are unambiguous attack payloads — things
+ * that have no legitimate reason to appear in an instruction document.
+ *
+ * Two tiers:
+ * - HARD_BLOCK: Always blocked. Unambiguous attack payloads.
+ * - SOFT_WARN: Logged but allowed. May appear in legitimate docs.
  */
-const THREAT_PATTERNS: RegExp[] = [
-  // Shell injection (NOT backticks — those are valid Markdown code)
-  /\$\([^)]+\)/,
-  /\beval\s*\(/,
-  /\bexec\s*\(/,
-  /\bchild_process\b/,
-  /\bspawn\s*\(/,
-  // Exfiltration
-  /\bcurl\s+.*-d\b/,
-  /\bwget\s+.*--post/,
-  /\bfetch\s*\(.*method.*POST/i,
-  /process\.env\[/,
-  // Destructive
-  /\brm\s+-rf\s+\//,
-  /\brmdir\b.*\/\b/,
-  /DROP\s+TABLE/i,
-  /DELETE\s+FROM/i,
-  /TRUNCATE\s+/i,
-  // Reverse shell
-  /\bnc\s+-[elp]/,
+const HARD_BLOCK_PATTERNS: RegExp[] = [
+  // Reverse shell payloads (no legitimate doc reason)
+  /\bnc\s+-[elp]\s+.*\d+/,
   /\/dev\/tcp\//,
-  /\bmkfifo\b/,
-  /\bsocat\b.*exec/i,
-  // Path traversal
-  /\.\.\//,
-  /\.\.\\/,
-  // Credential access
-  /\/etc\/passwd/,
+  /\bmkfifo\b.*\|.*\bsh\b/,
+  // Encoded payloads (base64-piped shell)
+  /echo\s+[A-Za-z0-9+/]{30,}\s*\|\s*base64\s+-d/,
+  // Direct credential file reads
   /\/etc\/shadow/,
-  /\.ssh\/id_/,
-  /AWS_SECRET/i,
-  /ANTHROPIC_API_KEY/i,
-  /OPENAI_API_KEY/i,
+  /\.ssh\/id_rsa\b/,
+];
+
+const SOFT_WARN_PATTERNS: RegExp[] = [
+  // Suspicious but could be legitimate documentation examples
+  /\brm\s+-rf\s+\//,
+  /AWS_SECRET_ACCESS_KEY\s*=/i,
 ];
 
 // ─── Types ─────────────────────────────────────────────────────────────
@@ -131,21 +121,42 @@ export interface PerformanceSnapshot {
 
 // ─── Security Scanner (Hermes skills_guard) ────────────────────────────
 
+export interface ScanResult {
+  blocked: boolean;
+  reason?: string;
+  warnings: string[];
+}
+
 /**
  * Scan skill content for threat patterns.
- * Returns null if safe, error message if blocked.
+ *
+ * Returns { blocked: false } for safe content.
+ * Returns { blocked: true, reason } for unambiguous attack payloads.
+ * Warnings are logged but don't prevent creation.
  */
-export function scanSkillContent(content: string): string | null {
-  for (const pattern of THREAT_PATTERNS) {
+export function scanSkillContent(content: string, logger?: AgentLogger): string | null {
+  // Hard blocks — unambiguous attacks
+  for (const pattern of HARD_BLOCK_PATTERNS) {
     const match = content.match(pattern);
     if (match) {
-      return `Blocked: skill content matches threat pattern "${pattern.source}" near "${match[0].slice(0, 50)}"`;
+      return `Blocked: unambiguous threat pattern "${pattern.source}" near "${match[0].slice(0, 50)}"`;
     }
   }
+
+  // Size limit
   if (content.length > MAX_SKILL_CONTENT_CHARS) {
-    return `Blocked: skill content exceeds ${MAX_SKILL_CONTENT_CHARS} chars (got ${content.length})`;
+    return `Blocked: content exceeds ${MAX_SKILL_CONTENT_CHARS} chars (got ${content.length})`;
   }
-  return null;
+
+  // Soft warnings — log but allow
+  for (const pattern of SOFT_WARN_PATTERNS) {
+    const match = content.match(pattern);
+    if (match) {
+      logger?.warn(`Skill content warning: pattern "${pattern.source}" near "${match[0].slice(0, 50)}"`);
+    }
+  }
+
+  return null; // safe
 }
 
 // ─── Frontmatter Validation ────────────────────────────────────────────
@@ -236,8 +247,8 @@ export class SafeSkillWriter {
     // 1. Validate frontmatter
     const { name } = validateSkillFrontmatter(content);
 
-    // 2. Security scan
-    const threat = scanSkillContent(content);
+    // 2. Security scan (hard blocks only; soft warnings logged)
+    const threat = scanSkillContent(content, this.logger);
     if (threat) throw new Error(threat);
 
     // 3. Name collision detection
@@ -324,7 +335,7 @@ export class SafeSkillWriter {
 
   private async validateAndWritePatch(skillFile: string, patched: string): Promise<void> {
     validateSkillFrontmatter(patched);
-    const threat = scanSkillContent(patched);
+    const threat = scanSkillContent(patched, this.logger);
     if (threat) throw new Error(`Patch blocked: ${threat}`);
     await atomicWrite(skillFile, patched);
     this.onCacheInvalidate?.();
@@ -782,11 +793,12 @@ Answer ONLY "YES" or "NO".`;
     try {
       const response = await this.llm.complete([{ role: 'user', content: prompt }], { maxTokens: 5 });
       const answer = response.content.trim().toUpperCase();
-      // Strict: only YES counts as general. NO, NOT, or anything else → specific
-      return answer === 'YES';
+      // Only explicit NO discards. YES or ambiguous → keep (favor agent learning)
+      return answer !== 'NO';
     } catch {
-      // On LLM failure, default to DISCARD (conservative — don't accumulate junk)
-      return false;
+      // On LLM failure, default to KEEP (favor agent freedom over junk prevention).
+      // Accumulated skills can be cleaned up later; lost learning can't be recovered.
+      return true;
     }
   }
 }

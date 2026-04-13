@@ -111,12 +111,15 @@ function parseYamlFrontmatter(raw: string, source: string): SkillFrontmatter {
 }
 
 /**
- * Load all SKILL.md files from a directory (non-recursive).
- * Each subdirectory with a SKILL.md is one skill.
+ * Recursively load SKILL.md files from a directory tree.
+ * Supports: skills/category/skill-name/SKILL.md and flat .md files.
  */
 export async function loadSkillsFromDir(dir: string): Promise<Skill[]> {
   if (!fs.existsSync(dir)) return [];
+  return walkDir(dir);
+}
 
+async function walkDir(dir: string): Promise<Skill[]> {
   const skills: Skill[] = [];
   const entries = await fsp.readdir(dir);
 
@@ -125,14 +128,21 @@ export async function loadSkillsFromDir(dir: string): Promise<Skill[]> {
     const stat = await fsp.stat(entryPath);
 
     if (stat.isDirectory()) {
-      // Look for SKILL.md inside the directory
+      // Check for SKILL.md in this directory
       const skillFile = path.join(entryPath, 'SKILL.md');
       if (fs.existsSync(skillFile)) {
         const content = await fsp.readFile(skillFile, 'utf-8');
-        skills.push(parseSkillFile(content, skillFile));
+        try {
+          skills.push(parseSkillFile(content, skillFile));
+        } catch {
+          // Skip malformed skill files
+        }
+      } else {
+        // Recurse into subdirectory (category folders)
+        const nested = await walkDir(entryPath);
+        skills.push(...nested);
       }
     } else if (entry.endsWith('.md') && entry !== 'README.md') {
-      // Also support flat .md files
       const content = await fsp.readFile(entryPath, 'utf-8');
       try {
         skills.push(parseSkillFile(content, entryPath));
@@ -143,6 +153,21 @@ export async function loadSkillsFromDir(dir: string): Promise<Skill[]> {
   }
 
   return skills;
+}
+
+// ─── Multi-source discovery ────────────────────────────────────────────────
+
+/**
+ * Default skill source directories, in priority order (last wins).
+ * Caller can override or extend.
+ */
+export function defaultSkillSources(projectRoot: string): string[] {
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  return [
+    path.join(home, '.nexora', 'skills'),        // global user skills
+    path.join(projectRoot, '.nexora', 'skills'),  // project-level skills
+    path.join(projectRoot, 'skills'),             // project skills dir
+  ].filter(Boolean);
 }
 
 /**
@@ -160,4 +185,45 @@ export async function loadSkills(...dirs: string[]): Promise<Skill[]> {
   }
 
   return Array.from(byName.values());
+}
+
+// ─── mtime-based cache ─────────────────────────────────────────────────────
+
+interface CacheEntry {
+  skill: Skill;
+  mtime: number;
+}
+
+/**
+ * Cached skill loader — only re-parses files that changed since last load.
+ * Reduces startup time when skill directories are large.
+ */
+export class CachedSkillLoader {
+  private cache = new Map<string, CacheEntry>();
+
+  async loadFromDir(dir: string): Promise<Skill[]> {
+    if (!fs.existsSync(dir)) return [];
+
+    const fresh = await walkDir(dir);
+    const result: Skill[] = [];
+
+    for (const skill of fresh) {
+      const cached = this.cache.get(skill.source);
+      const stat = await fsp.stat(skill.source);
+      const mtime = stat.mtimeMs;
+
+      if (cached && cached.mtime >= mtime) {
+        result.push(cached.skill);
+      } else {
+        this.cache.set(skill.source, { skill, mtime });
+        result.push(skill);
+      }
+    }
+
+    return result;
+  }
+
+  invalidate(): void {
+    this.cache.clear();
+  }
 }

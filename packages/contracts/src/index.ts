@@ -151,3 +151,9 @@ export type {
   ExtensionContext,
   ExtensionRegistry,
 } from './extension.js';
+
+export type {
+  SessionEntry,
+  SessionTreeNode,
+  TreeConversationStore,
+} from './session-tree.js';

@@ -11,7 +11,13 @@
 
 export type { Skill, SkillFrontmatter, SkillMatch } from './types.js';
 
-export { parseSkillFile, loadSkillsFromDir, loadSkills } from './skill-loader.js';
+export {
+  parseSkillFile,
+  loadSkillsFromDir,
+  loadSkills,
+  defaultSkillSources,
+  CachedSkillLoader,
+} from './skill-loader.js';
 
 export { SkillRegistry } from './skill-registry.js';
 

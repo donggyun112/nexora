@@ -95,3 +95,82 @@ export class ToolRegistry {
     this.tools.clear();
   }
 }
+
+// ─── Toolset Grouping ────────────────────────────────────────────────────
+
+export interface ToolsetDefinition {
+  /** Tool names in this toolset */
+  tools: string[];
+  /** Other toolsets to include (recursive composition) */
+  includes?: string[];
+}
+
+/**
+ * ToolsetRegistry — named groups of tools for multi-tenant/multi-adapter use.
+ *
+ * Usage:
+ * ```ts
+ * const toolsets = new ToolsetRegistry();
+ * toolsets.register('base', { tools: ['read', 'grep'] });
+ * toolsets.register('dev', { tools: ['exec', 'edit'], includes: ['base'] });
+ * toolsets.register('discord-agent', { tools: ['web-search'], includes: ['dev'] });
+ *
+ * const names = toolsets.resolve('discord-agent');
+ * // → ['read', 'grep', 'exec', 'edit', 'web-search']
+ *
+ * const tools = toolRegistry.assemble({ allowed: names });
+ * ```
+ */
+export class ToolsetRegistry {
+  private readonly toolsets = new Map<string, ToolsetDefinition>();
+
+  register(name: string, def: ToolsetDefinition): void {
+    this.toolsets.set(name, def);
+  }
+
+  unregister(name: string): void {
+    this.toolsets.delete(name);
+  }
+
+  get(name: string): ToolsetDefinition | undefined {
+    return this.toolsets.get(name);
+  }
+
+  list(): string[] {
+    return [...this.toolsets.keys()];
+  }
+
+  /**
+   * Resolve a toolset name to a flat array of tool names.
+   * Recursively resolves `includes`, with cycle detection.
+   */
+  resolve(name: string): string[] {
+    const result = new Set<string>();
+    const visited = new Set<string>();
+    this.resolveRecursive(name, result, visited);
+    return [...result];
+  }
+
+  private resolveRecursive(
+    name: string,
+    result: Set<string>,
+    visited: Set<string>,
+  ): void {
+    if (visited.has(name)) return; // cycle detection
+    visited.add(name);
+
+    const def = this.toolsets.get(name);
+    if (!def) return;
+
+    // Resolve includes first (base tools come first)
+    if (def.includes) {
+      for (const inc of def.includes) {
+        this.resolveRecursive(inc, result, visited);
+      }
+    }
+
+    for (const tool of def.tools) {
+      result.add(tool);
+    }
+  }
+}

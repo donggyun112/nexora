@@ -8,6 +8,7 @@ export { ScheduleStoreJson } from './schedule.js';
 export { ContextStoreJson } from './context-store.js';
 export { AuditStoreJson } from './audit.js';
 export { ToolContextStoreJson } from './tool-context.js';
+export { TreeConversationStoreJson } from './session-tree.js';
 
 import { ConversationStoreJson } from './conversation.js';
 import { KnowledgeStoreJson } from './knowledge.js';

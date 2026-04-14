@@ -27,6 +27,9 @@ export type { MemoryGraphOptions } from './memory-graph.js';
 
 export { cosineSim, batchCosineSim } from './vector.js';
 
+export { createOpenAIEmbedding, createOllamaEmbedding } from './embedding-providers.js';
+export type { OpenAIEmbeddingOptions, OllamaEmbeddingOptions } from './embedding-providers.js';
+
 export type {
   Memory,
   MemoryKey,

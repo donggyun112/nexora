@@ -31,6 +31,46 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  examples/e2e-demo:
+    dependencies:
+      '@nexora/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@nexora/architectures':
+        specifier: workspace:*
+        version: link:../../packages/architectures
+      '@nexora/context':
+        specifier: workspace:*
+        version: link:../../packages/context
+      '@nexora/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@nexora/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@nexora/gateway':
+        specifier: workspace:*
+        version: link:../../platform/gateway
+      '@nexora/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
+      '@nexora/store-json':
+        specifier: workspace:*
+        version: link:../../packages/store-json
+      '@nexora/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      '@nexora/transport':
+        specifier: workspace:*
+        version: link:../../packages/transport
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   examples/helpdesk:
     dependencies:
       '@nexora/adapters':

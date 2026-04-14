@@ -188,10 +188,10 @@ export class RedisStreamsTransport implements DurableTransport {
   /**
    * Subscribe as part of a durable consumer group.
    *
-   * C1 FIX: RedisStreams does NOT support wildcard patterns. Each stream
-   * is a distinct Redis key — there is no `PSUBSCRIBE` equivalent for
-   * streams. Wildcard patterns (`*`, `#`) are now REJECTED with a clear
-   * error instead of silently creating a broken stream key.
+   * RedisStreams does NOT support wildcard patterns. Each stream is a
+   * distinct Redis key — there is no `PSUBSCRIBE` equivalent for streams.
+   * Wildcard patterns (`*`, `#`) are REJECTED with a clear error instead
+   * of silently creating a broken stream key.
    *
    * For wildcard subscription, use InMemoryDurableTransport (which supports
    * wildcards natively) or subscribe to each concrete topic individually.
@@ -203,7 +203,7 @@ export class RedisStreamsTransport implements DurableTransport {
   ): Subscription {
     if (this.closed) throw new Error('RedisStreamsTransport is closed');
 
-    // C1 FIX: reject wildcards — Redis Streams does not support pattern matching
+    // Reject wildcards — Redis Streams does not support pattern matching
     if (pattern.includes('*') || pattern.includes('#')) {
       throw new Error(
         `RedisStreamsTransport.subscribeGroup does not support wildcard patterns ("${pattern}"). ` +
@@ -307,11 +307,11 @@ export class RedisStreamsTransport implements DurableTransport {
   /**
    * Request/reply for Redis Streams.
    *
-   * C1 FIX: the previous implementation tried `subscribe('#')` which called
+   * The previous implementation tried `subscribe('#')` which called
    * `subscribeGroup('__event__', '#')` and created a stream key `test:#` —
    * that never matches real reply topics, so request() always timed out.
    *
-   * New approach: we maintain an in-memory Map of pending reply handlers
+   * Current approach: we maintain an in-memory Map of pending reply handlers
    * keyed by requestId. Every subscribeGroup handler checks incoming envelopes
    * for `metadata.replyTo` and resolves the matching pending handler if found.
    * This works because the responder publishes to the request's original topic
@@ -331,8 +331,7 @@ export class RedisStreamsTransport implements DurableTransport {
 
     const requestId = messageId();
     const timeoutMs = options?.timeoutMs ?? this.defaultRequestTimeoutMs;
-    // H1a FIX: store the TOPIC, not the prefixed key. publish() adds the prefix.
-    // Previous bug: _replyStream was already prefixed, then publish() prefixed again.
+    // Store the TOPIC, not the prefixed key. publish() adds the prefix.
     const replyTopic = `__reply__.${this.consumerName}`;
     const replyStream = this.streamKey(replyTopic);
 
@@ -347,7 +346,7 @@ export class RedisStreamsTransport implements DurableTransport {
         conversationId: options?.conversationId ?? conversationId(),
         tenantId: options?.tenantId ?? 'default',
         timestamp: Date.now(),
-        // C2 FIX: tell the responder WHERE to publish the reply. The
+        // Tell the responder WHERE to publish the reply. The
         // responder's bootstrap should check this field and XADD to the
         // reply stream instead of (or in addition to) the normal result topic.
         // Without this, replies only resolve if the caller happens to be

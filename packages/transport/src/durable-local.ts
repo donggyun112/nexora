@@ -87,7 +87,7 @@ export class InMemoryDurableTransport implements DurableTransport {
     return {
       kind: 'in-memory-durable',
       deliveryGuarantee: 'at-least-once',
-      durable: false, // H2 FIX: data does NOT survive restart — honest about it
+      durable: false, // Data does NOT survive restart
       supportsConsumerGroups: true,
       notes: 'In-process at-least-once transport. Consumer groups + redelivery within a process lifetime. Data lost on restart. No Redis required.',
     };
@@ -150,7 +150,7 @@ export class InMemoryDurableTransport implements DurableTransport {
   }
 
   async ackDelivery(envelope: MessageEnvelope): Promise<void> {
-    // H2 FIX: ack only for the group that claimed it, not all groups.
+    // Ack only for the group that claimed it, not all groups.
     // Since we don't know which group the caller belongs to from the
     // envelope alone, we ack for the first group that has this entry claimed.
     // For proper per-group ack, callers should use DeliveryControl.ack()

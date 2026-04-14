@@ -73,9 +73,9 @@ export class PaperclipAdapter implements Adapter {
   private readonly tenantId: string;
   private pollingTimer: ReturnType<typeof setInterval> | null = null;
   private readonly registeredAgentIds = new Map<string, string>();
-  /** C3 FIX: issues currently being processed — prevents reprocessing on next heartbeat. */
+  /** Issues currently being processed — prevents reprocessing on next heartbeat. */
   private readonly inFlightIssues = new Set<string>();
-  /** C3 FIX: issues we've already posted a comment on — prevents duplicate comments. */
+  /** Issues we've already posted a comment on — prevents duplicate comments. */
   private readonly processedIssues = new Set<string>();
   private heartbeatRunning = false;
 
@@ -148,7 +148,7 @@ export class PaperclipAdapter implements Adapter {
   }
 
   private async heartbeat(router: MessageRouter): Promise<void> {
-    // C3 FIX: single-flight guard — if previous heartbeat is still running, skip.
+    // Single-flight guard — if previous heartbeat is still running, skip.
     if (this.heartbeatRunning) return;
     this.heartbeatRunning = true;
 
@@ -168,7 +168,7 @@ export class PaperclipAdapter implements Adapter {
         ) as PaperclipIssue[];
 
         for (const issue of issues) {
-          // C3 FIX: skip already-processed or in-flight issues
+          // Skip already-processed or in-flight issues
           if (this.processedIssues.has(issue.id) || this.inFlightIssues.has(issue.id)) {
             continue;
           }

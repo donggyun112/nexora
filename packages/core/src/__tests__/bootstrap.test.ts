@@ -360,11 +360,10 @@ describe('bootstrapAgent', () => {
     await running.shutdown();
   });
 
-  // Codex round-3 fix #6: the scaffold applies `context.tools` as a tool
-  // allowlist inside createRuntime, but the previous tests never exercised
-  // that path end-to-end. This test mirrors the scaffold's filter logic and
-  // verifies that a tool NOT in the tenant allowlist is truly unreachable
-  // via services.tools.execute().
+  // The scaffold applies `context.tools` as a tool allowlist inside
+  // createRuntime. This test mirrors the scaffold's filter logic and verifies
+  // that a tool NOT in the tenant allowlist is truly unreachable via
+  // services.tools.execute().
   it('tenant tool allowlist is actually applied — filtered tools are unreachable', async () => {
     const transport = new InlineTransport();
     const card: AgentCard = {

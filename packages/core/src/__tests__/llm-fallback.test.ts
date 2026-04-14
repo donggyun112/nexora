@@ -69,10 +69,8 @@ describe('FallbackLLMProvider', () => {
     expect(onFallback).toHaveBeenCalledWith('primary', 'secondary', 'empty response');
   });
 
-  // Codex re-review fix #4b: AbortError must NOT trigger fallback.
-  // Previously, a user abort would cause the fallback to pointlessly try the
-  // next provider (which would also have to fail before the caller learned
-  // about the cancellation).
+  // AbortError must NOT trigger fallback. A user abort should not cause the
+  // fallback to pointlessly try the next provider.
   it('does NOT fall back on AbortError', async () => {
     const primary = {
       stream: async function* () { /* unused */ },
@@ -101,7 +99,7 @@ describe('FallbackLLMProvider', () => {
     expect(secondary.callLog).toHaveLength(0);
   });
 
-  // Codex round-3 fix #4b: pre-aborted signal must NOT invoke ANY provider.
+  // Pre-aborted signal must NOT invoke ANY provider.
   it('pre-aborted signal: does not call primary at all', async () => {
     let primaryCalled = false;
     const primary = {
@@ -128,7 +126,7 @@ describe('FallbackLLMProvider', () => {
     expect(secondary.callLog).toHaveLength(0);
   });
 
-  // Codex round-3 fix #4b: aborted empty-response must throw, not return success.
+  // Aborted empty-response must throw, not return success.
   it('aborted empty response throws instead of returning silent empty', async () => {
     // Primary returns empty content, but signal gets aborted mid-call.
     const ac = new AbortController();

@@ -114,7 +114,7 @@ export class DLQTransport implements EventTransport {
           error: errMsg,
         });
 
-        // C4 FIX: only mark as seen AFTER successful DLQ handoff.
+        // Only mark as seen AFTER successful DLQ handoff.
         // If DLQ publish fails, the message stays un-seen so a durable
         // transport can redeliver it on the next attempt. This prevents
         // permanent message loss when both handler AND DLQ are broken.

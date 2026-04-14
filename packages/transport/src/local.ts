@@ -123,7 +123,7 @@ export class LocalTransport implements EventTransport {
         conversationId: cid,
         tenantId,
         timestamp: Date.now(),
-        // C3 FIX: propagate delegation metadata into the envelope
+        // Propagate delegation metadata into the envelope
         delegationDepth: options?.delegationDepth,
         callerAgent: options?.callerAgent,
       },

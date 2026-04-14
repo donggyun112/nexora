@@ -103,7 +103,7 @@ export class OTelTransport implements EventTransport {
     });
 
     try {
-      // C6 FIX: make the publish span active during the inner.publish() call
+      // Make the publish span active during the inner.publish() call
       // so any spans created inside (e.g. by the transport's internal logic)
       // are children of this publish span.
       await otelContext.with(trace.setSpan(otelContext.active(), span), async () => {

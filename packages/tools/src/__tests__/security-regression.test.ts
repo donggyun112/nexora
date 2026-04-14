@@ -1,7 +1,7 @@
 /**
  * Security regression tests — prevent re-introduction of known vulnerabilities.
  *
- * These tests document attacks that were discovered during code review rounds
+ * These tests document known attack vectors
  * and ensure the defenses remain intact. Each test explains the attack vector
  * and verifies the mitigation.
  */

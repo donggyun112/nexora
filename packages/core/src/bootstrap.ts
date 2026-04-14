@@ -247,7 +247,7 @@ async function handleMessage(args: {
   const tenantId = envelope.metadata.tenantId;
 
   try {
-    // C3 FIX: enforce delegation depth limit if the message carries delegation metadata.
+    // Enforce delegation depth limit if the message carries delegation metadata.
     // This works across processes because the delegate tool puts the depth into
     // RequestOptions, which the transport propagates into envelope.metadata.
     const delegationDepth = (envelope.metadata as { delegationDepth?: number }).delegationDepth;
@@ -371,7 +371,7 @@ async function handleMessage(args: {
 
     await transport.publish(reply);
 
-    // H1 FIX: mirror reply to _replyStream if present
+    // Mirror reply to _replyStream if present
     await mirrorToReplyStream(transport, envelope, reply);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -395,13 +395,13 @@ async function handleMessage(args: {
       },
     };
     await transport.publish(errorEnvelope);
-    // H1b FIX: also mirror error replies to _replyStream
+    // Also mirror error replies to _replyStream
     await mirrorToReplyStream(transport, envelope, errorEnvelope);
   }
 }
 
 /**
- * H1 FIX: if the incoming envelope has `_replyStream` in metadata
+ * If the incoming envelope has `_replyStream` in metadata
  * (set by RedisStreamsTransport.request()), also publish the reply
  * envelope to that topic so the caller's dedicated reply listener
  * picks it up. This covers ALL reply paths: success, schema-rejected,

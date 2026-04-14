@@ -76,7 +76,7 @@ describe('exec tool', () => {
     if (denied.type === 'error') expect(denied.message).toMatch(/allowList/);
   });
 
-  // Codex re-review attack #1: argv: ['bash', '-c', 'rm -rf /'] when bash is allowlisted.
+  // argv: ['bash', '-c', 'rm -rf /'] when bash is allowlisted.
   it('blocks shell interpreters in argv mode even if allowlisted', async () => {
     const tool = createExecTool({ allowList: ['bash', 'sh', 'echo'] });
     for (const interp of ['bash', 'sh']) {
@@ -86,8 +86,7 @@ describe('exec tool', () => {
     }
   });
 
-  // Codex round-3 gap: sed/find/xargs/tar/git all have exec primitives and
-  // were missing from the round-2 blocklist.
+  // sed/find/xargs/tar/git all have exec primitives and must be blocked.
   it('blocks exec-capable tools: sed/find/xargs/tar/git/wget/curl', async () => {
     const tool = createExecTool({
       allowList: ['sed', 'find', 'xargs', 'tar', 'git', 'wget', 'curl', 'echo'],
@@ -102,8 +101,7 @@ describe('exec tool', () => {
     expect(ok.type).toBe('text');
   });
 
-  // Codex round-3 gap: version-suffixed interpreters (python3.12, nodejs, etc.)
-  // were bypassing the exact-name blocklist.
+  // Version-suffixed interpreters (python3.12, nodejs, etc.) must be blocked.
   it('blocks version-suffixed interpreters: python3.12, nodejs, node20', async () => {
     const tool = createExecTool({
       allowList: ['python3.12', 'nodejs', 'node20', 'python3', 'ruby3.3', 'echo'],
@@ -122,7 +120,7 @@ describe('exec tool', () => {
     if (result.type === 'text') expect(result.text).toContain('via-bash');
   });
 
-  // Codex re-review attack #2: argv: ['../../../bin/sh', 'cmd']
+  // argv: ['../../../bin/sh', 'cmd'] — path separators in argv[0].
   it('rejects path separators in argv[0]', async () => {
     const tool = createExecTool({ allowList: ['echo'] });
     const cases = ['../../../bin/sh', '/usr/bin/echo', '/bin/sh', './echo', 'sub/echo'];
@@ -281,9 +279,9 @@ describe('write tool', () => {
     expect(result.type).toBe('error');
   });
 
-  // Codex round-3 new-bug regression: round-2 ran mkdir -p on the RAW parent
-  // path BEFORE workspace validation, letting `../outside/new` create directories
-  // on the host filesystem even though the final write was later rejected.
+  // Regression: mkdir -p must NOT run on the raw parent path before workspace
+  // validation, otherwise `../outside/new` creates directories on the host
+  // filesystem even though the final write is later rejected.
   it('does not mkdir outside workspace even when write is rejected', async () => {
     // Create a sibling dir next to tmpDir to detect unintended mkdirs
     const parentOfTmp = path.dirname(tmpDir);
@@ -392,9 +390,8 @@ describe('edit tool', () => {
     expect(result.type).toBe('error');
   });
 
-  // Codex round-3 new-bug regression: round-2 used truncate(0) + single write(),
-  // which is neither atomic nor guaranteed to write the full payload. The
-  // current implementation uses temp-file + rename for atomic replace.
+  // Atomic edit: uses temp-file + rename instead of truncate(0) + write()
+  // to ensure the full payload is written atomically.
   it('leaves no .tmp garbage after successful edit', async () => {
     fs.writeFileSync(path.join(tmpDir, 'atomic.txt'), 'hello world', 'utf-8');
     const tool = createEditTool();
@@ -433,10 +430,9 @@ describe('edit tool', () => {
     expect(after).toBe('B'.repeat(1000));
   });
 
-  // Codex round-4 regression: atomic edit via temp+rename must preserve the
-  // original file's permission bits. Without this, a 0o600 secrets file would
-  // be clobbered to 0o644 (world-readable) and a 0o755 script would lose
-  // its executable bit.
+  // Atomic edit via temp+rename must preserve the original file's permission
+  // bits. Without this, a 0o600 secrets file would be clobbered to 0o644
+  // (world-readable) and a 0o755 script would lose its executable bit.
   it('preserves 0o600 permissions across atomic edit', async () => {
     const filePath = path.join(tmpDir, 'secret.txt');
     fs.writeFileSync(filePath, 'SECRET=foo', 'utf-8');

@@ -77,7 +77,7 @@ export function createBudgetMiddleware(options: BudgetMiddlewareOptions): AgentM
     name: 'budget',
 
     async beforeExecution(): Promise<void> {
-      // C5 FIX: check ALL applicable scopes, not just tenant-agent.
+      // Check ALL applicable scopes, not just tenant-agent.
       // A global policy with onExceed:'block' must also block.
       const scopes: import('@nexora/contracts').BudgetScope[] = [
         { type: 'global' },
@@ -103,7 +103,7 @@ export function createBudgetMiddleware(options: BudgetMiddlewareOptions): AgentM
     },
 
     async afterExecution(ctx: AfterContext): Promise<void> {
-      // C6 FIX: skip recording if the execution errored — failed/blocked
+      // Skip recording if the execution errored — failed/blocked
       // runs should not accrue cost. Only record when the agent actually
       // produced a response.
       if (ctx.error) {

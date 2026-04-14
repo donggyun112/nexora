@@ -2,7 +2,7 @@
 /**
  * nexora export / nexora import — portable agent packages.
  *
- * C1 FIX: import now validates every tar member path against targetDir
+ * Import now validates every tar member path against targetDir
  * before extraction. Rejects absolute paths, `..` traversal, and symlinks.
  */
 
@@ -47,7 +47,7 @@ export async function importPackage(options: ImportOptions): Promise<string[]> {
 
   const targetDir = path.resolve(options.targetDir ?? process.cwd());
 
-  // C1 FIX: list all members and validate BEFORE extracting.
+  // List all members and validate BEFORE extracting.
   const { stdout: listing } = await execFileAsync('tar', ['-tzf', options.input]);
   const files = listing.trim().split('\n').filter(Boolean);
 

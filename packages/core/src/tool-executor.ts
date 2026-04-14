@@ -2,7 +2,7 @@
  * ToolExecutor — 병렬 도구 실행 + 결과 포맷팅.
  *
  * Promise.allSettled로 병렬 실행하여 한 도구가 실패해도 나머지 결과를 살림.
- * 참고: Claude Code의 StreamingToolExecutor 패턴.
+ * 참고: StreamingToolExecutor 패턴.
  */
 
 import type {

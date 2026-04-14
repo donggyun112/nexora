@@ -64,7 +64,7 @@ export function w3cSpanId(): string {
  * hashes the input to produce a deterministic 32-hex ID instead of
  * padding/truncating (which was collision-prone for arbitrary inputs).
  *
- * R6 FIX: reject all-zero results (invalid in W3C TraceContext).
+ * Rejects all-zero results (invalid in W3C TraceContext).
  */
 export function toW3CTraceId(nexoraId: string): string {
   const hex = nexoraId.replace(/^[a-z]+_/, '').replace(/-/g, '');

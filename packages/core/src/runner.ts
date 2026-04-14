@@ -106,7 +106,7 @@ export class AgentRunner implements AgentRuntime {
     let loopGen: AsyncGenerator<AgentEvent> | null = null;
 
     try {
-      // R4 FIX: pass the actual tool list + system prompt to beforeExecution
+      // Pass the actual tool list + system prompt to beforeExecution
       // so middleware like toolFilterMiddleware can mutate them. The mutations
       // are read back and the service-level tool executor is NOT rebuilt here
       // (that's the caller's job at createRuntime time), but the tool list

@@ -68,11 +68,9 @@ export interface TurnResult {
   evaluations: EvaluationResult[];
 }
 
-// R1 FIX: previous version interpolated primary agent's response into the
-// system prompt, which let a malicious primary inject instructions at system
-// priority. Now the system prompt only contains the agent's own identity;
-// the primary response is passed as an assistant message in the conversation
-// history where it cannot override system-level instructions.
+// The system prompt only contains the agent's own identity; the primary
+// response is passed as an assistant message in the conversation history
+// where it cannot override system-level instructions.
 const FOLLOW_UP_SYSTEM_TEMPLATE = `You are {agentName} — {description}.
 
 Another agent already responded to the user's latest message.
@@ -287,8 +285,8 @@ export class TurnManager {
     _primaryResponse: string,
     history: { role: 'user' | 'assistant'; content: string }[],
   ): Promise<string | null> {
-    // R1 FIX: system prompt no longer contains the primary response or user
-    // message as interpolated strings. The history already has both — the
+    // System prompt no longer contains the primary response or user message
+    // as interpolated strings. The history already has both — the
     // primary's response was added via room.addAgentMessage(), and the user
     // message was added at the top of handleMessage(). The LLM sees them as
     // normal conversation turns, not as system-level instructions.

@@ -1,7 +1,7 @@
 /**
  * ToolRegistry — 도구 등록/필터/조립.
  *
- * 참고: Claude Code의 tools.ts assembleToolPool 패턴.
+ * 참고: assembleToolPool 패턴.
  *
  * 사용:
  *   const registry = new ToolRegistry();

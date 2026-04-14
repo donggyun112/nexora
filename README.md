@@ -142,7 +142,7 @@ cd nexora && pnpm install && pnpm build && pnpm test
 
 ## Security
 
-10 rounds of code review. Key hardening: exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), AbortSignal cancellation, typed transport guarantees, budget enforcement, import path validation, delegation cycle detection, tool pair sanitization, gateway API key auth + rate limiting (429), LLM error classification + smart fallback.
+Exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), AbortSignal cancellation, typed transport guarantees, budget enforcement, import path validation, delegation cycle detection, tool pair sanitization, gateway API key auth + rate limiting (429), LLM error classification + smart fallback, skill content threat scanning.
 
 ## Status
 

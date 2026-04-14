@@ -4,13 +4,13 @@
  * The agent calls this tool when its own tools aren't enough and another
  * agent declares the capability it needs.
  *
- * C3 FIX: cycle detection now propagates via `metadata.delegationDepth` in
- * the MessageEnvelope so it works across processes. The old per-callId Map
- * was process-local and couldn't detect A→B→A cycles spanning two hosts.
+ * Cycle detection propagates via `metadata.delegationDepth` in the
+ * MessageEnvelope so it works across processes. The old per-callId Map was
+ * process-local and couldn't detect A→B→A cycles spanning two hosts.
  *
- * C2 FIX: the delegate tool now sets `metadata.callerAgent` so the receiving
- * bootstrap can enforce per-capability ACLs. Without this, any agent with
- * the delegate tool could invoke any advertised capability (confused deputy).
+ * The delegate tool sets `metadata.callerAgent` so the receiving bootstrap
+ * can enforce per-capability ACLs. Without this, any agent with the delegate
+ * tool could invoke any advertised capability (confused deputy).
  */
 
 import type {
@@ -91,7 +91,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         return errorResult('input is required');
       }
 
-      // C3 FIX: check depth from envelope metadata (propagated across hops),
+      // Check depth from envelope metadata (propagated across hops),
       // NOT from a process-local Map.
       const nextDepth = currentDepth + 1;
       if (nextDepth > maxDepth) {
@@ -130,10 +130,10 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       });
 
       try {
-        // C3 FIX: propagate depth + caller identity via RequestOptions
-        // (not payload wrapping). RequestOptions now has delegationDepth +
-        // callerAgent fields. These flow into the MessageEnvelope metadata
-        // which bootstrap reads and enforces.
+        // Propagate depth + caller identity via RequestOptions (not payload
+        // wrapping). RequestOptions has delegationDepth + callerAgent fields.
+        // These flow into the MessageEnvelope metadata which bootstrap reads
+        // and enforces.
         const reply = await transport.request(
           targetTopic as TopicString,
           params.input,

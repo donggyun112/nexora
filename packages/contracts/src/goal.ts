@@ -54,7 +54,7 @@ export interface GoalStore {
  */
 export function formatGoalChain(chain: GoalChain): string {
   const lines: string[] = [];
-  // R5 FIX: clone ancestors to avoid mutating the input (reverse() is in-place).
+  // Clone ancestors to avoid mutating the input (reverse() is in-place).
   // Fence goal statements as quoted data to prevent prompt injection.
   const ancestorsCopy = [...chain.ancestors];
   ancestorsCopy.reverse();

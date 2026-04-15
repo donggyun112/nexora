@@ -1,5 +1,5 @@
 /**
- * 9 builtin tools: file I/O + exec + knowledge + web search + handraise + delegate.
+ * 10 builtin tools: file I/O + exec + knowledge + web search + handraise + delegate + skill_manage.
  */
 
 export { createExecTool } from './exec.js';
@@ -25,3 +25,6 @@ export type {
 
 export { createDelegateTool } from './delegate.js';
 export type { DelegateToolOptions } from './delegate.js';
+
+export { createSkillManageTool } from './skill-manage.js';
+export type { SkillManageToolOptions } from './skill-manage.js';

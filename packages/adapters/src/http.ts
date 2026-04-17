@@ -251,133 +251,141 @@ const TEST_PAGE_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Nexora</title>
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e5e5e5;height:100vh;display:flex;flex-direction:column}
-  header{padding:16px 24px;border-bottom:1px solid #222;display:flex;align-items:center;gap:12px}
-  header h1{font-size:18px;font-weight:600;color:#fff}
-  header span{font-size:12px;color:#666;background:#1a1a1a;padding:2px 8px;border-radius:4px}
-  #chat{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:12px}
-  .msg{max-width:720px;padding:12px 16px;border-radius:12px;line-height:1.5;font-size:14px;white-space:pre-wrap;word-break:break-word}
-  .user{background:#1e3a5f;align-self:flex-end;border-bottom-right-radius:4px}
-  .agent{background:#1a1a1a;border:1px solid #222;align-self:flex-start;border-bottom-left-radius:4px}
-  .agent .tool{color:#888;font-size:12px;font-style:italic}
-  .system{color:#666;font-size:12px;text-align:center;align-self:center}
-  #input-area{padding:16px 24px;border-top:1px solid #222;display:flex;gap:8px}
-  #input{flex:1;padding:10px 16px;border-radius:8px;border:1px solid #333;background:#111;color:#fff;font-size:14px;outline:none}
-  #input:focus{border-color:#4a9eff}
-  #input::placeholder{color:#555}
-  button{padding:10px 20px;border-radius:8px;border:none;background:#4a9eff;color:#fff;font-size:14px;cursor:pointer;font-weight:500}
-  button:hover{background:#3a8eef}
-  button:disabled{background:#333;color:#666;cursor:not-allowed}
-  #mode{display:flex;gap:8px;align-items:center}
-  #mode label{font-size:12px;color:#888;cursor:pointer}
-  #mode input{accent-color:#4a9eff}
-  .typing{color:#888;font-size:13px;padding:8px 16px}
-  .typing::after{content:'';animation:dots 1.5s infinite}
-  @keyframes dots{0%{content:''}33%{content:'.'}66%{content:'..'}100%{content:'...'}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e5e5e5;height:100vh;display:flex;flex-direction:column}
+header{padding:14px 24px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;gap:12px}
+header h1{font-size:17px;font-weight:600;color:#fff}
+header .tag{font-size:11px;color:#888;background:#141414;padding:2px 8px;border-radius:4px;border:1px solid #222}
+#chat{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+.msg{max-width:760px;line-height:1.55;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.user-row{align-self:flex-end;display:flex;flex-direction:column;align-items:flex-end}
+.user-row .bubble{background:#1d4ed8;color:#fff;padding:10px 16px;border-radius:14px 14px 4px 14px}
+.agent-row{align-self:flex-start;display:flex;flex-direction:column;gap:6px;max-width:760px;width:100%}
+.agent-row .bubble{background:#141414;border:1px solid #222;padding:12px 16px;border-radius:4px 14px 14px 14px}
+.agent-row .bubble:empty{display:none}
+.tools{display:flex;flex-direction:column;gap:4px}
+.tool-ev{font-size:12px;padding:5px 10px;border-radius:6px;display:flex;align-items:center;gap:6px;font-family:ui-monospace,monospace}
+.tool-call{background:#0c1a2e;border:1px solid #1a3050;color:#60a5fa}
+.tool-result{background:#0a1a0a;border:1px solid #1a3a1a;color:#4ade80}
+.tool-result.err{background:#1a0a0a;border:1px solid #3a1a1a;color:#f87171}
+.tool-ev .icon{font-size:14px}
+.tool-ev .name{font-weight:600}
+.tool-ev .dur{color:#555;margin-left:auto}
+.delegate-ev{background:#1a0a2e;border:1px solid #2a1a50;color:#a78bfa}
+.thinking-ev{font-size:12px;color:#555;font-style:italic;padding:2px 0}
+.meta{font-size:11px;color:#444;margin-top:4px}
+.typing{color:#555;font-size:13px;padding:4px 0}
+.typing span{animation:blink 1.4s infinite both}
+.typing span:nth-child(2){animation-delay:.2s}
+.typing span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+#bar{padding:14px 24px;border-top:1px solid #1a1a1a;display:flex;gap:8px}
+#bar input{flex:1;padding:11px 16px;border-radius:10px;border:1px solid #282828;background:#111;color:#fff;font-size:14px;outline:none}
+#bar input:focus{border-color:#1d4ed8}
+#bar button{padding:11px 20px;border-radius:10px;border:none;background:#1d4ed8;color:#fff;font-size:14px;cursor:pointer;font-weight:500}
+#bar button:disabled{background:#222;color:#555;cursor:not-allowed}
 </style>
 </head>
 <body>
 <header>
-  <h1>Nexora</h1>
-  <span>Agent Test Console</span>
-  <div style="flex:1"></div>
-  <div id="mode">
-    <label><input type="checkbox" id="stream-toggle" checked> Stream</label>
-  </div>
+<h1>⚡ Nexora</h1>
+<span class="tag">streaming</span>
 </header>
 <div id="chat"></div>
-<div id="input-area">
-  <input id="input" placeholder="Type a message..." autocomplete="off">
-  <button id="send">Send</button>
+<div id="bar">
+<input id="inp" placeholder="메시지를 입력하세요..." autocomplete="off">
+<button id="btn">Send</button>
 </div>
 <script>
-const chat=document.getElementById('chat');
-const input=document.getElementById('input');
-const sendBtn=document.getElementById('send');
-const streamToggle=document.getElementById('stream-toggle');
+const chat=document.getElementById('chat'),inp=document.getElementById('inp'),btn=document.getElementById('btn');
+function h(s){const d=document.createElement('div');d.innerHTML=s;return d.textContent||''}
+function scroll(){chat.scrollTop=chat.scrollHeight}
 
-function addMsg(text,cls){
-  const d=document.createElement('div');
-  d.className='msg '+cls;
-  d.textContent=text;
-  chat.appendChild(d);
-  chat.scrollTop=chat.scrollHeight;
-  return d;
+function addUser(text){
+  const row=document.createElement('div');row.className='msg user-row';
+  row.innerHTML='<div class="bubble"></div>';
+  row.querySelector('.bubble').textContent=text;
+  chat.appendChild(row);scroll();
+}
+
+function createAgent(){
+  const row=document.createElement('div');row.className='msg agent-row';
+  row.innerHTML='<div class="tools"></div><div class="bubble"></div><div class="meta"></div>';
+  chat.appendChild(row);scroll();
+  return {
+    el:row,
+    tools:row.querySelector('.tools'),
+    bubble:row.querySelector('.bubble'),
+    meta:row.querySelector('.meta'),
+    _t0:Date.now(),_tc:0,_tokens:0,
+    addTool(name,type,isErr){
+      this._tc++;
+      const d=document.createElement('div');
+      const cls=name==='delegate'?'tool-ev delegate-ev':type==='call'?'tool-ev tool-call':('tool-ev tool-result'+(isErr?' err':''));
+      d.className=cls;
+      const icon=name==='delegate'?'🤝':name==='read'?'📄':name==='grep'?'🔍':name==='exec'?'⚡':'🔧';
+      d.innerHTML='<span class="icon">'+icon+'</span><span class="name">'+h(name)+'</span>';
+      this.tools.appendChild(d);scroll();
+      return d;
+    },
+    appendText(t){this.bubble.textContent+=t;scroll()},
+    addThinking(t){
+      const d=document.createElement('div');d.className='thinking-ev';d.textContent='💭 '+t.slice(0,120);
+      this.tools.appendChild(d);scroll();
+    },
+    finish(){
+      const ms=Date.now()-this._t0;
+      const parts=[ms>1000?(ms/1000).toFixed(1)+'s':ms+'ms'];
+      if(this._tc)parts.push(this._tc+' tool'+(this._tc>1?'s':''));
+      this.meta.textContent=parts.join(' · ');
+    }
+  };
 }
 
 async function send(){
-  const text=input.value.trim();
-  if(!text)return;
-  input.value='';
-  addMsg(text,'user');
-  sendBtn.disabled=true;
-  input.disabled=true;
+  const text=inp.value.trim();if(!text)return;
+  inp.value='';addUser(text);
+  btn.disabled=true;inp.disabled=true;
+  const typing=document.createElement('div');typing.className='typing';
+  typing.innerHTML='<span>●</span><span>●</span><span>●</span>';
+  chat.appendChild(typing);scroll();
 
+  const agent=createAgent();
   try{
-    if(streamToggle.checked){
-      const el=addMsg('','agent');
-      const typing=document.createElement('div');
-      typing.className='typing';
-      typing.textContent='Thinking';
-      chat.appendChild(typing);
-      chat.scrollTop=chat.scrollHeight;
-
-      const res=await fetch('/messages/stream',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({content:text})
-      });
-      typing.remove();
-
-      const reader=res.body.getReader();
-      const decoder=new TextDecoder();
-      let buf='';
-      while(true){
-        const{done,value}=await reader.read();
-        if(done)break;
-        buf+=decoder.decode(value,{stream:true});
-        const lines=buf.split('\\n\\n');
-        buf=lines.pop()||'';
-        for(const line of lines){
-          if(!line.startsWith('data: '))continue;
-          try{
-            const chunk=JSON.parse(line.slice(6));
-            if(chunk.type==='text')el.textContent+=chunk.text;
-            else if(chunk.type==='tool_call')el.innerHTML+='<div class="tool">Using '+chunk.name+'...</div>';
-            else if(chunk.type==='error')el.textContent+='[Error] '+chunk.message;
-          }catch{}
-        }
-        chat.scrollTop=chat.scrollHeight;
+    const res=await fetch('/messages/stream',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({content:text})
+    });
+    typing.remove();
+    const reader=res.body.getReader();
+    const dec=new TextDecoder();
+    let buf='';
+    while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\\n\\n');buf=lines.pop()||'';
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        try{
+          const c=JSON.parse(line.slice(6));
+          if(c.type==='text')agent.appendText(c.text);
+          else if(c.type==='tool_call')agent.addTool(c.name,'call');
+          else if(c.type==='tool_result')agent.addTool(c.name,'result',c.isError);
+          else if(c.type==='thinking')agent.addThinking(c.content);
+          else if(c.type==='error')agent.appendText('[Error] '+c.message);
+        }catch{}
       }
-      if(!el.textContent.trim())el.textContent='(no response)';
-    }else{
-      const typing=document.createElement('div');
-      typing.className='typing';
-      typing.textContent='Thinking';
-      chat.appendChild(typing);
-
-      const res=await fetch('/messages',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({content:text})
-      });
-      typing.remove();
-      const data=await res.json();
-      addMsg(data.content||data.error||'(no response)','agent');
+      scroll();
     }
-  }catch(e){
-    addMsg('Error: '+e.message,'system');
-  }
-  sendBtn.disabled=false;
-  input.disabled=false;
-  input.focus();
+  }catch(e){typing.remove();agent.appendText('Error: '+e.message)}
+  agent.finish();
+  btn.disabled=false;inp.disabled=false;inp.focus();
 }
 
-sendBtn.addEventListener('click',send);
-input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
-addMsg('Connected to Nexora. Type a message to start.','system');
-input.focus();
+btn.addEventListener('click',send);
+inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+inp.focus();
 </script>
 </body>
 </html>`;

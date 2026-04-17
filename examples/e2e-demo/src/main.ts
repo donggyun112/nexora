@@ -184,18 +184,34 @@ const router: MessageRouter = {
         onChunk({ type: 'text', text: r.text, agent: r.agentName });
       }
 
-      // Round 2+: TurnManager handles who speaks next
+      // Round 2+: agents continue discussion, each seeing updated meeting history
       let silentRounds = 0;
       for (let round = 1; round < 10; round++) {
-        const lastMsg = room.history()[room.history().length - 1];
-        if (!lastMsg) break;
-        const mResult = await tm.handleMessage(room, lastMsg);
-        if (mResult.responses.length === 0) { silentRounds++; if (silentRounds >= 2) break; continue; }
-        silentRounds = 0;
-        for (const mr of mResult.responses) {
-          meetingMgr.speak(m.id, mr.agentName, mr.content);
-          onChunk({ type: 'text', text: mr.content, agent: mr.agentName });
+        const updatedHistory = meetingMgr.formatHistory(m.id);
+        const roundResponses = await Promise.all(m.participants.map(async (agentName: string) => {
+          const participant = room.getParticipant(agentName);
+          if (!participant) return null;
+          const resp = await participant.llm.complete(
+            [{ role: 'user', content: updatedHistory + '\n\n이전 발언들을 보고 반응하세요. 새로운 관점을 추가하거나 동의/반대를 표현하세요. 할 말 없으면 "PASS".' }] as LLMMessage[],
+            { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 500 },
+          );
+          const text = resp.content?.trim()
+            .replace(/^\[?(coder|researcher|assistant)\]?:?\s*/i, '')
+            .replace(/^(speak|join_meeting|pass_turn):?\s*/i, '')
+            .replace(/^---\s*/g, '').trim();
+          if (!text || text === 'PASS' || text.includes('mock agent') || text.includes('PASS\n')) return null;
+          return { agentName, text };
+        }));
+        let anySpoke = false;
+        for (const r of roundResponses) {
+          if (!r) continue;
+          room.addAgentMessage(r.agentName, r.text);
+          meetingMgr.speak(m.id, r.agentName, r.text);
+          onChunk({ type: 'text', text: r.text, agent: r.agentName });
+          anySpoke = true;
         }
+        if (!anySpoke) { silentRounds++; if (silentRounds >= 2) break; continue; }
+        silentRounds = 0;
         // Every 3 rounds, master checks conclude
         if (round % 3 === 0) {
           const masterP = room.getParticipant(m.master);

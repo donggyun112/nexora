@@ -48,11 +48,13 @@ export class CoreToolExecutor implements ToolExecutor {
   }
 
   list(): ToolDefinitionSummary[] {
-    return Array.from(this.tools.values()).map(t => ({
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    }));
+    return Array.from(this.tools.values())
+      .filter(t => !t.checkAvailability || t.checkAvailability())
+      .map(t => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      }));
   }
 
   /**

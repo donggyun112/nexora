@@ -133,6 +133,8 @@ export interface LLMOptions {
   thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high';
   /** Cancellation signal — provider must forward to underlying SDK call. */
   signal?: AbortSignal;
+  /** Dynamic tool definitions — overrides provider's static tools when set. */
+  tools?: { name: string; description: string; parameters: Record<string, unknown> }[];
 }
 
 export interface LLMUsage {

@@ -122,6 +122,21 @@ export class MeetingManager {
   listActive(): Meeting[] {
     return [...this.meetings.values()].filter(m => m.status === 'active');
   }
+
+  /** Is this agent currently in an active meeting? */
+  isInMeeting(agent: string): boolean {
+    return this.listActive().some(m => m.participants.includes(agent));
+  }
+
+  /** Is this agent the master of an active meeting? */
+  isMaster(agent: string): boolean {
+    return this.listActive().some(m => m.master === agent);
+  }
+
+  /** Is this agent invited to an active meeting but hasn't joined? */
+  isInvited(agent: string): boolean {
+    return this.listActive().some(m => m.invited.includes(agent));
+  }
 }
 
 // ─── Tool definitions ───────────────────────────────────────────────────
@@ -130,6 +145,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const openMeeting: ToolDefinition = {
     name: 'open_meeting',
     description: 'Open a meeting room. You become the master (moderator). Other agents join as participants. Master can conclude the meeting.',
+    checkAvailability: () => manager.listActive().length === 0,
     parameters: {
       type: 'object',
       properties: {
@@ -149,6 +165,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const openThread: ToolDefinition = {
     name: 'open_thread',
     description: 'Open a 1:1 private thread with another agent. You become the master.',
+    checkAvailability: () => manager.listActive().length === 0,
     parameters: {
       type: 'object',
       properties: {
@@ -168,6 +185,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const joinMeeting: ToolDefinition = {
     name: 'join_meeting',
     description: 'Join a meeting you were invited to.',
+    checkAvailability: () => manager.isInvited(agentName),
     parameters: {
       type: 'object',
       properties: { meetingId: { type: 'string', description: 'Meeting ID' } },
@@ -183,6 +201,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const speak: ToolDefinition = {
     name: 'speak',
     description: 'Post a message in an active meeting.',
+    checkAvailability: () => manager.isInMeeting(agentName),
     parameters: {
       type: 'object',
       properties: {
@@ -202,6 +221,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const pass: ToolDefinition = {
     name: 'pass_turn',
     description: 'Skip your turn in a meeting. Use when you have nothing to add.',
+    checkAvailability: () => manager.isInMeeting(agentName),
     parameters: {
       type: 'object',
       properties: { meetingId: { type: 'string', description: 'Meeting ID' } },
@@ -217,6 +237,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const raiseHand: ToolDefinition = {
     name: 'raise_hand',
     description: 'Raise your hand to request a turn to speak in a meeting. The master will call on you.',
+    checkAvailability: () => manager.isInMeeting(agentName),
     parameters: {
       type: 'object',
       properties: { meetingId: { type: 'string', description: 'Meeting ID' } },
@@ -232,6 +253,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const conclude: ToolDefinition = {
     name: 'conclude_meeting',
     description: 'End a meeting with a summary. Only the master (who opened the meeting) can conclude.',
+    checkAvailability: () => manager.isMaster(agentName),
     parameters: {
       type: 'object',
       properties: {

@@ -62,7 +62,7 @@ export class AnthropicProvider implements LLMProvider {
         temperature: options?.temperature,
         system,
         messages: anthropicMessages,
-        tools: this.tools as Anthropic.Tool[] | undefined,
+        tools: (options?.tools ? options.tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters })) : this.tools) as Anthropic.Tool[] | undefined,
         ...(options?.thinkingLevel && options.thinkingLevel !== 'off'
           ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget(options.thinkingLevel) } }
           : {}),
@@ -113,7 +113,7 @@ export class AnthropicProvider implements LLMProvider {
         temperature: options?.temperature,
         system,
         messages: anthropicMessages,
-        tools: this.tools as Anthropic.Tool[] | undefined,
+        tools: (options?.tools ? options.tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters })) : this.tools) as Anthropic.Tool[] | undefined,
       },
       options?.signal ? { signal: options.signal } : undefined,
     );

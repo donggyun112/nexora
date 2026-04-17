@@ -82,6 +82,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
             maxTokens: options.maxTokens,
             temperature: options.temperature,
             signal: services.signal,
+            tools: services.tools.list().map(t => ({ name: t.name, description: t.description, parameters: t.parameters })),
           });
         } catch (err) {
           if (services.signal.aborted) return;

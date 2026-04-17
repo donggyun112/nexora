@@ -181,7 +181,7 @@ export class MeetingOrchestrator {
     const history = this.mgr.formatHistory(meeting.id);
     for (const agent of agents) {
       const text = await this.agentSay(agent,
-        `${history}\n\n---\n자유 발언입니다. 의견이 있으면 말하세요. 없으면 "PASS".`);
+        `${history}\n\n---\n진행자가 자유 발언을 열었습니다. 위 대화 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요. 반드시 한 마디 이상 하세요.`);
       if (text && text !== 'PASS' && !text.includes('mock agent')) {
         this.mgr.speak(meeting.id, agent, text);
         this.emit({ type: 'text', text, agent });

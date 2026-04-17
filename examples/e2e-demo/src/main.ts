@@ -161,7 +161,18 @@ async function autonomousDiscussion(
   for (let round = 0; round < 10; round++) {
     const history = meetingMgr.formatHistory(meeting.id);
 
-    for (const agent of agents) {
+    // Dynamic turn order: if last message mentions an agent, they go first
+    const lastMsg = meeting.messages[meeting.messages.length - 1];
+    const turnOrder = [...agents];
+    if (lastMsg) {
+      const mentioned = agents.find(a => a !== lastMsg.agent && lastMsg.content.toLowerCase().includes(a));
+      if (mentioned) {
+        turnOrder.splice(turnOrder.indexOf(mentioned), 1);
+        turnOrder.unshift(mentioned);
+      }
+    }
+
+    for (const agent of turnOrder) {
       const text = await agentSay(agent, [
         { role: 'user', content: `${history}\n\n---\n이전 대화를 보고 발언하세요. 할 말 없으면 "PASS"만 출력. 절대 [이름]: 접두사를 붙이지 마세요.` },
       ]);

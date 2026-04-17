@@ -12,7 +12,7 @@
  * feeds messages into the Room and posts agent responses out.
  */
 
-import type { AgentCard, LLMProvider, ConversationStore, ChatMessage } from '@nexora/contracts';
+import type { AgentCard, LLMProvider, ConversationStore, ChatMessage, AgentRuntime } from '@nexora/contracts';
 
 /** Default max messages before oldest are evicted. */
 const DEFAULT_MAX_HISTORY = 200;
@@ -58,6 +58,12 @@ export interface RoomParticipant {
    * If not set, uses the card's description as persona.
    */
   respondPrompt?: string;
+  /**
+   * Optional AgentRuntime for this participant. When set, the agent can
+   * use tools (read, grep, meeting tools, etc.) during meetings.
+   * If not set, the agent can only generate text via LLM.
+   */
+  runtime?: AgentRuntime;
 }
 
 export class ConversationRoom {

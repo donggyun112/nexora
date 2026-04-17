@@ -244,6 +244,9 @@ importers:
       '@nexora/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@nexora/tools':
+        specifier: workspace:*
+        version: link:../tools
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

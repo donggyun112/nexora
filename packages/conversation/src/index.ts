@@ -19,3 +19,6 @@ export type { TurnManagerOptions, TurnResult } from './turn-manager.js';
 
 export { evaluateAgent, evaluateAll } from './evaluate.js';
 export type { EvaluationResult } from './evaluate.js';
+
+export { MeetingOrchestrator } from './meeting-orchestrator.js';
+export type { MeetingEvent, MeetingOrchestratorOptions } from './meeting-orchestrator.js';

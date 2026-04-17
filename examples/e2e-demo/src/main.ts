@@ -26,7 +26,7 @@ import { createReactArchitecture } from '@nexora/architectures';
 import { createReadTool, createGrepTool, createDelegateTool } from '@nexora/tools';
 import { LocalTransport } from '@nexora/transport';
 import { HttpAdapter } from '@nexora/adapters';
-import { GatewayRouter } from '@nexora/gateway';
+import { GatewayRouter, LocalRuntimeRouter } from '@nexora/gateway';
 import { InMemoryAgentRegistry } from '@nexora/registry';
 import { SmartMockLLM } from './mock-llm.js';
 
@@ -176,12 +176,31 @@ for (const card of [coder, researcher, assistant]) {
   });
 }
 
-// ─── 4. Gateway ──────────────────────────────────────────────────────────
+// ─── 4. Gateway — LocalRuntimeRouter for real streaming ──────────────────
 
-const router = new GatewayRouter({
-  transport,
-  defaultTopic: topic('assistant.requested'),
-  timeoutMs: 10_000,
+const router = new LocalRuntimeRouter({
+  createRuntime: (message) => {
+    const tenantId = message.tenantId ?? 'default';
+    const tools = [
+      ...baseTools,
+      createDelegateTool({ transport, registry, callerAgentName: 'assistant' }),
+    ];
+    return new AgentRunner({
+      architecture: createReactArchitecture({
+        systemPrompt: agentPrompts['assistant'],
+      }),
+      llm,
+      tools: new CoreToolExecutor({
+        tools,
+        context: {
+          tenantId,
+          workdir,
+          secrets: { get: async () => undefined },
+          logger: { info: () => {}, warn: () => {}, error: () => {} },
+        },
+      }),
+    });
+  },
 });
 
 const http = new HttpAdapter({

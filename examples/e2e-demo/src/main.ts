@@ -23,7 +23,7 @@ import type { LLMProvider } from '@nexora/contracts';
 const coder = defineAgent({
   name: 'coder',
   version: '0.1.0',
-  description: '코드 분석 전문가. 파일을 읽고 코드를 분석하고 설명합니다. 코딩, 디버깅, 리팩토링 관련 질문에 응답합니다.',
+  description: '코드, 기술, 개발, 프로젝트 구조, 아키텍처, 디버깅 전문가. 코드나 기술 관련 모든 질문에 응답. 연구주제 논의에도 기술 관점으로 참여.',
   architecture: 'conversation',
   tools: ['read', 'grep'],
   capabilities: ['code-reading', 'file-analysis'],
@@ -34,7 +34,7 @@ const coder = defineAgent({
 const researcher = defineAgent({
   name: 'researcher',
   version: '0.1.0',
-  description: '정보 검색 전문가. 파일을 검색하고 정보를 종합합니다. 조사, 분석, 비교 관련 질문에 응답합니다.',
+  description: '연구, 조사, 분석, 주제 선정, 트렌드, 비교 전문가. 연구주제, 아이디어, 브레인스토밍 관련 모든 질문에 응답.',
   architecture: 'conversation',
   tools: ['grep'],
   capabilities: ['search', 'research'],
@@ -45,7 +45,7 @@ const researcher = defineAgent({
 const assistant = defineAgent({
   name: 'assistant',
   version: '0.1.0',
-  description: '팀 리더. 일반적인 질문에 답하고, 인사나 잡담을 처리합니다. 기술적 질문은 coder나 researcher가 더 적합합니다.',
+  description: '인사, 잡담만 담당. 코드/기술/연구/분석 질문에는 절대 응답하지 않음. 다른 에이전트 이름이 언급되면 양보.',
   architecture: 'conversation',
   tools: ['read', 'grep'],
   capabilities: ['general', 'routing'],

@@ -186,7 +186,10 @@ async function autonomousDiscussion(
     // Master decides
     const updatedHistory = meetingMgr.formatHistory(meeting.id);
     const decision = await agentSay(master, [
-      { role: 'user', content: `${updatedHistory}\n\n---\n합의 도달 시 "CONCLUDE: [결론]". 더 필요하면 "CONTINUE: [다음 논점]".` },
+      { role: 'user', content: `${updatedHistory}\n\n---\n당신은 턴마스터입니다. 두 가지 중 하나만 하세요:
+1. 합의 도달 시: "CONCLUDE: [한 줄 결론]"
+2. 더 필요 시: "CONTINUE" (한 마디만. 길게 정리하지 마세요.)
+에이전트들이 대화 중이면 끼어들지 말고 CONTINUE만 출력하세요.` },
     ]);
 
     if (decision.includes('CONCLUDE')) {
@@ -198,7 +201,11 @@ async function autonomousDiscussion(
     }
 
     meetingMgr.speak(meeting.id, master, decision);
-    onChunk({ type: 'text', text: decision.replace(/^CONTINUE:?\s*/i, ''), agent: master });
+    // Only show master's message if it's not just "CONTINUE"
+    const cleanDecision = decision.replace(/^CONTINUE:?\s*/i, '').trim();
+    if (cleanDecision && cleanDecision !== 'CONTINUE') {
+      onChunk({ type: 'text', text: cleanDecision, agent: master });
+    }
   }
 }
 

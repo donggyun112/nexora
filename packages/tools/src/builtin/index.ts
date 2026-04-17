@@ -38,3 +38,6 @@ export type { SkillManageToolOptions } from './skill-manage.js';
 
 export { createTodoTool, TodoStore } from './todo.js';
 export type { TodoItem } from './todo.js';
+
+export { createMeetingTools, MeetingManager } from './meeting.js';
+export type { Meeting, MeetingMessage } from './meeting.js';

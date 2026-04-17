@@ -15,6 +15,7 @@ import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLM
 import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
 import { ConversationRoom, TurnManager } from '@nexora/conversation';
 import { HttpAdapter } from '@nexora/adapters';
+import { MeetingManager, createMeetingTools } from '@nexora/tools';
 import { SmartMockLLM } from './mock-llm.js';
 
 // ─── 1. Agents ──────────────────────────────────────────────────────────
@@ -67,10 +68,22 @@ function createLLM(): LLMProvider {
 const llm = createLLM();
 
 const PROMPTS: Record<string, string> = {
-  assistant: '당신은 assistant(팀 리더)입니다. 인사/잡담/조율만 담당. 기술/연구는 양보. 절대 다른 에이전트인 척 하지 마세요. 짧게 응답.',
-  coder: '당신은 coder(개발자)입니다. 코드/기술 전문가. 절대 다른 에이전트인 척 하지 마세요. 짧게 응답.',
-  researcher: '당신은 researcher(연구원)입니다. 연구/분석 전문가. 절대 다른 에이전트인 척 하지 마세요. 짧게 응답.',
+  assistant: `당신은 assistant(팀 리더)입니다. 인사/잡담/조율 담당.
+회의가 필요하면 open_meeting 도구로 회의를 열 수 있습니다. 회의를 열면 당신이 마스터가 됩니다.
+마스터는 conclude_meeting으로 회의를 종료합니다.
+절대 다른 에이전트인 척 하지 마세요. 짧게 응답.`,
+  coder: `당신은 coder(개발자)입니다. 코드/기술 전문가.
+회의에 초대되면 speak 도구로 발언하고, 할 말 없으면 pass_turn합니다.
+필요하면 open_thread로 다른 에이전트와 1:1 대화를 열 수 있습니다.
+절대 다른 에이전트인 척 하지 마세요. 짧게 응답.`,
+  researcher: `당신은 researcher(연구원)입니다. 연구/분석 전문가.
+회의에 초대되면 speak 도구로 발언하고, 할 말 없으면 pass_turn합니다.
+필요하면 open_thread로 다른 에이전트와 1:1 대화를 열 수 있습니다.
+절대 다른 에이전트인 척 하지 마세요. 짧게 응답.`,
 };
+
+// Shared meeting manager — all agents use the same instance
+const meetingMgr = new MeetingManager();
 
 // ─── 3. Conversation Room ────────────────────────────────────────────────
 
@@ -125,44 +138,50 @@ async function autonomousDiscussion(
   onChunk: (c: OutboundChunk) => void,
 ): Promise<void> {
   const agents = ['coder', 'researcher'] as const;
-  const turnmaster = 'assistant';
-  const history: LLMMessage[] = [{ role: 'user', content: userText }];
+  const master = 'assistant';
 
-  // Turnmaster opens the discussion
-  const opening = await agentSay(turnmaster, [
-    { role: 'user', content: `사용자가 "${userText}"라고 요청했습니다. 당신은 턴마스터입니다. coder와 researcher에게 이 주제에 대해 각자 의견을 말하라고 지시하세요. 짧게.` },
+  // Master opens meeting
+  const meeting = meetingMgr.open(master, userText, [...agents]);
+  onChunk({ type: 'tool_call', name: 'open_meeting', input: { topic: userText, participants: [...agents] }, agent: master });
+
+  const opening = await agentSay(master, [
+    { role: 'user', content: `회의가 열렸습니다. 주제: "${userText}". 참가자: ${meeting.participants.join(', ')}. 토론을 시작하세요.` },
   ]);
-  history.push({ role: 'assistant', content: `[${turnmaster}]: ${opening}` });
-  room.addAgentMessage(turnmaster, opening);
-  onChunk({ type: 'text', text: opening, agent: turnmaster });
+  meetingMgr.speak(meeting.id, master, opening);
+  onChunk({ type: 'text', text: opening, agent: master });
 
-  // Discussion loop — runs until turnmaster says CONCLUDE
+  // Discussion loop
   for (let round = 0; round < 10; round++) {
-    // Each agent gets a turn
+    const history = meetingMgr.formatHistory(meeting.id);
+
     for (const agent of agents) {
       const text = await agentSay(agent, [
-        ...history,
-        { role: 'user', content: `대화를 이어가세요. 이전 발언에 반응하고, 새로운 관점을 추가하세요. 동의하면 동의한다고, 반대하면 반대 이유를 말하세요. 할 말이 정말 없으면 "PASS".` },
+        { role: 'user', content: `${history}\n\n---\n이전 대화를 보고 발언하세요. 할 말 없으면 "PASS".` },
       ]);
-      if (!text || text === 'PASS' || text.includes('mock agent')) continue;
-      history.push({ role: 'assistant', content: `[${agent}]: ${text}` });
-      room.addAgentMessage(agent, text);
+      if (!text || text === 'PASS' || text.includes('mock agent')) {
+        onChunk({ type: 'tool_call', name: 'pass_turn', input: { meetingId: meeting.id }, agent });
+        continue;
+      }
+      meetingMgr.speak(meeting.id, agent, text);
       onChunk({ type: 'text', text, agent });
     }
 
-    // Turnmaster evaluates: enough discussion or need more?
-    const decision = await agentSay(turnmaster, [
-      ...history,
-      { role: 'user', content: `당신은 턴마스터입니다. 지금까지의 토론을 평가하세요.
-- 합의에 도달했거나 충분히 논의되었으면: "CONCLUDE"로 시작하고 최종 결론을 정리하세요.
-- 아직 더 논의가 필요하면: "CONTINUE"로 시작하고 다음에 논의할 포인트를 제시하세요.
-- 특정 에이전트에게 추가 의견을 요청할 수도 있습니다.` },
+    // Master decides
+    const updatedHistory = meetingMgr.formatHistory(meeting.id);
+    const decision = await agentSay(master, [
+      { role: 'user', content: `${updatedHistory}\n\n---\n합의 도달 시 "CONCLUDE: [결론]". 더 필요하면 "CONTINUE: [다음 논점]".` },
     ]);
-    history.push({ role: 'assistant', content: `[${turnmaster}]: ${decision}` });
-    room.addAgentMessage(turnmaster, decision);
-    onChunk({ type: 'text', text: decision, agent: turnmaster });
 
-    if (decision.includes('CONCLUDE')) break;
+    if (decision.includes('CONCLUDE')) {
+      const summary = decision.replace(/^CONCLUDE:?\s*/i, '');
+      meetingMgr.conclude(meeting.id, master, summary);
+      onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: master });
+      onChunk({ type: 'text', text: summary, agent: master });
+      break;
+    }
+
+    meetingMgr.speak(meeting.id, master, decision);
+    onChunk({ type: 'text', text: decision.replace(/^CONTINUE:?\s*/i, ''), agent: master });
   }
 }
 
@@ -173,23 +192,33 @@ async function autonomousDiscussion(
 async function threadConversation(
   agentA: string,
   agentB: string,
-  topic: string,
+  topicText: string,
   onChunk: (c: OutboundChunk) => void,
 ): Promise<void> {
-  const history: LLMMessage[] = [
-    { role: 'user', content: `주제: "${topic}". ${agentA}와 ${agentB}가 1:1로 논의합니다. 합의에 도달하면 "AGREED"로 시작하세요.` },
-  ];
+  // agentA opens thread, becomes master
+  const meeting = meetingMgr.open(agentA, topicText, [agentB]);
+  onChunk({ type: 'tool_call', name: 'open_thread', input: { agent: agentB, topic: topicText }, agent: agentA });
 
   const speakers = [agentA, agentB];
   for (let turn = 0; turn < 20; turn++) {
     const speaker = speakers[turn % 2];
-    const text = await agentSay(speaker, history);
+    const history = meetingMgr.formatHistory(meeting.id);
+    const text = await agentSay(speaker, [
+      { role: 'user', content: `${history}\n\n---\n대화를 이어가세요. 합의에 도달하면 "AGREED: [합의내용]"으로 시작.` },
+    ]);
     if (!text || text.includes('mock agent')) break;
-    history.push({ role: 'assistant', content: `[${speaker}]: ${text}` });
-    room.addAgentMessage(speaker, text);
-    onChunk({ type: 'text', text, agent: speaker });
 
-    if (text.startsWith('AGREED') || text.includes('AGREED')) break;
+    if (text.includes('AGREED')) {
+      const summary = text.replace(/^AGREED:?\s*/i, '');
+      meetingMgr.speak(meeting.id, speaker, text);
+      meetingMgr.conclude(meeting.id, agentA, summary);
+      onChunk({ type: 'text', text, agent: speaker });
+      onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: agentA });
+      break;
+    }
+
+    meetingMgr.speak(meeting.id, speaker, text);
+    onChunk({ type: 'text', text, agent: speaker });
   }
 }
 

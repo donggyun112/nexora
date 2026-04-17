@@ -251,148 +251,139 @@ const TEST_PAGE_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Nexora</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,system-ui,sans-serif;background:#0a0a0a;color:#e5e5e5;height:100vh;display:flex;flex-direction:column}
-header{padding:14px 24px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;gap:12px}
-header h1{font-size:17px;font-weight:600;color:#fff}
-header .tag{font-size:11px;color:#888;background:#141414;padding:2px 8px;border-radius:4px;border:1px solid #222}
-#chat{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px}
-.msg{max-width:760px;line-height:1.55;font-size:14px;white-space:pre-wrap;word-break:break-word}
-.user-row{align-self:flex-end;display:flex;flex-direction:column;align-items:flex-end}
-.user-row .bubble{background:#1d4ed8;color:#fff;padding:10px 16px;border-radius:14px 14px 4px 14px}
-.agent-row{align-self:flex-start;display:flex;flex-direction:column;gap:6px;max-width:760px;width:100%}
-.agent-row .bubble{background:#141414;border:1px solid #222;padding:12px 16px;border-radius:4px 14px 14px 14px}
-.agent-row .bubble:empty{display:none}
-.tools{display:flex;flex-direction:column;gap:4px}
-.tool-ev{font-size:12px;padding:5px 10px;border-radius:6px;display:flex;align-items:center;gap:6px;font-family:ui-monospace,monospace}
-.tool-call{background:#0c1a2e;border:1px solid #1a3050;color:#60a5fa}
-.tool-result{background:#0a1a0a;border:1px solid #1a3a1a;color:#4ade80}
-.tool-result.err{background:#1a0a0a;border:1px solid #3a1a1a;color:#f87171}
-.tool-ev .icon{font-size:14px}
-.tool-ev .name{font-weight:600}
-.tool-ev .dur{color:#555;margin-left:auto}
-.delegate-ev{background:#1a0a2e;border:1px solid #2a1a50;color:#a78bfa}
-.thinking-ev{font-size:12px;color:#555;font-style:italic;padding:2px 0}
-.meta{font-size:11px;color:#444;margin-top:4px}
-.typing{color:#555;font-size:13px;padding:4px 0}
-.typing span{animation:blink 1.4s infinite both}
-.typing span:nth-child(2){animation-delay:.2s}
-.typing span:nth-child(3){animation-delay:.4s}
-@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
-#bar{padding:14px 24px;border-top:1px solid #1a1a1a;display:flex;gap:8px}
-#bar input{flex:1;padding:11px 16px;border-radius:10px;border:1px solid #282828;background:#111;color:#fff;font-size:14px;outline:none}
-#bar input:focus{border-color:#1d4ed8}
-#bar button{padding:11px 20px;border-radius:10px;border:none;background:#1d4ed8;color:#fff;font-size:14px;cursor:pointer;font-weight:500}
-#bar button:disabled{background:#222;color:#555;cursor:not-allowed}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:'gg sans','Noto Sans',Helvetica,Arial,sans-serif;background:#313338;color:#dbdee1}
+.app{display:flex;flex-direction:column;height:100%}
+header{display:flex;align-items:center;gap:14px;padding:12px 16px;background:#2b2d31;border-bottom:1px solid #1e1f22}
+header h1{font-size:16px;font-weight:600;color:#f2f3f5}
+.tags{display:flex;gap:6px}
+.tag{font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid;background:transparent}
+.msgs{flex:1;overflow-y:auto;padding:16px 0}
+.msgs::-webkit-scrollbar{width:8px}
+.msgs::-webkit-scrollbar-thumb{background:#1e1f22;border-radius:4px}
+.empty{text-align:center;color:#5c5e66;padding:40px 16px;font-size:14px}
+.mrow{display:flex;padding:4px 16px;gap:12px}
+.mrow:hover{background:#2e3035}
+.mrow.user{justify-content:flex-end}
+.ubbl{background:#5865f2;color:#fff;padding:8px 14px;border-radius:16px 16px 4px 16px;max-width:520px;font-size:14px;line-height:1.5;word-break:break-word}
+.av{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.mc{min-width:0;max-width:640px}
+.an{font-size:14px;font-weight:600;margin-bottom:2px}
+.abbl{font-size:14px;line-height:1.5;white-space:pre-wrap;word-break:break-word;padding:2px 0}
+.tc{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0}
+.tch{font-size:12px;padding:2px 8px;border-radius:4px;font-family:monospace;display:inline-flex;align-items:center;gap:4px}
+.tch.c{background:#1e2a45;color:#5dadec}
+.tch.r{background:#1a2e1a;color:#57d28f}
+.tch.e{background:#2e1a1a;color:#ed4245}
+.typ{color:#5c5e66;font-size:13px;padding:4px 16px}
+.typ span{animation:bl 1.4s infinite both}
+.typ span:nth-child(2){animation-delay:.2s}
+.typ span:nth-child(3){animation-delay:.4s}
+@keyframes bl{0%,80%,100%{opacity:.2}40%{opacity:1}}
+.bar{display:flex;padding:0 16px 24px}
+.bar input{flex:1;padding:12px 16px;background:#383a40;border:none;border-radius:8px 0 0 8px;color:#dbdee1;font-size:14px;outline:none}
+.bar input::placeholder{color:#5c5e66}
+.bar input:focus{background:#404249}
+.bar button{padding:12px 20px;background:#5865f2;color:#fff;border:none;border-radius:0 8px 8px 0;font-size:14px;font-weight:600;cursor:pointer}
+.bar button:disabled{background:#383a40;color:#5c5e66;cursor:not-allowed}
 </style>
 </head>
 <body>
+<div class="app">
 <header>
 <h1>⚡ Nexora</h1>
-<span class="tag">streaming</span>
+<div class="tags">
+<span class="tag" style="border-color:#5865f2;color:#5865f2">🤖 assistant</span>
+<span class="tag" style="border-color:#9b59b6;color:#9b59b6">💻 coder</span>
+<span class="tag" style="border-color:#2ecc71;color:#2ecc71">🔍 researcher</span>
+</div>
 </header>
-<div id="chat"></div>
-<div id="bar">
+<div class="msgs" id="msgs">
+<div class="empty">메시지를 보내면 에이전트들이 협업하여 응답합니다.</div>
+</div>
+<div class="bar">
 <input id="inp" placeholder="메시지를 입력하세요..." autocomplete="off">
 <button id="btn">Send</button>
 </div>
+</div>
 <script>
-const chat=document.getElementById('chat'),inp=document.getElementById('inp'),btn=document.getElementById('btn');
-function h(s){const d=document.createElement('div');d.innerHTML=s;return d.textContent||''}
-function scroll(){chat.scrollTop=chat.scrollHeight}
+const A={assistant:{av:'🤖',c:'#5865f2'},coder:{av:'💻',c:'#9b59b6'},researcher:{av:'🔍',c:'#2ecc71'},system:{av:'⚠️',c:'#e74c3c'}};
+const TI={read:'📄',grep:'🔍',exec:'⚡',write:'✏️',edit:'✏️',delegate:'🤝',knowledge:'📚'};
+const msgs=document.getElementById('msgs'),inp=document.getElementById('inp'),btn=document.getElementById('btn');
+let first=true;
+function scroll(){msgs.scrollTop=msgs.scrollHeight}
+function h(s){const d=document.createElement('span');d.textContent=s;return d.textContent}
 
 function addUser(text){
-  const row=document.createElement('div');row.className='msg user-row';
-  row.innerHTML='<div class="bubble"></div>';
-  row.querySelector('.bubble').textContent=text;
-  chat.appendChild(row);scroll();
+  if(first){msgs.innerHTML='';first=false}
+  const r=document.createElement('div');r.className='mrow user';
+  r.innerHTML='<div class="ubbl"></div>';
+  r.querySelector('.ubbl').textContent=text;
+  msgs.appendChild(r);scroll();
 }
 
-function createAgent(){
-  const row=document.createElement('div');row.className='msg agent-row';
-  row.innerHTML='<div class="tools"></div><div class="bubble"></div><div class="meta"></div>';
-  chat.appendChild(row);scroll();
-  return {
-    el:row,
-    tools:row.querySelector('.tools'),
-    bubble:row.querySelector('.bubble'),
-    meta:row.querySelector('.meta'),
-    _t0:Date.now(),_tc:0,_tokens:0,
-    addTool(name,type,isErr,input){
-      this._tc++;
-      const d=document.createElement('div');
-      const cls=name==='delegate'?'tool-ev delegate-ev':type==='call'?'tool-ev tool-call':('tool-ev tool-result'+(isErr?' err':''));
-      d.className=cls;
-      const icon=name==='delegate'?'🤝':name==='read'?'📄':name==='grep'?'🔍':name==='exec'?'⚡':'🔧';
-      let detail='';
-      if(input&&type==='call'){
-        if(name==='delegate'&&input.capability)detail=' → '+input.capability;
-        else if(name==='read'&&input.path)detail=' '+input.path;
-        else if(name==='grep'&&input.pattern)detail=' /'+input.pattern+'/';
-        else if(name==='exec'){const c=input.command||input.argv;if(c)detail=' '+String(Array.isArray(c)?c.join(' '):c).slice(0,40);}
-      }
-      d.innerHTML='<span class="icon">'+icon+'</span><span class="name">'+h(name)+h(detail)+'</span>';
-      this.tools.appendChild(d);scroll();
-      return d;
-    },
-    appendText(t){this.bubble.textContent+=t;scroll()},
-    addThinking(t){
-      const d=document.createElement('div');d.className='thinking-ev';d.textContent='💭 '+t.slice(0,120);
-      this.tools.appendChild(d);scroll();
-    },
-    finish(){
-      const ms=Date.now()-this._t0;
-      const parts=[ms>1000?(ms/1000).toFixed(1)+'s':ms+'ms'];
-      if(this._tc)parts.push(this._tc+' tool'+(this._tc>1?'s':''));
-      this.meta.textContent=parts.join(' · ');
-    }
-  };
+const agentEls=new Map();
+function getAgent(name){
+  if(agentEls.has(name))return agentEls.get(name);
+  const a=A[name]||A.system;
+  const r=document.createElement('div');r.className='mrow';
+  r.innerHTML='<div class="av" style="background:'+a.c+'">'+a.av+'</div><div class="mc"><div class="an" style="color:'+a.c+'">'+h(name)+'</div><div class="tc"></div><div class="abbl"></div></div>';
+  msgs.appendChild(r);scroll();
+  const o={el:r,tc:r.querySelector('.tc'),bbl:r.querySelector('.abbl')};
+  agentEls.set(name,o);
+  return o;
 }
 
 async function send(){
   const text=inp.value.trim();if(!text)return;
   inp.value='';addUser(text);
+  agentEls.clear();
   btn.disabled=true;inp.disabled=true;
-  const typing=document.createElement('div');typing.className='typing';
-  typing.innerHTML='<span>●</span><span>●</span><span>●</span>';
-  chat.appendChild(typing);scroll();
-
-  const agent=createAgent();
+  const typ=document.createElement('div');typ.className='typ';
+  typ.innerHTML='<span>●</span><span>●</span><span>●</span>';
+  msgs.appendChild(typ);scroll();
   try{
-    const res=await fetch('/messages/stream',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({content:text})
-    });
-    typing.remove();
-    const reader=res.body.getReader();
-    const dec=new TextDecoder();
+    const res=await fetch('/messages/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:text})});
+    typ.remove();
+    const rd=res.body.getReader(),dc=new TextDecoder();
     let buf='';
     while(true){
-      const{done,value}=await reader.read();
+      const{done,value}=await rd.read();
       if(done)break;
-      buf+=dec.decode(value,{stream:true});
+      buf+=dc.decode(value,{stream:true});
       const lines=buf.split('\\n\\n');buf=lines.pop()||'';
       for(const line of lines){
         if(!line.startsWith('data: '))continue;
         try{
           const c=JSON.parse(line.slice(6));
-          if(c.type==='text')agent.appendText(c.text);
-          else if(c.type==='tool_call')agent.addTool(c.name,'call',false,c.input);
-          else if(c.type==='tool_result')agent.addTool(c.name,'result',c.isError);
-          else if(c.type==='thinking')agent.addThinking(c.content);
-          else if(c.type==='error')agent.appendText('[Error] '+c.message);
+          const ag=c.agent||'assistant';
+          if(c.type==='text'){const o=getAgent(ag);o.bbl.textContent+=c.text||''}
+          else if(c.type==='tool_call'){
+            const o=getAgent(ag);
+            const icon=TI[c.name]||'🔧';
+            let det='';
+            if(c.input){
+              if(c.name==='read'&&c.input.path)det=' '+c.input.path;
+              else if(c.name==='grep'&&c.input.pattern)det=' /'+c.input.pattern+'/';
+              else if(c.name==='delegate'&&c.input.capability)det=' → @'+c.input.capability;
+            }
+            o.tc.insertAdjacentHTML('beforeend','<span class="tch c">'+icon+' '+h(c.name)+h(det)+'</span>');
+          }
+          else if(c.type==='tool_result'){const o=getAgent(ag);o.tc.insertAdjacentHTML('beforeend','<span class="tch '+(c.isError?'e':'r')+'">✓ '+h(c.name)+'</span>')}
+          else if(c.type==='delegate_start'&&c.to){getAgent(c.to)}
+          else if(c.type==='error'){const o=getAgent(ag);o.bbl.textContent+='[Error] '+(c.message||'')}
         }catch{}
       }
       scroll();
     }
-  }catch(e){typing.remove();agent.appendText('Error: '+e.message)}
-  agent.finish();
+  }catch(e){typ.remove();const o=getAgent('system');o.bbl.textContent='Error: '+e.message}
   btn.disabled=false;inp.disabled=false;inp.focus();
 }
-
 btn.addEventListener('click',send);
 inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
 inp.focus();
 </script>
+</div>
 </body>
 </html>`;

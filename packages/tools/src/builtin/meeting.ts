@@ -25,6 +25,8 @@ export interface Meeting {
   topic: string;
   master: string;
   participants: string[];
+  /** Agents invited but not yet joined */
+  invited: string[];
   messages: MeetingMessage[];
   status: 'active' | 'concluded';
   summary?: string;
@@ -36,19 +38,32 @@ export class MeetingManager {
   private meetings = new Map<string, Meeting>();
   private nextId = 1;
 
-  open(master: string, topic: string, participants: string[]): Meeting {
-    const allParticipants = [master, ...participants.filter(p => p !== master)];
+  open(master: string, topic: string, participants: string[]): Meeting | null {
+    // Prevent opening if there's already an active meeting
+    if (this.listActive().length > 0) return null;
+    const allParticipants = [master];
     const meeting: Meeting = {
       id: `meeting-${this.nextId++}`,
       topic,
       master,
       participants: allParticipants,
+      invited: participants.filter(p => p !== master),
       messages: [],
       status: 'active',
       handRaised: [],
     };
     this.meetings.set(meeting.id, meeting);
     return meeting;
+  }
+
+  join(id: string, agent: string): boolean {
+    const m = this.meetings.get(id);
+    if (!m || m.status !== 'active') return false;
+    if (!m.invited.includes(agent)) return false;
+    if (m.participants.includes(agent)) return false;
+    m.participants.push(agent);
+    m.invited = m.invited.filter(a => a !== agent);
+    return true;
   }
 
   get(id: string): Meeting | undefined {
@@ -96,7 +111,7 @@ export class MeetingManager {
   formatHistory(id: string): string {
     const m = this.meetings.get(id);
     if (!m) return '';
-    const lines = [`📋 Meeting: ${m.topic} (${m.status})`, `Master: ${m.master}`, `Participants: ${m.participants.join(', ')}`, ...(m.handRaised.length ? [`🙋 Hands raised: ${m.handRaised.join(', ')}`] : []), '---'];
+    const lines = [`📋 Meeting: ${m.topic} (${m.status})`, `Master: ${m.master}`, `Participants: ${m.participants.join(', ')}`, ...(m.invited.length ? [`Invited (not joined): ${m.invited.join(', ')}`] : []), ...(m.handRaised.length ? [`🙋 Hands raised: ${m.handRaised.join(', ')}`] : []), '---'];
     for (const msg of m.messages) {
       lines.push(`[${msg.agent}]: ${msg.content}`);
     }
@@ -126,7 +141,8 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
     execute: async (_callId, input): Promise<ToolResult> => {
       const { topic, participants } = input as { topic: string; participants: string[] };
       const meeting = manager.open(agentName, topic, participants);
-      return textResult(`Meeting opened: ${meeting.id}\nTopic: ${topic}\nMaster: ${agentName}\nParticipants: ${meeting.participants.join(', ')}`);
+      if (!meeting) return errorResult('Cannot open meeting: another meeting is already active');
+      return textResult(`Meeting opened: ${meeting.id}\nTopic: ${topic}\nMaster: ${agentName}\nInvited: ${participants.join(', ')}`);
     },
   };
 
@@ -144,7 +160,23 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
     execute: async (_callId, input): Promise<ToolResult> => {
       const { agent, topic } = input as { agent: string; topic: string };
       const meeting = manager.open(agentName, topic, [agent]);
+      if (!meeting) return errorResult('Cannot open thread: another meeting is already active');
       return textResult(`Thread opened: ${meeting.id}\nWith: ${agent}\nTopic: ${topic}`);
+    },
+  };
+
+  const joinMeeting: ToolDefinition = {
+    name: 'join_meeting',
+    description: 'Join a meeting you were invited to.',
+    parameters: {
+      type: 'object',
+      properties: { meetingId: { type: 'string', description: 'Meeting ID' } },
+      required: ['meetingId'],
+    },
+    execute: async (_callId, input): Promise<ToolResult> => {
+      const { meetingId } = input as { meetingId: string };
+      if (!manager.join(meetingId, agentName)) return errorResult('Cannot join: not invited, already joined, or meeting not found');
+      return textResult(`[${agentName}] joined ${meetingId}`);
     },
   };
 
@@ -235,5 +267,5 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
     },
   };
 
-  return [openMeeting, openThread, speak, pass, raiseHand, conclude, getMeeting];
+  return [openMeeting, openThread, joinMeeting, speak, pass, raiseHand, conclude, getMeeting];
 }

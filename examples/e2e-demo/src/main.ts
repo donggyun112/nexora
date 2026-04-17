@@ -142,7 +142,14 @@ async function autonomousDiscussion(
 
   // Master opens meeting
   const meeting = meetingMgr.open(master, userText, [...agents]);
+  if (!meeting) { onChunk({ type: 'text', text: '다른 회의가 진행 중입니다.', agent: 'system' }); return; }
   onChunk({ type: 'tool_call', name: 'open_meeting', input: { topic: userText, participants: [...agents] }, agent: master });
+
+  // Agents join
+  for (const agent of agents) {
+    meetingMgr.join(meeting.id, agent);
+    onChunk({ type: 'tool_call', name: 'join_meeting', input: { meetingId: meeting.id }, agent });
+  }
 
   const opening = await agentSay(master, [
     { role: 'user', content: `회의가 열렸습니다. 주제: "${userText}". 참가자: ${meeting.participants.join(', ')}. 토론을 시작하세요.` },
@@ -195,9 +202,11 @@ async function threadConversation(
   topicText: string,
   onChunk: (c: OutboundChunk) => void,
 ): Promise<void> {
-  // agentA opens thread, becomes master
   const meeting = meetingMgr.open(agentA, topicText, [agentB]);
+  if (!meeting) { onChunk({ type: 'text', text: '다른 회의가 진행 중입니다.', agent: 'system' }); return; }
   onChunk({ type: 'tool_call', name: 'open_thread', input: { agent: agentB, topic: topicText }, agent: agentA });
+  meetingMgr.join(meeting.id, agentB);
+  onChunk({ type: 'tool_call', name: 'join_meeting', input: { meetingId: meeting.id }, agent: agentB });
 
   const speakers = [agentA, agentB];
   for (let turn = 0; turn < 20; turn++) {

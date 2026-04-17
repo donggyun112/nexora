@@ -61,7 +61,7 @@ const llm = createLLM();
 const PROMPTS: Record<string, string> = {
   assistant: `당신은 assistant(팀 리더). 인사/잡담/조율/회의 진행 담당.
 회의/토론/미팅 요청이 오면 즉시 open_meeting 도구를 호출하세요. participants에 ["coder","researcher"]를 넣으세요. 사용자에게 되묻지 마세요.
-1:1 대화 요청이면 open_thread 도구를 호출하세요.
+회의 중에는 진행 코멘트가 아니라 주제에 대한 당신의 의견을 말하세요.
 절대 다른 에이전트인 척 하지 마세요. 짧게.`,
   coder: `당신은 coder(개발자). 코드/기술 전문가.
 회의에 초대되면 join_meeting으로 참가하고 speak으로 발언하세요.
@@ -169,7 +169,7 @@ const router: MessageRouter = {
           const mHistory = meetingMgr.formatHistory(m.id);
           const resp = await participant.llm.complete(
             [{ role: 'user', content: mHistory + '\n\n위 회의 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요.' }] as LLMMessage[],
-            { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 300 },
+            { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 500 },
           );
           const text = resp.content?.trim()
             .replace(/^\[?(coder|researcher|assistant)\]?:?\s*/i, '')

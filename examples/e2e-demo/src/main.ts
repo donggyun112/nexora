@@ -75,11 +75,11 @@ const PROMPTS: Record<string, string> = {
   coder: `당신은 coder(개발자)입니다. 코드/기술 전문가.
 회의에 초대되면 speak 도구로 발언하고, 할 말 없으면 pass_turn합니다.
 필요하면 open_thread로 다른 에이전트와 1:1 대화를 열 수 있습니다.
-절대 다른 에이전트인 척 하지 마세요. 짧게 응답.`,
+절대 다른 에이전트인 척 하지 마세요. 절대 [coder]: 같은 접두사를 붙이지 마세요. 짧게 응답.`,
   researcher: `당신은 researcher(연구원)입니다. 연구/분석 전문가.
 회의에 초대되면 speak 도구로 발언하고, 할 말 없으면 pass_turn합니다.
 필요하면 open_thread로 다른 에이전트와 1:1 대화를 열 수 있습니다.
-절대 다른 에이전트인 척 하지 마세요. 짧게 응답.`,
+절대 다른 에이전트인 척 하지 마세요. 절대 [researcher]: 같은 접두사를 붙이지 마세요. 짧게 응답.`,
 };
 
 // Shared meeting manager — all agents use the same instance
@@ -163,10 +163,9 @@ async function autonomousDiscussion(
 
     for (const agent of agents) {
       const text = await agentSay(agent, [
-        { role: 'user', content: `${history}\n\n---\n이전 대화를 보고 발언하세요. 할 말 없으면 "PASS".` },
+        { role: 'user', content: `${history}\n\n---\n이전 대화를 보고 발언하세요. 할 말 없으면 "PASS"만 출력. 절대 [이름]: 접두사를 붙이지 마세요.` },
       ]);
-      if (!text || text === 'PASS' || text.includes('mock agent')) {
-        onChunk({ type: 'tool_call', name: 'pass_turn', input: { meetingId: meeting.id }, agent });
+      if (!text || text === 'PASS' || text.includes('mock agent') || text.includes('PASS\n')) {
         continue;
       }
       meetingMgr.speak(meeting.id, agent, text);
@@ -184,7 +183,7 @@ async function autonomousDiscussion(
       meetingMgr.conclude(meeting.id, master, summary);
       onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: master });
       onChunk({ type: 'text', text: summary, agent: master });
-      break;
+      return; // Exit immediately after conclude
     }
 
     meetingMgr.speak(meeting.id, master, decision);

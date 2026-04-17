@@ -77,6 +77,7 @@ export class MeetingOrchestrator {
 
     // Moderation loop
     let silentRounds = 0;
+    let lastModerations: string[] = [];
     for (let round = 0; round < this.maxRounds; round++) {
       const history = this.mgr.formatHistory(meeting.id);
       const moderation = await this.agentSay(masterName,
@@ -87,6 +88,20 @@ export class MeetingOrchestrator {
 NEXT/OPEN/CONCLUDE 중 하나로만 시작. 부가 설명 금지.`);
 
       // CONCLUDE
+      // Deadlock: master repeating same moderation type
+      lastModerations.push(moderation.slice(0, 20));
+      if (lastModerations.length >= 3) {
+        const recent = lastModerations.slice(-3);
+        if (recent[0] === recent[1] && recent[1] === recent[2]) {
+          const summary = '논의가 교착 상태입니다. 현재까지 합의사항으로 종료합니다.';
+          this.mgr.speak(meeting.id, masterName, summary);
+          this.mgr.conclude(meeting.id, masterName, summary);
+          this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: masterName });
+          this.emit({ type: 'text', text: summary, agent: masterName });
+          return summary;
+        }
+      }
+
       if (moderation.includes('CONCLUDE')) {
         const summary = moderation.replace(/^CONCLUDE:?\s*/i, '');
         this.mgr.speak(meeting.id, masterName, summary);
@@ -155,11 +170,29 @@ NEXT/OPEN/CONCLUDE 중 하나로만 시작. 부가 설명 금지.`);
     this.emit({ type: 'tool_call', name: 'join_meeting', input: { meetingId: meeting.id }, agent: otherName });
 
     const speakers = [openerName, otherName];
+    let lastContents: string[] = [];
     for (let turn = 0; turn < 20; turn++) {
       const speaker = speakers[turn % 2];
       const history = this.mgr.formatHistory(meeting.id);
       const text = await this.agentSay(speaker,
-        `${history}\n\n---\n대화를 이어가세요. 합의 시 "AGREED: [합의내용]".`);
+        `${history}\n\n---\n대화를 이어가세요. 합의 시 "AGREED: [합의내용]". 정보 부족으로 진행 불가 시에도 "AGREED: [현재까지 합의사항]"으로 종료하세요.`);
+
+      if (!text || text.includes('mock agent')) break;
+
+      // Deadlock detection: if last 4 messages are similar length/pattern, force end
+      lastContents.push(text.slice(0, 50));
+      if (lastContents.length >= 4) {
+        const recent = lastContents.slice(-4);
+        const allSimilar = recent.every(c => c.includes('정보') || c.includes('필요') || c.includes('대기') || c.includes('확인'));
+        if (allSimilar) {
+          const summary = '정보 부족으로 회의를 종료합니다. 추가 정보 확보 후 재논의 필요.';
+          this.mgr.speak(meeting.id, speaker, summary);
+          this.mgr.conclude(meeting.id, openerName, summary);
+          this.emit({ type: 'text', text: summary, agent: openerName });
+          this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: openerName });
+          return summary;
+        }
+      }
 
       if (!text || text.includes('mock agent')) break;
 

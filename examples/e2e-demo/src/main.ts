@@ -128,36 +128,41 @@ async function autonomousDiscussion(
   const turnmaster = 'assistant';
   const history: LLMMessage[] = [{ role: 'user', content: userText }];
 
-  // Turnmaster opens
+  // Turnmaster opens the discussion
   const opening = await agentSay(turnmaster, [
-    ...history,
-    { role: 'user', content: `사용자가 "${userText}"라고 했습니다. 토론을 시작하세요. coder와 researcher에게 각자 의견을 말하라고 하세요. 짧게.` },
+    { role: 'user', content: `사용자가 "${userText}"라고 요청했습니다. 당신은 턴마스터입니다. coder와 researcher에게 이 주제에 대해 각자 의견을 말하라고 지시하세요. 짧게.` },
   ]);
   history.push({ role: 'assistant', content: `[${turnmaster}]: ${opening}` });
   room.addAgentMessage(turnmaster, opening);
   onChunk({ type: 'text', text: opening, agent: turnmaster });
 
-  // Discussion rounds
-  for (let round = 0; round < 4; round++) {
+  // Discussion loop — runs until turnmaster says CONCLUDE
+  for (let round = 0; round < 10; round++) {
+    // Each agent gets a turn
     for (const agent of agents) {
-      const prompt = `이전 대화를 보고 ${agent}로서 의견을 말하세요. 할 말이 없으면 "PASS"만 출력.`;
-      const text = await agentSay(agent, [...history, { role: 'user', content: prompt }]);
+      const text = await agentSay(agent, [
+        ...history,
+        { role: 'user', content: `대화를 이어가세요. 이전 발언에 반응하고, 새로운 관점을 추가하세요. 동의하면 동의한다고, 반대하면 반대 이유를 말하세요. 할 말이 정말 없으면 "PASS".` },
+      ]);
       if (!text || text === 'PASS' || text.includes('mock agent')) continue;
       history.push({ role: 'assistant', content: `[${agent}]: ${text}` });
       room.addAgentMessage(agent, text);
       onChunk({ type: 'text', text, agent });
     }
 
-    // Turnmaster decides: continue or end?
+    // Turnmaster evaluates: enough discussion or need more?
     const decision = await agentSay(turnmaster, [
       ...history,
-      { role: 'user', content: '토론이 충분했으면 결론을 정리하고 "CONCLUDE"로 시작하세요. 더 필요하면 "CONTINUE"로 시작하세요.' },
+      { role: 'user', content: `당신은 턴마스터입니다. 지금까지의 토론을 평가하세요.
+- 합의에 도달했거나 충분히 논의되었으면: "CONCLUDE"로 시작하고 최종 결론을 정리하세요.
+- 아직 더 논의가 필요하면: "CONTINUE"로 시작하고 다음에 논의할 포인트를 제시하세요.
+- 특정 에이전트에게 추가 의견을 요청할 수도 있습니다.` },
     ]);
     history.push({ role: 'assistant', content: `[${turnmaster}]: ${decision}` });
     room.addAgentMessage(turnmaster, decision);
     onChunk({ type: 'text', text: decision, agent: turnmaster });
 
-    if (decision.startsWith('CONCLUDE') || decision.includes('CONCLUDE')) break;
+    if (decision.includes('CONCLUDE')) break;
   }
 }
 
@@ -176,7 +181,7 @@ async function threadConversation(
   ];
 
   const speakers = [agentA, agentB];
-  for (let turn = 0; turn < 6; turn++) {
+  for (let turn = 0; turn < 20; turn++) {
     const speaker = speakers[turn % 2];
     const text = await agentSay(speaker, history);
     if (!text || text.includes('mock agent')) break;

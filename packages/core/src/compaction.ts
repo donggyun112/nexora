@@ -143,6 +143,47 @@ export function shouldCompact(
   return contextTokens > contextWindow - reserveTokens;
 }
 
+// ─── Stage 0: Tool output pruning (hermes _prune_old_tool_results) ─────
+
+const PRUNED_TOOL_PLACEHOLDER = '[Old tool output cleared to save context space]';
+
+/**
+ * Cheap pre-pass: replace old tool results with a placeholder.
+ * Protects the most recent `protectTailCount` messages.
+ * Only targets assistant messages that look like tool output (long + structured).
+ * No LLM call — pure string replacement.
+ */
+export function pruneOldToolOutputs(
+  messages: ChatMessage[],
+  protectTailCount: number,
+): ChatMessage[] {
+  if (messages.length <= protectTailCount) return messages;
+  const cutoff = messages.length - protectTailCount;
+  return messages.map((msg, i) => {
+    if (i >= cutoff) return msg;
+    if (msg.role !== 'assistant') return msg;
+    if (msg.content.length < 500) return msg;
+    // Only prune messages that look like tool output, not conversational replies.
+    // Tool output typically contains: JSON, code blocks, file paths, or structured data.
+    if (!looksLikeToolOutput(msg.content)) return msg;
+    return { ...msg, content: PRUNED_TOOL_PLACEHOLDER };
+  });
+}
+
+/** Heuristic: does this content look like tool output rather than a conversational reply? */
+function looksLikeToolOutput(content: string): boolean {
+  // Check first 500 chars for structural indicators
+  const head = content.slice(0, 500);
+  return (
+    head.includes('```') ||           // code block
+    head.includes('tool_result') ||   // serialized tool result
+    head.includes('tool_call') ||     // serialized tool call
+    /^\s*[{[]/.test(head) ||          // starts with JSON
+    /^\/[\w./-]+/.test(head) ||       // starts with file path
+    (head.split('\n').length > 10 && head.includes('  '))  // many indented lines
+  );
+}
+
 // ─── Stage 1: 도구 결과 절단 ───────────────────────────────────────────────
 
 /**
@@ -375,8 +416,23 @@ export class TwoStageCompactor implements Compactor {
       // beforeCompact hook: extract critical tags/context before compression
       const preserved = this.beforeCompact?.(messages);
 
+      // Stage 0: prune old tool outputs (cheap, no LLM call)
+      const pruned = pruneOldToolOutputs(messages, Math.max(10, Math.floor(messages.length * 0.3)));
+      const afterPrune = estimateContextSize(pruned);
+      if (!shouldCompact(afterPrune, this.contextWindow, this.reserveTokens)) {
+        const finalMessages = this.afterCompact ? this.afterCompact(pruned, preserved) : pruned;
+        return {
+          summary: '(stage 0 tool output pruning only)',
+          newMessages: finalMessages,
+          beforeCount: messages.length,
+          afterCount: finalMessages.length,
+          beforeTokens,
+          afterTokens: estimateContextSize(finalMessages),
+        };
+      }
+
       // Stage 1a: selective tool output compression (head+tail preserved)
-      const selective = compressToolOutputs(messages, this.selectiveToolThreshold);
+      const selective = compressToolOutputs(pruned, this.selectiveToolThreshold);
       // Stage 1b: hard truncation for anything still over limit
       const stage1 = truncateLargeContent(selective, this.toolResultTruncateChars);
       const afterStage1 = estimateContextSize(stage1);

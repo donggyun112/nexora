@@ -17,6 +17,29 @@ export interface ToolDefinition {
 
   /** 도구 실행 */
   execute(callId: string, input: unknown, ctx: ToolContext): Promise<ToolResult>;
+
+  // ─── Tool metadata (claude-code buildTool defaults pattern) ────────
+  // All optional — omitted means fail-closed defaults:
+  //   isReadOnly=false, isConcurrencySafe=false, isDestructive=false
+
+  /** True if this tool only reads state (no side effects). */
+  isReadOnly?: boolean | ((input?: unknown) => boolean);
+
+  /** True if safe to run concurrently with other tools. Default: false (sequential). */
+  isConcurrencySafe?: boolean | ((input?: unknown) => boolean);
+
+  /** True if this tool can cause irreversible changes. */
+  isDestructive?: boolean | ((input?: unknown) => boolean);
+
+  /** Max chars for the result text. Longer results are truncated. */
+  maxResultSizeChars?: number;
+
+  /**
+   * Runtime availability check (hermes check_fn pattern).
+   * Return false to hide this tool from the LLM schema entirely.
+   * Use for env-var gating, API key checks, platform checks, etc.
+   */
+  checkAvailability?: () => boolean;
 }
 
 export interface ToolContext {

@@ -24,7 +24,17 @@ export type {
 } from './handraise.js';
 
 export { createDelegateTool } from './delegate.js';
-export type { DelegateToolOptions } from './delegate.js';
+export type {
+  DelegateToolOptions,
+  Subagent,
+  DeclarativeSubagent,
+  CompiledSubagent,
+  AsyncSubagent,
+  SubagentRuntimeFactory,
+} from './delegate.js';
 
 export { createSkillManageTool } from './skill-manage.js';
 export type { SkillManageToolOptions } from './skill-manage.js';
+
+export { createTodoTool, TodoStore } from './todo.js';
+export type { TodoItem } from './todo.js';

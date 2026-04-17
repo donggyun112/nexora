@@ -8,8 +8,21 @@
  * - mcp: bidirectional MCP bridge
  */
 
-export { ToolRegistry, ToolsetRegistry } from './registry.js';
-export type { ToolFilter, ToolsetDefinition } from './registry.js';
+export {
+  ToolRegistry,
+  ToolsetRegistry,
+  TOOL_GROUPS,
+  TOOL_PROFILES,
+  resolveToolNames,
+  resolveProfile,
+  applyToolPolicyPipeline,
+} from './registry.js';
+export type {
+  ToolFilter,
+  ToolsetDefinition,
+  ToolProfileId,
+  ToolPolicyLayer,
+} from './registry.js';
 
 export * from './builtin/index.js';
 export * from './handraise/index.js';

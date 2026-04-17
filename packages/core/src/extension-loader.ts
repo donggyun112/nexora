@@ -60,9 +60,45 @@ export interface ExtensionLoaderOptions {
   context: ExtensionContext;
 }
 
+// ─── Extension manifest (openclaw pattern) ──────────────────────────────
+
+/** Static manifest file — enables discovery without loading code. */
+export interface ExtensionManifest {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  /** Entry point relative to manifest file. Default: 'index.js' */
+  main?: string;
+  /** JSON Schema for extension config */
+  configSchema?: Record<string, unknown>;
+  /** Plugin kind slot (e.g. 'memory' — only one active at a time) */
+  kind?: string;
+}
+
+/**
+ * Read a nexora.extension.json manifest. Returns null if not found.
+ */
+async function readManifest(dir: string): Promise<ExtensionManifest | null> {
+  const manifestPath = path.join(dir, 'nexora.extension.json');
+  try {
+    const raw = await fsp.readFile(manifestPath, 'utf-8');
+    const parsed = JSON.parse(raw) as ExtensionManifest;
+    if (!parsed.id || !parsed.name) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Load and activate extensions from multiple sources.
  * Returns a registry with all discovered extensions.
+ *
+ * Discovery order:
+ * 1. Programmatic extensions (options.extensions)
+ * 2. Filesystem: directories with nexora.extension.json (manifest-first)
+ * 3. Filesystem: standalone .js/.mjs files (legacy)
  */
 export async function loadExtensions(
   options: ExtensionLoaderOptions,
@@ -81,26 +117,50 @@ export async function loadExtensions(
     for (const dir of options.searchDirs) {
       if (!fs.existsSync(dir)) continue;
 
-      const entries = await fsp.readdir(dir);
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (!entry.endsWith('.js') && !entry.endsWith('.mjs')) continue;
-
-        const filePath = path.resolve(dir, entry);
-        // Skip symlinks
-        const stat = await fsp.lstat(filePath);
+        const entryPath = path.resolve(dir, entry.name);
+        const stat = await fsp.lstat(entryPath);
         if (stat.isSymbolicLink()) continue;
 
-        try {
-          const mod = await import(filePath) as {
-            default?: NexoraExtension;
-            extension?: NexoraExtension;
-          };
-          const ext = mod.default ?? mod.extension;
-          if (ext && typeof ext === 'object' && ext.name) {
-            registry.register(ext);
+        if (stat.isDirectory()) {
+          // Manifest-based discovery: dir/nexora.extension.json
+          const manifest = await readManifest(entryPath);
+          if (!manifest) continue;
+
+          const mainFile = path.join(entryPath, manifest.main ?? 'index.js');
+          if (!fs.existsSync(mainFile)) continue;
+
+          try {
+            const mod = await import(mainFile) as {
+              default?: NexoraExtension;
+              extension?: NexoraExtension;
+            };
+            const ext = mod.default ?? mod.extension;
+            if (ext && typeof ext === 'object') {
+              // Merge manifest metadata into extension
+              ext.name = ext.name ?? manifest.name;
+              ext.version = ext.version ?? manifest.version;
+              (ext as NexoraExtension & { manifest?: ExtensionManifest }).manifest = manifest;
+              registry.register(ext);
+            }
+          } catch {
+            // Skip extensions that fail to load
           }
-        } catch {
-          // Skip modules that fail to load
+        } else if (entry.name.endsWith('.js') || entry.name.endsWith('.mjs')) {
+          // Legacy: standalone .js files
+          try {
+            const mod = await import(entryPath) as {
+              default?: NexoraExtension;
+              extension?: NexoraExtension;
+            };
+            const ext = mod.default ?? mod.extension;
+            if (ext && typeof ext === 'object' && ext.name) {
+              registry.register(ext);
+            }
+          } catch {
+            // Skip modules that fail to load
+          }
         }
       }
     }

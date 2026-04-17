@@ -13,6 +13,7 @@ import type {
   ToolResult,
   LLMResponse,
   LLMUsage,
+  BudgetScope,
 } from '@nexora/contracts';
 
 // ─── 훅 컨텍스트 ────────────────────────────────────────────────────────────
@@ -72,6 +73,42 @@ export interface AgentMiddleware {
   afterToolCall?(ctx: AfterToolCallContext): Promise<void> | void;
   beforeLLMCall?(ctx: BeforeLLMCallContext): Promise<void> | void;
   afterLLMCall?(ctx: AfterLLMCallContext): Promise<void> | void;
+
+  // ─── Extended hook events (openclaw/claude-code pattern) ───────────
+  onSessionStart?(ctx: SessionEventContext): Promise<void> | void;
+  onSessionEnd?(ctx: SessionEventContext): Promise<void> | void;
+  beforePromptBuild?(ctx: PromptBuildContext): Promise<void> | void;
+  onCompact?(ctx: CompactEventContext): Promise<void> | void;
+  onBudgetExceeded?(ctx: BudgetExceededContext): Promise<void> | void;
+}
+
+// ─── Extended hook context types ──────────────────────────────────────────
+
+export interface SessionEventContext {
+  sessionId: string;
+  tenantId?: string;
+  agentName?: string;
+}
+
+export interface PromptBuildContext {
+  /** System prompt — middleware can mutate this */
+  systemPrompt: string;
+  /** Additional context to prepend (concatenated across middleware) */
+  prependContext?: string;
+}
+
+export interface CompactEventContext {
+  beforeTokens: number;
+  afterTokens: number;
+  messagesBefore: number;
+  messagesAfter: number;
+}
+
+export interface BudgetExceededContext {
+  policyId: string;
+  spent: number;
+  limit: number;
+  scope: BudgetScope;
 }
 
 // ─── Pipeline ───────────────────────────────────────────────────────────────
@@ -129,6 +166,29 @@ export class MiddlewarePipeline {
 
   list(): string[] {
     return this.middlewares.map(m => m.name);
+  }
+
+  async runOnSessionStart(ctx: SessionEventContext): Promise<void> {
+    for (const m of this.middlewares) { if (m.onSessionStart) await m.onSessionStart(ctx); }
+  }
+
+  async runOnSessionEnd(ctx: SessionEventContext): Promise<void> {
+    for (let i = this.middlewares.length - 1; i >= 0; i--) {
+      const m = this.middlewares[i];
+      if (m.onSessionEnd) await m.onSessionEnd(ctx);
+    }
+  }
+
+  async runBeforePromptBuild(ctx: PromptBuildContext): Promise<void> {
+    for (const m of this.middlewares) { if (m.beforePromptBuild) await m.beforePromptBuild(ctx); }
+  }
+
+  async runOnCompact(ctx: CompactEventContext): Promise<void> {
+    for (const m of this.middlewares) { if (m.onCompact) await m.onCompact(ctx); }
+  }
+
+  async runOnBudgetExceeded(ctx: BudgetExceededContext): Promise<void> {
+    for (const m of this.middlewares) { if (m.onBudgetExceeded) await m.onBudgetExceeded(ctx); }
   }
 }
 

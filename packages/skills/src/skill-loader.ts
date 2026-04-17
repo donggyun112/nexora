@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import type { Skill, SkillFrontmatter } from './types.js';
 
 /**
@@ -107,6 +108,11 @@ function parseYamlFrontmatter(raw: string, source: string): SkillFrontmatter {
     allowedTools: Array.isArray(obj['allowed-tools']) ? obj['allowed-tools'] as string[] : undefined,
     platforms: Array.isArray(obj.platforms) ? obj.platforms as string[] : undefined,
     prerequisites: Array.isArray(obj.prerequisites) ? obj.prerequisites as string[] : undefined,
+    requires_toolsets: Array.isArray(obj['requires-toolsets'] ?? obj.requires_toolsets) ? (obj['requires-toolsets'] ?? obj.requires_toolsets) as string[] : undefined,
+    fallback_for_toolsets: Array.isArray(obj['fallback-for-toolsets'] ?? obj.fallback_for_toolsets) ? (obj['fallback-for-toolsets'] ?? obj.fallback_for_toolsets) as string[] : undefined,
+    requires_env: Array.isArray(obj['requires-env'] ?? obj.requires_env) ? (obj['requires-env'] ?? obj.requires_env) as string[] : undefined,
+    requires_bins: Array.isArray(obj['requires-bins'] ?? obj.requires_bins) ? (obj['requires-bins'] ?? obj.requires_bins) as string[] : undefined,
+    always: obj.always === true ? true : undefined,
   };
 }
 
@@ -195,6 +201,90 @@ export async function loadSkills(...dirs: string[]): Promise<Skill[]> {
   }
 
   return Array.from(byName.values());
+}
+
+// ─── Skill eligibility filtering (hermes + openclaw pattern) ───────────────
+
+const PLATFORM_MAP: Record<string, string> = {
+  macos: 'darwin', linux: 'linux', windows: 'win32',
+};
+
+export interface SkillEligibilityContext {
+  /** Current platform (process.platform) */
+  platform?: string;
+  /** Available tool names */
+  availableTools?: string[];
+  /** Available toolset names */
+  availableToolsets?: string[];
+  /** Available environment variable names */
+  envVars?: string[];
+}
+
+/** Check if a binary is available on PATH. Cached per process. */
+const binCache = new Map<string, boolean>();
+function isBinAvailable(bin: string): boolean {
+  let result = binCache.get(bin);
+  if (result !== undefined) return result;
+  try {
+    execFileSync(process.platform === 'win32' ? 'where' : 'which', [bin], { stdio: 'ignore' });
+    result = true;
+  } catch {
+    result = false;
+  }
+  binCache.set(bin, result);
+  return result;
+}
+
+/**
+ * Filter skills by eligibility. Checks platform, required tools/toolsets,
+ * env vars, and conditional activation rules.
+ */
+export function filterEligibleSkills(
+  skills: Skill[],
+  ctx: SkillEligibilityContext = {},
+): Skill[] {
+  const platform = ctx.platform ?? process.platform;
+  const toolsets = new Set(ctx.availableToolsets ?? []);
+  const tools = new Set(ctx.availableTools ?? []);
+  const envVars = new Set(ctx.envVars ?? Object.keys(process.env));
+
+  return skills.filter(skill => {
+    const m = skill.meta;
+    if (m.always) return true;
+
+    // Platform check
+    if (m.platforms?.length) {
+      const match = m.platforms.some(p => platform.startsWith(PLATFORM_MAP[p] ?? p));
+      if (!match) return false;
+    }
+
+    // Required tools
+    if (m.allowedTools?.length && tools.size > 0) {
+      if (!m.allowedTools.every(t => tools.has(t))) return false;
+    }
+
+    // Required toolsets
+    if (m.requires_toolsets?.length) {
+      if (!m.requires_toolsets.every(ts => toolsets.has(ts))) return false;
+    }
+
+    // Fallback: activate only when target toolsets are MISSING
+    if (m.fallback_for_toolsets?.length) {
+      if (m.fallback_for_toolsets.every(ts => toolsets.has(ts))) return false;
+    }
+
+    // Required env vars
+    if (m.requires_env?.length) {
+      if (!m.requires_env.every(e => envVars.has(e))) return false;
+    }
+
+    // Required binaries on PATH
+    if (m.requires_bins?.length) {
+      if (!m.requires_bins.every(bin => isBinAvailable(bin))) return false;
+    }
+
+    return true;
+  });
 }
 
 // ─── mtime-based cache ─────────────────────────────────────────────────────

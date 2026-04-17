@@ -47,6 +47,18 @@ export interface SkillFrontmatter {
   prerequisites?: string[];
   /** Arbitrary metadata (nested objects supported) */
   metadata?: Record<string, unknown>;
+
+  // ─── Conditional activation (hermes pattern) ─────────────────────
+  /** Only activate when ALL of these toolsets are available */
+  requires_toolsets?: string[];
+  /** Activate as fallback when ANY of these toolsets are unavailable */
+  fallback_for_toolsets?: string[];
+  /** Required environment variables (openclaw pattern) */
+  requires_env?: string[];
+  /** Required binaries on PATH (openclaw pattern) */
+  requires_bins?: string[];
+  /** Always include regardless of filtering. Default: false */
+  always?: boolean;
 }
 
 export interface Skill {

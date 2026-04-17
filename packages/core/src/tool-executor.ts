@@ -78,9 +78,10 @@ export class CoreToolExecutor implements ToolExecutor {
 
     try {
       this.logger?.debug(`tool.start ${name}`, { callId, input });
-      const result = await tool.execute(callId, input, ctx);
+      const coerced = coerceToolArgs(tool.parameters, input);
+      const result = await tool.execute(callId, coerced, ctx);
       this.logger?.debug(`tool.done ${name}`, { callId });
-      return result;
+      return truncateResult(result, tool.maxResultSizeChars);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger?.error(`tool.error ${name}`, { callId, error: message });
@@ -89,36 +90,61 @@ export class CoreToolExecutor implements ToolExecutor {
   }
 
   /**
-   * 여러 도구 호출을 병렬로 실행.
-   * 한 도구가 실패해도 나머지 결과를 모두 반환.
+   * 여러 도구 호출을 실행. isConcurrencySafe인 도구는 병렬, 나머지는 순차.
+   * 원래 호출 순서를 보존하기 위해 chunked 방식 사용:
+   * 연속된 concurrent 도구를 하나의 배치로 묶어 병렬 실행하고,
+   * sequential 도구를 만나면 이전 배치를 flush 후 순차 실행.
    */
   async executeBatch(calls: BatchToolCall[], signal?: AbortSignal): Promise<BatchToolResult[]> {
-    const results = await Promise.allSettled(
-      calls.map(async (call) => {
-        const raw = await this.execute(call.name, call.callId, call.input, signal);
-        const result = raw as ToolResult;
-        return {
-          callId: call.callId,
-          name: call.name,
-          result,
-          isError: result.type === 'error',
-        } satisfies BatchToolResult;
-      }),
-    );
+    const results: BatchToolResult[] = new Array(calls.length);
 
-    return results.map((settled, idx) => {
-      if (settled.status === 'fulfilled') return settled.value;
-      const call = calls[idx];
-      const message = settled.reason instanceof Error
-        ? settled.reason.message
-        : String(settled.reason);
-      return {
-        callId: call.callId,
-        name: call.name,
-        result: { type: 'error' as const, message },
-        isError: true,
-      } satisfies BatchToolResult;
-    });
+    const exec = async (call: BatchToolCall): Promise<BatchToolResult> => {
+      const raw = await this.execute(call.name, call.callId, call.input, signal);
+      const result = raw as ToolResult;
+      return { callId: call.callId, name: call.name, result, isError: result.type === 'error' };
+    };
+
+    // Build chunks: consecutive concurrent calls are grouped together
+    let i = 0;
+    while (i < calls.length) {
+      const call = calls[i];
+      const tool = this.tools.get(call.name);
+
+      if (tool && resolveBool(tool.isConcurrencySafe, call.input)) {
+        // Collect consecutive concurrent calls into one batch
+        const batchStart = i;
+        while (i < calls.length) {
+          const c = calls[i];
+          const t = this.tools.get(c.name);
+          if (!t || !resolveBool(t.isConcurrencySafe, c.input)) break;
+          i++;
+        }
+        // Execute batch in parallel
+        const batch = calls.slice(batchStart, i);
+        const settled = await Promise.allSettled(batch.map(exec));
+        for (let j = 0; j < settled.length; j++) {
+          const s = settled[j];
+          const idx = batchStart + j;
+          if (s.status === 'fulfilled') {
+            results[idx] = s.value;
+          } else {
+            const msg = s.reason instanceof Error ? s.reason.message : String(s.reason);
+            results[idx] = { callId: batch[j].callId, name: batch[j].name, result: { type: 'error' as const, message: msg }, isError: true };
+          }
+        }
+      } else {
+        // Sequential: execute one at a time
+        try {
+          results[i] = await exec(call);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          results[i] = { callId: call.callId, name: call.name, result: { type: 'error' as const, message: msg }, isError: true };
+        }
+        i++;
+      }
+    }
+
+    return results;
   }
 
   /** 도구 존재 여부 */
@@ -130,6 +156,61 @@ export class CoreToolExecutor implements ToolExecutor {
   get(name: string): ToolDefinition | undefined {
     return this.tools.get(name);
   }
+}
+
+// ─── Tool argument type coercion (hermes coerce_tool_args pattern) ──────
+
+/** Resolve a boolean | ((input?) => boolean) field. Default: false (fail-closed). */
+function resolveBool(
+  field: boolean | ((input?: unknown) => boolean) | undefined,
+  input?: unknown,
+): boolean {
+  if (field === undefined) return false;
+  return typeof field === 'function' ? field(input) : field;
+}
+
+/**
+ * LLMs frequently return wrong JSON types — "42" instead of 42,
+ * "true" instead of true. Compare each arg against the tool's JSON Schema
+ * and coerce when safe.
+ */
+export function coerceToolArgs(
+  schema: Record<string, unknown>,
+  input: unknown,
+): unknown {
+  if (!input || typeof input !== 'object') return input;
+  const properties = (schema as { properties?: Record<string, { type?: string }> }).properties;
+  if (!properties) return input;
+
+  const coerced = { ...(input as Record<string, unknown>) };
+  for (const [key, value] of Object.entries(coerced)) {
+    if (typeof value !== 'string') continue;
+    const expected = properties[key]?.type;
+    if (!expected) continue;
+
+    if (expected === 'number' || expected === 'integer') {
+      const n = Number(value);
+      if (!Number.isNaN(n)) coerced[key] = n;
+    } else if (expected === 'boolean') {
+      if (value === 'true') coerced[key] = true;
+      else if (value === 'false') coerced[key] = false;
+    } else if (expected === 'array') {
+      try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) coerced[key] = parsed; } catch { /* keep string */ }
+    }
+  }
+  return coerced;
+}
+
+/** Truncate a tool result if it exceeds maxResultSizeChars. */
+function truncateResult(result: ToolResult, maxChars?: number): ToolResult {
+  if (!maxChars || result.type !== 'text' || result.text.length <= maxChars) return result;
+  const head = Math.floor(maxChars * 0.7);
+  const tail = Math.floor(maxChars * 0.2);
+  const omitted = result.text.length - head - tail;
+  return {
+    type: 'text',
+    text: result.text.slice(0, head) + `\n…[truncated ${omitted} chars]…\n` + result.text.slice(-tail),
+  };
 }
 
 /** 도구 결과를 LLM에 전달할 텍스트로 포맷 */

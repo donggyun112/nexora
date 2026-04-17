@@ -18,6 +18,7 @@ import type {
   BudgetWindow,
   BudgetStatus,
   CostEvent,
+  ModelUsage,
 } from '@nexora/contracts';
 
 export class InMemoryBudgetTracker implements BudgetTracker {
@@ -56,6 +57,32 @@ export class InMemoryBudgetTracker implements BudgetTracker {
     return this.events
       .filter(e => e.timestamp >= start && e.timestamp < end && scopeMatchesEvent(scope, e))
       .reduce((sum, e) => sum + e.costUsd, 0);
+  }
+
+  async getModelBreakdown(scope: BudgetScope, window: BudgetWindow): Promise<ModelUsage[]> {
+    const { start, end } = windowRange(window);
+    const byModel = new Map<string, ModelUsage>();
+    for (const e of this.events) {
+      if (e.timestamp < start || e.timestamp >= end || !scopeMatchesEvent(scope, e)) continue;
+      const existing = byModel.get(e.model);
+      if (existing) {
+        existing.inputTokens += e.inputTokens;
+        existing.outputTokens += e.outputTokens;
+        existing.cachedTokens += e.cachedTokens ?? 0;
+        existing.costUsd += e.costUsd;
+        existing.callCount += 1;
+      } else {
+        byModel.set(e.model, {
+          model: e.model,
+          inputTokens: e.inputTokens,
+          outputTokens: e.outputTokens,
+          cachedTokens: e.cachedTokens ?? 0,
+          costUsd: e.costUsd,
+          callCount: 1,
+        });
+      }
+    }
+    return [...byModel.values()].sort((a, b) => b.costUsd - a.costUsd);
   }
 
   private computeStatus(policy: BudgetPolicy): BudgetStatus {

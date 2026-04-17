@@ -68,10 +68,14 @@ export class ToolRegistry {
    * 필터 기준으로 도구를 조립.
    * 에이전트별 허용 도구 셋을 만들 때 사용.
    *
-   * 우선순위: pattern → blocked → allowed
+   * 우선순위: checkAvailability → pattern → blocked → allowed → sort
    */
   assemble(filter: ToolFilter = {}): ToolDefinition[] {
     let tools = this.list();
+
+    // Runtime availability gating (hermes check_fn) — hide unavailable tools
+    // from the LLM schema entirely to prevent hallucinated calls.
+    tools = tools.filter(t => !t.checkAvailability || t.checkAvailability());
 
     if (filter.pattern) {
       tools = tools.filter(t => filter.pattern!.test(t.name));
@@ -87,6 +91,10 @@ export class ToolRegistry {
       tools = tools.filter(t => allowed.has(t.name));
     }
 
+    // Deterministic sort for prompt-cache stability (claude-code pattern).
+    // LLM APIs cache by tool schema prefix — unstable order = cache miss.
+    tools.sort((a, b) => a.name.localeCompare(b.name));
+
     return tools;
   }
 
@@ -94,6 +102,114 @@ export class ToolRegistry {
   clear(): void {
     this.tools.clear();
   }
+}
+
+// ─── Tool Groups (openclaw pattern) ──────────────────────────────────────
+
+/**
+ * Named tool groups for use in allow/deny policies.
+ * Groups use "group:" prefix in policy strings.
+ *
+ * Usage:
+ * ```ts
+ * const fsTools = TOOL_GROUPS['group:fs']; // ['read', 'write', 'edit', 'grep']
+ * const resolved = resolveToolNames(['read', 'group:runtime']); // ['read', 'exec']
+ * ```
+ */
+export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
+  'group:fs': ['read', 'write', 'edit', 'grep'],
+  'group:runtime': ['exec'],
+  'group:web': ['web-search'],
+  'group:memory': ['knowledge'],
+  'group:agent': ['delegate', 'handraise'],
+  'group:skills': ['skill-manage'],
+} as const;
+
+/**
+ * Resolve a mixed list of tool names and group references to flat tool names.
+ * E.g. ['read', 'group:runtime'] → ['read', 'exec']
+ */
+export function resolveToolNames(names: readonly string[]): string[] {
+  const result = new Set<string>();
+  for (const name of names) {
+    const group = TOOL_GROUPS[name];
+    if (group) { for (const t of group) result.add(t); }
+    else result.add(name);
+  }
+  return [...result];
+}
+
+// ─── Tool Profiles (openclaw preset bundles) ─────────────────────────────
+
+export type ToolProfileId = 'minimal' | 'coding' | 'full';
+
+export const TOOL_PROFILES: Record<ToolProfileId, { allow?: string[] }> = {
+  minimal: { allow: ['read', 'grep'] },
+  coding: { allow: ['group:fs', 'group:runtime', 'group:memory', 'group:skills'] },
+  full: {},  // no restrictions
+};
+
+/**
+ * Get the resolved tool name list for a profile.
+ * 'full' returns undefined (no filter = all tools allowed).
+ */
+export function resolveProfile(profileId: ToolProfileId): string[] | undefined {
+  const profile = TOOL_PROFILES[profileId];
+  if (!profile.allow) return undefined;
+  return resolveToolNames(profile.allow);
+}
+
+// ─── Layered Tool Policy Pipeline (openclaw pattern) ─────────────────────
+
+/**
+ * A single policy layer. Each layer can further restrict the tool set
+ * from the previous layer — it can never ADD tools back.
+ *
+ * Layers are applied sequentially:
+ *   global → tenant → agent → adapter
+ */
+export interface ToolPolicyLayer {
+  /** Human-readable label for debugging (e.g. "tenant.startup") */
+  label: string;
+  /** Allowed tool names or group references. Undefined = no restriction from this layer. */
+  allow?: readonly string[];
+  /** Blocked tool names or group references. Applied after allow. */
+  deny?: readonly string[];
+}
+
+/**
+ * Apply a pipeline of policy layers to a tool name list.
+ * Each layer further restricts — never adds back.
+ *
+ * Usage:
+ * ```ts
+ * const pipeline: ToolPolicyLayer[] = [
+ *   { label: 'global', allow: ['group:fs', 'group:runtime', 'group:agent'] },
+ *   { label: 'tenant.startup', deny: ['exec'] },
+ *   { label: 'agent.reviewer', allow: ['read', 'grep', 'knowledge'] },
+ * ];
+ * const allowed = applyToolPolicyPipeline(allToolNames, pipeline);
+ * const tools = registry.assemble({ allowed });
+ * ```
+ */
+export function applyToolPolicyPipeline(
+  toolNames: string[],
+  layers: readonly ToolPolicyLayer[],
+): string[] {
+  let current = new Set(toolNames);
+
+  for (const layer of layers) {
+    if (layer.allow) {
+      const resolved = new Set(resolveToolNames(layer.allow));
+      current = new Set([...current].filter(t => resolved.has(t)));
+    }
+    if (layer.deny) {
+      const resolved = new Set(resolveToolNames(layer.deny));
+      for (const t of resolved) current.delete(t);
+    }
+  }
+
+  return [...current];
 }
 
 // ─── Toolset Grouping ────────────────────────────────────────────────────

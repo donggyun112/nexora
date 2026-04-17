@@ -18,9 +18,51 @@ import type {
   ToolResult,
   EventTransport,
   AgentRegistry,
+  AgentRuntime,
+  AgentInput,
+  AgentEvent,
   TopicString,
 } from '@nexora/contracts';
 import { textResult, errorResult } from '@nexora/contracts';
+
+// ─── Subagent types (deepagents pattern) ────────────────────────────────
+
+/** Declarative subagent — defined inline or via YAML, built at call time. */
+export interface DeclarativeSubagent {
+  type: 'declarative';
+  name: string;
+  description: string;
+  systemPrompt: string;
+  tools?: string[];
+  model?: string;
+}
+
+/** Pre-compiled subagent — an already-built AgentRuntime instance. */
+export interface CompiledSubagent {
+  type: 'compiled';
+  name: string;
+  description: string;
+  runtime: AgentRuntime;
+}
+
+/** Async/remote subagent — reached via URL, fire-and-forget or poll. */
+export interface AsyncSubagent {
+  type: 'async';
+  name: string;
+  description: string;
+  url: string;
+  headers?: Record<string, string>;
+  /** Timeout for the HTTP call. Default: 120_000. */
+  timeoutMs?: number;
+}
+
+export type Subagent = DeclarativeSubagent | CompiledSubagent | AsyncSubagent;
+
+/**
+ * Factory for building an AgentRuntime from a DeclarativeSubagent spec.
+ * The caller provides this so delegate doesn't depend on core internals.
+ */
+export type SubagentRuntimeFactory = (spec: DeclarativeSubagent) => AgentRuntime | Promise<AgentRuntime>;
 
 export interface DelegateToolOptions {
   transport: EventTransport;
@@ -37,7 +79,38 @@ export interface DelegateToolOptions {
    * Defaults to 0 (first hop).
    */
   currentDepth?: number;
+  /**
+   * Tools blocked for child agents (hermes DELEGATE_BLOCKED_TOOLS pattern).
+   * These tools are stripped from the child's toolset to prevent recursive
+   * delegation, unauthorized user interaction, or shared state corruption.
+   */
+  blockedToolsForChild?: string[];
+  /**
+   * Inline subagents — resolved by name before checking the registry.
+   * Supports declarative (built at call time), compiled (pre-built runtime),
+   * and async (remote URL) subagent types.
+   */
+  subagents?: Subagent[];
+  /**
+   * Factory for building a runtime from a DeclarativeSubagent.
+   * Required if any declarative subagents are registered.
+   */
+  runtimeFactory?: SubagentRuntimeFactory;
+  /**
+   * Progress relay callback — receives every AgentEvent from inline
+   * subagent execution (compiled/declarative). Use to stream child
+   * progress to the parent agent's UI or logging.
+   */
+  onSubagentEvent?: (subagentName: string, event: AgentEvent) => void;
 }
+
+/**
+ * Default tools blocked for delegated child agents.
+ * - delegate: prevent recursive delegation chains
+ * - handraise: children shouldn't interact with humans directly
+ * - skill-manage: children shouldn't create/modify skills
+ */
+const DEFAULT_BLOCKED_TOOLS_FOR_CHILD = ['delegate', 'handraise', 'skill-manage'];
 
 interface DelegateParams {
   capability: string;
@@ -56,7 +129,17 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     maxDepth = DEFAULT_MAX_DEPTH,
     defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
     currentDepth = 0,
+    blockedToolsForChild = DEFAULT_BLOCKED_TOOLS_FOR_CHILD,
+    subagents = [],
+    runtimeFactory,
+    onSubagentEvent,
   } = options;
+
+  // Index inline subagents by name for O(1) lookup
+  const subagentsByName = new Map<string, Subagent>();
+  for (const sa of subagents) {
+    subagentsByName.set(sa.name, sa);
+  }
 
   return {
     name: 'delegate',
@@ -91,8 +174,6 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         return errorResult('input is required');
       }
 
-      // Check depth from envelope metadata (propagated across hops),
-      // NOT from a process-local Map.
       const nextDepth = currentDepth + 1;
       if (nextDepth > maxDepth) {
         return errorResult(
@@ -102,6 +183,14 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         );
       }
 
+      // ── Try inline subagents first ──────────────────────────────────
+      const inlineSa = subagentsByName.get(params.capability);
+      if (inlineSa) {
+        ctx.logger.info('delegate.inline', { type: inlineSa.type, name: inlineSa.name });
+        return executeSubagent(inlineSa, params, ctx, runtimeFactory, onSubagentEvent);
+      }
+
+      // ── Fall back to registry-based transport delegation ────────────
       const candidates = await registry.findByCapability(params.capability);
       if (candidates.length === 0) {
         return errorResult(`No agent declares capability "${params.capability}"`);
@@ -130,10 +219,6 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       });
 
       try {
-        // Propagate depth + caller identity via RequestOptions (not payload
-        // wrapping). RequestOptions has delegationDepth + callerAgent fields.
-        // These flow into the MessageEnvelope metadata which bootstrap reads
-        // and enforces.
         const reply = await transport.request(
           targetTopic as TopicString,
           params.input,
@@ -142,6 +227,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
             tenantId: ctx.tenantId,
             delegationDepth: nextDepth,
             callerAgent: callerAgentName,
+            blockedTools: blockedToolsForChild,
           },
         );
 
@@ -162,4 +248,63 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       }
     },
   };
+}
+
+// ─── Subagent execution ─────────────────────────────────────────────────
+
+async function executeSubagent(
+  sa: Subagent,
+  params: DelegateParams,
+  ctx: import('@nexora/contracts').ToolContext,
+  runtimeFactory?: SubagentRuntimeFactory,
+  onEvent?: (name: string, event: AgentEvent) => void,
+): Promise<ToolResult> {
+  const relay = onEvent ? (e: AgentEvent) => onEvent(sa.name, e) : undefined;
+
+  switch (sa.type) {
+    case 'compiled':
+      return runRuntime(sa.name, sa.runtime, params, relay);
+
+    case 'declarative': {
+      if (!runtimeFactory) {
+        return errorResult(`Cannot run declarative subagent "${sa.name}": no runtimeFactory provided`);
+      }
+      return runRuntime(sa.name, await runtimeFactory(sa), params, relay);
+    }
+
+    case 'async': {
+      try {
+        const res = await fetch(sa.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...sa.headers },
+          body: JSON.stringify({ input: params.input }),
+          signal: AbortSignal.timeout(sa.timeoutMs ?? 120_000),
+        });
+        if (!res.ok) return errorResult(`async subagent "${sa.name}" returned ${res.status}`);
+        const body = await res.text();
+        return textResult(body);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return errorResult(`async subagent "${sa.name}" failed: ${msg}`);
+      }
+    }
+  }
+}
+
+async function runRuntime(
+  name: string,
+  runtime: AgentRuntime,
+  params: DelegateParams,
+  onEvent?: (event: AgentEvent) => void,
+): Promise<ToolResult> {
+  const input: AgentInput = {
+    prompt: typeof params.input === 'string' ? params.input : JSON.stringify(params.input),
+  };
+  let content = '';
+  for await (const event of runtime.execute(input)) {
+    onEvent?.(event);
+    if (event.type === 'done') content = event.content;
+    else if (event.type === 'error') return errorResult(`subagent "${name}": ${event.message}`);
+  }
+  return textResult(content || '(no response)');
 }

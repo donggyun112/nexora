@@ -22,6 +22,8 @@ export interface CostEvent {
   inputTokens: number;
   /** Output tokens consumed */
   outputTokens: number;
+  /** Tokens served from prompt cache. 0 if not applicable. */
+  cachedTokens?: number;
   /** Estimated USD cost (provider-specific calculation) */
   costUsd: number;
   /** When the call happened */
@@ -90,4 +92,17 @@ export interface BudgetTracker {
 
   /** Get total spend for a scope in the current window. */
   getSpend(scope: BudgetScope, window: BudgetWindow): Promise<number>;
+
+  /** Get per-model usage breakdown for a scope (claude-code pattern). */
+  getModelBreakdown(scope: BudgetScope, window: BudgetWindow): Promise<ModelUsage[]>;
+}
+
+/** Per-model usage breakdown (claude-code addToTotalModelUsage pattern). */
+export interface ModelUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  costUsd: number;
+  callCount: number;
 }

@@ -8,6 +8,7 @@ export * from './llm/index.js';
 export {
   CoreToolExecutor,
   formatToolResult,
+  coerceToolArgs,
 } from './tool-executor.js';
 export type {
   ToolExecutorOptions,
@@ -25,6 +26,7 @@ export {
   shouldCompact,
   truncateLargeContent,
   compressToolOutputs,
+  pruneOldToolOutputs,
   sanitizeToolPairs,
   sanitizeLLMToolPairs,
   findCutPoint,
@@ -48,6 +50,10 @@ export type {
   AfterToolCallContext,
   BeforeLLMCallContext,
   AfterLLMCallContext,
+  SessionEventContext,
+  PromptBuildContext,
+  CompactEventContext,
+  BudgetExceededContext,
 } from './middleware.js';
 
 export { createIdleTimeout, IdleTimeoutError } from './idle-timeout.js';
@@ -70,7 +76,7 @@ export { createBudgetMiddleware, BudgetExceededError } from './budget-middleware
 export type { BudgetMiddlewareOptions } from './budget-middleware.js';
 
 export { InMemoryExtensionRegistry, loadExtensions, unloadExtensions } from './extension-loader.js';
-export type { ExtensionLoaderOptions } from './extension-loader.js';
+export type { ExtensionLoaderOptions, ExtensionManifest } from './extension-loader.js';
 
 export { createAgentTeam } from './team.js';
 export type { AgentTeamOptions, AgentTeam } from './team.js';

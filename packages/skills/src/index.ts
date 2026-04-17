@@ -17,7 +17,9 @@ export {
   loadSkills,
   defaultSkillSources,
   CachedSkillLoader,
+  filterEligibleSkills,
 } from './skill-loader.js';
+export type { SkillEligibilityContext } from './skill-loader.js';
 
 export { SkillRegistry } from './skill-registry.js';
 

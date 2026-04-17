@@ -75,6 +75,8 @@ export type {
 
 export type {
   ConversationStore,
+  ConversationSearchOptions,
+  ConversationSearchResult,
   KnowledgeStore,
   KnowledgeTopic,
   ScheduleStore,
@@ -131,6 +133,7 @@ export type {
   BudgetWindow,
   BudgetStatus,
   BudgetTracker,
+  ModelUsage,
 } from './budget.js';
 
 export type {

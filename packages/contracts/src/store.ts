@@ -24,6 +24,30 @@ export interface ConversationStore {
 
   /** 대화 삭제 */
   deleteConversation(conversationId: string): Promise<void>;
+
+  /**
+   * Full-text search across conversation messages (hermes FTS5 pattern).
+   * Returns matching messages with their conversation IDs.
+   * Implementations may use FTS5 (SQLite), tsvector (PostgreSQL),
+   * or simple substring matching (in-memory).
+   */
+  search?(query: string, options?: ConversationSearchOptions): Promise<ConversationSearchResult[]>;
+}
+
+export interface ConversationSearchOptions {
+  /** Limit results. Default: 20. */
+  limit?: number;
+  /** Only search within this conversation. */
+  conversationId?: string;
+  /** Only search messages with this role. */
+  role?: 'user' | 'assistant';
+}
+
+export interface ConversationSearchResult {
+  conversationId: string;
+  message: ChatMessage;
+  /** Relevance score (0–1). Implementation-dependent. */
+  score?: number;
 }
 
 // ─���─ Knowledge Store ──────────────────────────────────────────────────────

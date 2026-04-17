@@ -219,6 +219,12 @@ export interface RequestOptions {
    */
   delegationDepth?: number;
   callerAgent?: string;
+
+  /**
+   * Tools the child agent must NOT use. Set by the delegate tool;
+   * read by bootstrap to filter the child's toolset.
+   */
+  blockedTools?: string[];
 }
 
 /**

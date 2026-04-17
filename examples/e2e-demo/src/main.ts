@@ -24,6 +24,7 @@ import { defineAgent, topic } from '@nexora/contracts';
 import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@nexora/core';
 import { createReactArchitecture } from '@nexora/architectures';
 import { createReadTool, createGrepTool, createDelegateTool } from '@nexora/tools';
+import type { CompiledSubagent, Subagent } from '@nexora/tools';
 import { LocalTransport } from '@nexora/transport';
 import { HttpAdapter } from '@nexora/adapters';
 import { GatewayRouter, LocalRuntimeRouter } from '@nexora/gateway';
@@ -178,26 +179,48 @@ for (const card of [coder, researcher, assistant]) {
 
 // ─── 4. Gateway — LocalRuntimeRouter for real streaming ──────────────────
 
+function buildRuntime(name: string, extraTools: import('@nexora/contracts').ToolDefinition[] = []) {
+  return new AgentRunner({
+    architecture: createReactArchitecture({ systemPrompt: agentPrompts[name] }),
+    llm,
+    tools: new CoreToolExecutor({
+      tools: [...baseTools, ...extraTools],
+      context: { tenantId: 'default', workdir, secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+    }),
+  });
+}
+
+// Compiled subagents — their events are relayed to the parent stream
+const coderSubagent: CompiledSubagent = {
+  type: 'compiled', name: 'coder',
+  description: 'Code reading and file analysis specialist',
+  runtime: buildRuntime('coder'),
+};
+const researcherSubagent: CompiledSubagent = {
+  type: 'compiled', name: 'researcher',
+  description: 'Search and research specialist',
+  runtime: buildRuntime('researcher'),
+};
+
 const router = new LocalRuntimeRouter({
   createRuntime: (message) => {
     const tenantId = message.tenantId ?? 'default';
-    const tools = [
-      ...baseTools,
-      createDelegateTool({ transport, registry, callerAgentName: 'assistant' }),
-    ];
+    // Collect subagent events into a log that gets appended to delegate result
+    const subagentLog: string[] = [];
+    const delegateTool = createDelegateTool({
+      transport, registry, callerAgentName: 'assistant',
+      subagents: [coderSubagent, researcherSubagent],
+      onSubagentEvent: (name, event) => {
+        if (event.type === 'tool_call') subagentLog.push(`[${name}] 🔧 ${event.name}`);
+        else if (event.type === 'text') subagentLog.push(`[${name}] ${event.text.slice(0, 80)}`);
+      },
+    });
     return new AgentRunner({
-      architecture: createReactArchitecture({
-        systemPrompt: agentPrompts['assistant'],
-      }),
+      architecture: createReactArchitecture({ systemPrompt: agentPrompts['assistant'] }),
       llm,
       tools: new CoreToolExecutor({
-        tools,
-        context: {
-          tenantId,
-          workdir,
-          secrets: { get: async () => undefined },
-          logger: { info: () => {}, warn: () => {}, error: () => {} },
-        },
+        tools: [...baseTools, delegateTool],
+        context: { tenantId, workdir, secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
       }),
     });
   },

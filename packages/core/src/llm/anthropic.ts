@@ -17,6 +17,8 @@ import type {
 export interface AnthropicProviderOptions {
   /** API key (없으면 ANTHROPIC_API_KEY env 사용) */
   apiKey?: string;
+  /** OAuth access token (없으면 ANTHROPIC_AUTH_TOKEN env 사용). apiKey보다 우선. */
+  authToken?: string;
   /** 기본 모델 */
   defaultModel?: string;
   /** 도구 정의 (tool calling 활성화) */
@@ -26,13 +28,26 @@ export interface AnthropicProviderOptions {
 const DEFAULT_MODEL: string = 'claude-sonnet-4-5';
 const DEFAULT_MAX_TOKENS = 8192;
 
+function readEnvKey(key: string): string | undefined {
+  return typeof process !== 'undefined' ? process.env[key] : undefined;
+}
+
 export class AnthropicProvider implements LLMProvider {
   private readonly client: Anthropic;
   private readonly defaultModel: string;
   private readonly tools?: AnthropicProviderOptions['tools'];
 
   constructor(options: AnthropicProviderOptions = {}) {
-    this.client = new Anthropic({ apiKey: options.apiKey });
+    const isOAuth = !!options.authToken || !!readEnvKey('ANTHROPIC_AUTH_TOKEN');
+    this.client = new Anthropic({
+      apiKey: isOAuth ? null : options.apiKey,
+      authToken: options.authToken,
+      ...(isOAuth ? {
+        defaultHeaders: {
+          'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+        },
+      } : {}),
+    });
     this.defaultModel = options.defaultModel ?? DEFAULT_MODEL;
     this.tools = options.tools;
   }

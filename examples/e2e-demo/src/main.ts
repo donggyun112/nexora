@@ -75,18 +75,19 @@ import type { LLMProvider } from '@nexora/contracts';
 
 function createLLM(): LLMProvider {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const anthropicAuth = process.env.ANTHROPIC_AUTH_TOKEN;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
 
   const toolDefs = [...baseTools, createDelegateTool({ transport, registry, callerAgentName: 'assistant' })];
   const tools = toolDefs.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
   // Priority: Anthropic direct → OpenRouter → Mock
-  if (anthropicKey) {
+  if (anthropicKey || anthropicAuth) {
     const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters }));
-    console.log('[LLM] Using Anthropic (claude-haiku-4-5)');
+    console.log('[LLM] Using Anthropic (claude-haiku-4-5)', anthropicAuth ? '(OAuth)' : '(API key)');
     return new FallbackLLMProvider({
       providers: [
-        { name: 'anthropic', provider: new AnthropicProvider({ apiKey: anthropicKey, defaultModel: 'claude-haiku-4-5-20251001', tools: anthropicTools }) },
+        { name: 'anthropic', provider: new AnthropicProvider({ apiKey: anthropicKey, authToken: anthropicAuth, defaultModel: 'claude-haiku-4-5-20251001', tools: anthropicTools }) },
         { name: 'mock', provider: new SmartMockLLM() },
       ],
       onFallback: (from, to, reason) => console.log(`[LLM] ${from} → ${to}: ${reason}`),

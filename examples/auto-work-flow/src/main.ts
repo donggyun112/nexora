@@ -1,13 +1,34 @@
 /**
- * auto-work-flow — Discord 멀티 에이전트 팀.
+ * auto-work-flow — Multi-agent team: PM → Coder → Reviewer.
  *
- * Nexora 프레임워크 레벨 API로 구현.
- * 100줄 와이어링이 아니라 10줄.
+ * Runnable without API keys (uses SmartMockLLM).
+ *
+ * Run:
+ *   pnpm build && node dist/main.js
+ *
+ * Test:
+ *   curl localhost:3000/messages -d '{"content": "hello"}'
  */
 
 import { defineAgent, topic } from '@nexora/contracts';
+import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@nexora/core';
+import { createReactArchitecture } from '@nexora/architectures';
+import {
+  createReadTool, createGrepTool, createExecTool,
+  createEditTool, createWriteTool, createDelegateTool,
+  createKnowledgeTool, createHandraiseTool,
+} from '@nexora/tools';
+import { LocalTransport } from '@nexora/transport';
+import { InMemoryAgentRegistry } from '@nexora/registry';
+import { HttpAdapter } from '@nexora/adapters';
+import { GatewayRouter } from '@nexora/gateway';
 
-// ─── 1. 에이전트 정의 ──────────────────────────────────────────────────
+import type {
+  LLMProvider, LLMMessage, LLMOptions, LLMChunk, LLMResponse,
+  ContextLoader, AgentContext, ToolDefinition,
+} from '@nexora/contracts';
+
+// ─── 1. Agent definitions ───────────────────────────────────────────────
 
 const coder = defineAgent({
   name: 'coder',
@@ -42,52 +63,126 @@ const pm = defineAgent({
   publishes: [topic('pm.completed')],
 });
 
-// ─── 2. 프레임워크가 전부 해줌 ──────────────────────────────────────────
+// ─── 2. Mock LLM (no API key needed) ───────────────────────────────────
 
-/**
- * 실제 실행 코드 (discord.js + API 키 필요):
- *
- * ```typescript
- * import { createAgentTeam, AnthropicProvider } from '@nexora/core';
- * import { startDiscordBot } from '@nexora/adapters';
- * import { Client, GatewayIntentBits } from 'discord.js';
- *
- * // 1. 팀 생성 — transport, registry, context, runtime 전부 자동
- * const team = await createAgentTeam({
- *   agents: [coder, reviewer, pm],
- *   llm: new AnthropicProvider({ apiKey: process.env.ANTHROPIC_API_KEY }),
- *   contextDir: './context',
- * });
- *
- * // 2. Discord 봇 시작 — 라우팅, 디스커버리, 멘션 전부 자동
- * const client = new Client({
- *   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
- *             GatewayIntentBits.MessageContent],
- * });
- * await client.login(process.env.DISCORD_TOKEN);
- *
- * await startDiscordBot({ team, client });
- *
- * // 끝. 이제:
- * // - @coder "이 함수 고쳐줘" → coder 에이전트가 응답
- * // - @reviewer "이 PR 봐줘" → reviewer 에이전트가 응답
- * // - "이거 어떻게 해?" → TurnManager가 가장 적합한 에이전트 선택
- * // - !agents → 사용 가능한 에이전트 목록 표시
- * // - coder가 모르면 → reviewer에게 delegate
- * // - pm이 확인 필요하면 → handraise로 사람에게 질문
- * ```
- *
- * 프레임워크가 자동으로 처리하는 것:
- * - LocalTransport 생성 + 에이전트 구독
- * - InMemoryAgentRegistry 등록
- * - CoreContextLoader (./context 디렉토리)
- * - ReAct 아키텍처 + 도구 셋업
- * - @mention → 에이전트 topic 라우팅
- * - !agents → 에이전트 목록 + 설명
- * - 멘션 없는 메시지 → group.requested (그룹 대화)
- * - 2000자 메시지 분할
- * - 타이핑 인디케이터
- * - guildId → tenantId 매핑
- */
+class SmartMockLLM implements LLMProvider {
+  async *stream(messages: LLMMessage[], options?: LLMOptions): AsyncGenerator<LLMChunk> {
+    const r = await this.complete(messages, options);
+    yield { type: 'text_delta', delta: r.content };
+    yield { type: 'done', content: r.content, stopReason: 'end_turn' };
+  }
+  async complete(messages: LLMMessage[], _options?: LLMOptions): Promise<LLMResponse> {
+    const last = messages[messages.length - 1];
+    const input = typeof last.content === 'string' ? last.content : JSON.stringify(last.content);
+    const lower = input.toLowerCase();
+    if (lower.includes('hello') || lower.includes('안녕'))
+      return reply('Hello! I\'m part of the auto-work-flow team. How can I help?');
+    if (lower.includes('help') || lower.includes('도움'))
+      return reply('I can plan work (PM), write code (Coder), and review it (Reviewer).');
+    if (lower.includes('who are you'))
+      return reply('I\'m an AI agent in a PM → Coder → Reviewer pipeline, powered by Nexora.');
+    return reply(`Received: "${input.slice(0, 100)}". (Mock LLM — replace with a real provider for production.)`);
+  }
+}
+function reply(content: string): LLMResponse {
+  return { content, model: 'smart-mock', stopReason: 'end_turn' };
+}
 
-export { coder, reviewer, pm };
+// ─── 3. Infrastructure ──────────────────────────────────────────────────
+
+const llm = new SmartMockLLM();
+const transport = new LocalTransport();
+const registry = new InMemoryAgentRegistry();
+const workdir = process.cwd();
+
+const contextLoader: ContextLoader = {
+  async load(_tenantId: string, _agentName: string): Promise<AgentContext> {
+    return {
+      tenantId: _tenantId ?? 'default',
+      systemPrompt: 'You are a helpful AI agent.',
+      tools: [],
+      limits: {},
+      runtime: { workdir },
+    } as unknown as AgentContext;
+  },
+};
+
+// ─── 4. Bootstrap agents ────────────────────────────────────────────────
+
+const baseTools = [createReadTool(), createGrepTool()];
+
+const toolsFor: Record<string, ToolDefinition[]> = {
+  coder: [
+    ...baseTools, createEditTool(), createExecTool(), createWriteTool(),
+    createDelegateTool({ transport, registry, callerAgentName: 'coder' }),
+  ],
+  reviewer: [...baseTools, createKnowledgeTool({ get: async () => null, set: async () => {}, list: async () => [], delete: async () => {} } as any)],
+  pm: [...baseTools, createKnowledgeTool({ get: async () => null, set: async () => {}, list: async () => [], delete: async () => {} } as any), createHandraiseTool({ transport, registry })],
+};
+
+for (const card of [coder, reviewer, pm]) {
+  await registry.register(card);
+  await bootstrapAgent({
+    card,
+    contextLoader,
+    transport,
+    createRuntime: () =>
+      new AgentRunner({
+        architecture: createReactArchitecture({
+          systemPrompt: `You are ${card.name}. ${card.description}`,
+        }),
+        llm,
+        tools: new CoreToolExecutor({
+          tools: toolsFor[card.name],
+          context: {
+            tenantId: 'default',
+            workdir,
+            secrets: { get: async () => undefined },
+            logger: { info: () => {}, warn: () => {}, error: () => {} },
+          },
+        }),
+      }),
+    toAgentInput: (env) => ({
+      prompt: typeof env.payload === 'object' && env.payload !== null
+        ? (env.payload as any).prompt ?? (env.payload as any).content ?? JSON.stringify(env.payload)
+        : String(env.payload),
+    }),
+  });
+}
+
+// ─── 5. Gateway (PM is the entry point) ─────────────────────────────────
+
+const router = new GatewayRouter({
+  transport,
+  defaultTopic: topic('pm.requested'),
+  timeoutMs: 10_000,
+});
+
+const http = new HttpAdapter({
+  port: Number(process.env.PORT ?? 3000),
+  host: '0.0.0.0',
+  resolveTenant: () => 'default',
+});
+
+await http.start(router);
+
+console.log(`
+╔════════════════════════════════════════════════════════╗
+║  auto-work-flow — PM / Coder / Reviewer team           ║
+║                                                        ║
+║  HTTP: http://localhost:${http.port()}                          ║
+║  Entry: PM agent (pm.requested)                        ║
+║                                                        ║
+║  curl localhost:${http.port()}/messages -d '{"content":"hello"}'  ║
+║                                                        ║
+║  Press Ctrl+C to stop.                                 ║
+╚════════════════════════════════════════════════════════╝
+`);
+
+process.on('SIGINT', async () => {
+  await http.stop();
+  await transport.close();
+  process.exit(0);
+});
+
+export { coder, reviewer, pm, http, transport };

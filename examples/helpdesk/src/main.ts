@@ -73,14 +73,23 @@ const llm = new AnthropicProvider({
 
 // ── 3. Bootstrap the agent ─────────────────────────────────────────────────
 
+// Create tools once — reused across all requests (stateless, read-only)
+const readTool = createReadTool();
+readTool.isConcurrencySafe = true;
+readTool.maxResultSizeChars = 50_000;
+
+const grepTool = createGrepTool();
+grepTool.isConcurrencySafe = true;
+
+const tools = [readTool, grepTool];
+
 const running = await bootstrapAgent({
   card: helpdeskCard,
   contextLoader,
   transport,
   createRuntime: ({ context }) => {
     const allowed = context.tools.length > 0 ? new Set(context.tools) : null;
-    const allTools = [createReadTool(), createGrepTool()];
-    const tools = allowed ? allTools.filter(t => allowed.has(t.name)) : allTools;
+    const filtered = allowed ? tools.filter(t => allowed.has(t.name)) : tools;
 
     return new AgentRunner({
       architecture: createReactArchitecture({
@@ -90,10 +99,11 @@ const running = await bootstrapAgent({
       }),
       llm,
       tools: new CoreToolExecutor({
-        tools,
+        tools: filtered,
         context: {
           tenantId: context.tenantId,
           workdir: context.runtime.workdir,
+          // TODO: wire real secrets provider (e.g. AWS SSM, Vault) for production
           secrets: { get: async () => undefined },
           logger: console,
         },

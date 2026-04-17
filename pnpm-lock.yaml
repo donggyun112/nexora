@@ -20,9 +20,30 @@ importers:
 
   examples/auto-work-flow:
     dependencies:
+      '@nexora/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@nexora/architectures':
+        specifier: workspace:*
+        version: link:../../packages/architectures
       '@nexora/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@nexora/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@nexora/gateway':
+        specifier: workspace:*
+        version: link:../../platform/gateway
+      '@nexora/registry':
+        specifier: workspace:*
+        version: link:../../platform/registry
+      '@nexora/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      '@nexora/transport':
+        specifier: workspace:*
+        version: link:../../packages/transport
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -51,6 +72,9 @@ importers:
       '@nexora/gateway':
         specifier: workspace:*
         version: link:../../platform/gateway
+      '@nexora/registry':
+        specifier: workspace:*
+        version: link:../../platform/registry
       '@nexora/skills':
         specifier: workspace:*
         version: link:../../packages/skills

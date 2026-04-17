@@ -17,6 +17,7 @@
     "@nexora/contracts": "workspace:*",
     "@nexora/core": "workspace:*",
     "@nexora/gateway": "workspace:*",
+    "@nexora/registry": "workspace:*",
     "@nexora/skills": "workspace:*",
     "@nexora/store-json": "workspace:*",
     "@nexora/tools": "workspace:*",

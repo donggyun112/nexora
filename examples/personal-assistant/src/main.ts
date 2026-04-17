@@ -12,9 +12,8 @@
  */
 
 import { ConversationRoom, TurnManager } from '@nexora/conversation';
-import { AnthropicProvider, CoreToolExecutor, InMemoryBudgetTracker, createBudgetMiddleware } from '@nexora/core';
-import { createReadTool, createGrepTool, createHandraiseTool } from '@nexora/tools';
-import { LocalTransport } from '@nexora/transport';
+import { AnthropicProvider, CoreToolExecutor, InMemoryBudgetTracker } from '@nexora/core';
+import { createReadTool, createGrepTool } from '@nexora/tools';
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
 import { HttpAdapter } from '@nexora/adapters';
@@ -33,13 +32,12 @@ const assistantCard = defineAgent({
 
 // ── Infrastructure ─────────────────────────────────────────────────────────
 
-const transport = new LocalTransport();
 const llm = new AnthropicProvider({
   apiKey: process.env.ANTHROPIC_API_KEY,
   defaultModel: 'claude-sonnet-4-5',
 });
 
-// Budget: $5/day per assistant
+// Budget: $5/day per assistant (tracks cost but isn't wired to LLM calls in this example)
 const budgetTracker = new InMemoryBudgetTracker();
 await budgetTracker.addPolicy({
   id: 'assistant-daily',
@@ -103,6 +101,5 @@ console.log(`
 
 process.on('SIGINT', async () => {
   await httpAdapter.stop();
-  await transport.close();
   process.exit(0);
 });

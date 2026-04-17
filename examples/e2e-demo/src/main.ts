@@ -23,10 +23,11 @@
 import { defineAgent, topic } from '@nexora/contracts';
 import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@nexora/core';
 import { createReactArchitecture } from '@nexora/architectures';
-import { createReadTool, createGrepTool } from '@nexora/tools';
+import { createReadTool, createGrepTool, createDelegateTool } from '@nexora/tools';
 import { LocalTransport } from '@nexora/transport';
 import { HttpAdapter } from '@nexora/adapters';
 import { GatewayRouter } from '@nexora/gateway';
+import { InMemoryAgentRegistry } from '@nexora/registry';
 import { SmartMockLLM } from './mock-llm.js';
 
 import type { ContextLoader, AgentContext } from '@nexora/contracts';
@@ -70,12 +71,24 @@ const assistant = defineAgent({
 
 const llm = new SmartMockLLM();
 const transport = new LocalTransport();
+const registry = new InMemoryAgentRegistry();
+
+// Register all agent cards so delegate can discover by capability
+for (const card of [coder, researcher, assistant]) {
+  await registry.register(card);
+}
+
+const agentPrompts: Record<string, string> = {
+  coder: 'You are coder, a code-reading specialist. You analyze source files and explain code.',
+  researcher: 'You are researcher, an information specialist. You search and synthesize findings.',
+  assistant: 'You are assistant, a general-purpose agent. Delegate to coder or researcher when their expertise is needed.',
+};
 
 const simpleContextLoader: ContextLoader = {
   async load(_tenantId: string, _agentName: string): Promise<AgentContext> {
     return {
       tenantId: _tenantId ?? 'default',
-      systemPrompt: 'You are a helpful AI agent.',
+      systemPrompt: agentPrompts[_agentName] ?? 'You are a helpful AI agent.',
       tools: [],
       limits: {},
       runtime: { workdir: process.cwd() },
@@ -85,8 +98,23 @@ const simpleContextLoader: ContextLoader = {
 
 // ─── 3. Bootstrap Agents ─────────────────────────────────────────────────
 
-const tools = [createReadTool(), createGrepTool()];
+const readTool = createReadTool();
+readTool.isConcurrencySafe = true;
+readTool.maxResultSizeChars = 50_000;
+
+const grepTool = createGrepTool();
+grepTool.isConcurrencySafe = true;
+
+const baseTools = [readTool, grepTool];
 const workdir = process.cwd();
+
+const toAgentInput = (env: { payload: unknown }) => ({
+  prompt: typeof env.payload === 'object' && env.payload !== null
+    ? (env.payload as { prompt?: string; content?: string }).prompt
+      ?? (env.payload as { content?: string }).content
+      ?? JSON.stringify(env.payload)
+    : String(env.payload),
+});
 
 for (const card of [coder, researcher, assistant]) {
   await bootstrapAgent({
@@ -94,9 +122,13 @@ for (const card of [coder, researcher, assistant]) {
     contextLoader: simpleContextLoader,
     transport,
     createRuntime: () => {
+      const tools = card.name === 'assistant'
+        ? [...baseTools, createDelegateTool({ transport, registry, callerAgentName: card.name })]
+        : baseTools;
+
       return new AgentRunner({
         architecture: createReactArchitecture({
-          systemPrompt: `You are ${card.name}, a specialized AI agent. ${card.description}.`,
+          systemPrompt: agentPrompts[card.name],
         }),
         llm,
         tools: new CoreToolExecutor({
@@ -110,13 +142,7 @@ for (const card of [coder, researcher, assistant]) {
         }),
       });
     },
-    toAgentInput: (env) => ({
-      prompt: typeof env.payload === 'object' && env.payload !== null
-        ? (env.payload as { prompt?: string; content?: string }).prompt
-          ?? (env.payload as { content?: string }).content
-          ?? JSON.stringify(env.payload)
-        : String(env.payload),
-    }),
+    toAgentInput,
   });
 }
 

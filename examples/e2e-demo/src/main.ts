@@ -205,27 +205,18 @@ function buildRuntime(name: string, extraTools: import('@nexora/contracts').Tool
   });
 }
 
-// Compiled subagents — can delegate to each other
-const coderDelegate = createDelegateTool({
-  transport, registry, callerAgentName: 'coder',
-  subagents: [], // will be patched below
-  blockedToolsForChild: [], // allow inter-agent communication
-});
-const researcherDelegate = createDelegateTool({
-  transport, registry, callerAgentName: 'researcher',
-  subagents: [],
-  blockedToolsForChild: [],
-});
-
+// Compiled subagents — can delegate to each other via registry (transport-based)
+// Note: inter-agent delegation goes through bootstrapped agents on transport,
+// not compiled subagents (to avoid circular references).
 const coderSubagent: CompiledSubagent = {
   type: 'compiled', name: 'coder',
   description: 'Code reading and file analysis specialist',
-  runtime: buildRuntime('coder', [coderDelegate]),
+  runtime: buildRuntime('coder'),
 };
 const researcherSubagent: CompiledSubagent = {
   type: 'compiled', name: 'researcher',
   description: 'Search and research specialist',
-  runtime: buildRuntime('researcher', [researcherDelegate]),
+  runtime: buildRuntime('researcher'),
 };
 
 // Custom router: streams parent + child agent events to SSE with agent identity
@@ -233,6 +224,7 @@ function createAssistantRuntime(onChunk?: (c: OutboundChunk) => void) {
   const delegateTool = createDelegateTool({
     transport, registry, callerAgentName: 'assistant',
     subagents: [coderSubagent, researcherSubagent],
+    blockedToolsForChild: [],
     onSubagentEvent: onChunk ? (name, event) => {
       if (event.type === 'text') onChunk({ type: 'text', text: event.text, agent: name });
       else if (event.type === 'tool_call') onChunk({ type: 'tool_call', name: event.name, input: event.input as Record<string,unknown>, agent: name });

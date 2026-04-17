@@ -158,39 +158,46 @@ const router: MessageRouter = {
       room.addAgentMessage(m.master, topicPrompt);
       onChunk({ type: 'text', text: topicPrompt, agent: m.master });
 
-      // Discussion rounds — LLM only (no tools inside meetings to prevent open_meeting loops)
+      // Discussion rounds
       const agents = m.participants;
-      let silentRounds = 0;
-      for (let round = 0; round < 10; round++) {
-        let anySpoke = false;
-        const mHistory = meetingMgr.formatHistory(m.id);
-        const responses = await Promise.all(agents.map(async (agentName: string) => {
-          const participant = room.getParticipant(agentName);
-          if (!participant) return null;
-          const resp = await participant.llm.complete(
-            [{ role: 'user', content: mHistory + '\n\n위 회의 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요.' }] as LLMMessage[],
-            { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 500 },
-          );
-          const text = resp.content?.trim()
-            .replace(/^\[?(coder|researcher|assistant)\]?:?\s*/i, '')
-            .replace(/^(speak|join_meeting|pass_turn):?\s*/i, '')
-            .replace(/^---\s*/g, '')
-            .trim();
-          if (!text || text === 'PASS' || text.includes('mock agent')) return null;
-          return { agentName, text };
-        }));
-        for (const r of responses) {
-          if (!r) continue;
-          room.addAgentMessage(r.agentName, r.text);
-          meetingMgr.speak(m.id, r.agentName, r.text);
-          onChunk({ type: 'text', text: r.text, agent: r.agentName });
-          anySpoke = true;
-        }
-        if (!anySpoke) { silentRounds++; if (silentRounds >= 2) break; }
-        else silentRounds = 0;
 
-        // Master checks: conclude?
-        if (round > 0 && round % 2 === 0) {
+      // Round 1: all agents give initial opinions in parallel
+      const mHistory = meetingMgr.formatHistory(m.id);
+      const initialResponses = await Promise.all(m.participants.map(async (agentName: string) => {
+        const participant = room.getParticipant(agentName);
+        if (!participant) return null;
+        const resp = await participant.llm.complete(
+          [{ role: 'user', content: mHistory + '\n\n위 회의 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요.' }] as LLMMessage[],
+          { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 500 },
+        );
+        const text = resp.content?.trim()
+          .replace(/^\[?(coder|researcher|assistant)\]?:?\s*/i, '')
+          .replace(/^(speak|join_meeting|pass_turn):?\s*/i, '')
+          .replace(/^---\s*/g, '').trim();
+        if (!text || text === 'PASS' || text.includes('mock agent')) return null;
+        return { agentName, text };
+      }));
+      for (const r of initialResponses) {
+        if (!r) continue;
+        room.addAgentMessage(r.agentName, r.text);
+        meetingMgr.speak(m.id, r.agentName, r.text);
+        onChunk({ type: 'text', text: r.text, agent: r.agentName });
+      }
+
+      // Round 2+: TurnManager handles who speaks next
+      let silentRounds = 0;
+      for (let round = 1; round < 10; round++) {
+        const lastMsg = room.history()[room.history().length - 1];
+        if (!lastMsg) break;
+        const mResult = await tm.handleMessage(room, lastMsg);
+        if (mResult.responses.length === 0) { silentRounds++; if (silentRounds >= 2) break; continue; }
+        silentRounds = 0;
+        for (const mr of mResult.responses) {
+          meetingMgr.speak(m.id, mr.agentName, mr.content);
+          onChunk({ type: 'text', text: mr.content, agent: mr.agentName });
+        }
+        // Every 3 rounds, master checks conclude
+        if (round % 3 === 0) {
           const masterP = room.getParticipant(m.master);
           if (masterP) {
             const check = await masterP.llm.complete(
@@ -209,7 +216,7 @@ const router: MessageRouter = {
           }
         }
       }
-      // Force conclude if loop ended
+      // Force conclude if loop ended without CONCLUDE
       if (meetingMgr.get(m.id)?.status === 'active') {
         meetingMgr.conclude(m.id, m.master, '회의 종료');
         onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: m.id }, agent: m.master });
@@ -241,4 +248,4 @@ console.log(`
 `);
 
 process.on('SIGINT', async () => { await http.stop(); process.exit(0); });
-export { llm, room, tm, http };
+export { llm, room, tm, orchestrator, http };

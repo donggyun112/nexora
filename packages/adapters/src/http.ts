@@ -324,15 +324,12 @@ function addUser(text){
 }
 
 const agentEls=new Map();
-function getAgent(name){
-  if(agentEls.has(name))return agentEls.get(name);
+function newBubble(name){
   const a=A[name]||A.system;
   const r=document.createElement('div');r.className='mrow';
   r.innerHTML='<div class="av" style="background:'+a.c+'">'+a.av+'</div><div class="mc"><div class="an" style="color:'+a.c+'">'+h(name)+'</div><div class="tc"></div><div class="abbl"></div></div>';
   msgs.appendChild(r);scroll();
-  const o={el:r,tc:r.querySelector('.tc'),bbl:r.querySelector('.abbl')};
-  agentEls.set(name,o);
-  return o;
+  return {el:r,tc:r.querySelector('.tc'),bbl:r.querySelector('.abbl')};
 }
 
 async function send(){
@@ -358,9 +355,9 @@ async function send(){
         try{
           const c=JSON.parse(line.slice(6));
           const ag=c.agent||'assistant';
-          if(c.type==='text'){const o=getAgent(ag);o.bbl.textContent+=c.text||''}
+          if(c.type==='text'){const o=newBubble(ag);o.bbl.textContent=c.text||''}
           else if(c.type==='tool_call'){
-            const o=getAgent(ag);
+            const o=agentEls.get(ag)||newBubble(ag);
             const icon=TI[c.name]||'🔧';
             let det='';
             if(c.input){
@@ -370,9 +367,8 @@ async function send(){
             }
             o.tc.insertAdjacentHTML('beforeend','<span class="tch c">'+icon+' '+h(c.name)+h(det)+'</span>');
           }
-          else if(c.type==='tool_result'){const o=getAgent(ag);o.tc.insertAdjacentHTML('beforeend','<span class="tch '+(c.isError?'e':'r')+'">✓ '+h(c.name)+'</span>')}
-          else if(c.type==='delegate_start'&&c.to){getAgent(c.to)}
-          else if(c.type==='error'){const o=getAgent(ag);o.bbl.textContent+='[Error] '+(c.message||'')}
+          else if(c.type==='tool_result'){const o=agentEls.get(ag)||newBubble(ag);o.tc.insertAdjacentHTML('beforeend','<span class="tch '+(c.isError?'e':'r')+'">✓ '+h(c.name)+'</span>')}
+          else if(c.type==='error'){const o=newBubble(ag);o.bbl.textContent='[Error] '+(c.message||'')}
         }catch{}
       }
       scroll();

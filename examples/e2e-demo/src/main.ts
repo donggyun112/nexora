@@ -123,15 +123,41 @@ const router: MessageRouter = {
 
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
     const rmsg = room.addUserMessage(msg.content, msg.displayName);
-    const result = await tm.handleMessage(room, rmsg);
 
-    for (const resp of result.responses) {
-      // Each agent's response as a separate text chunk with agent identity
-      onChunk({ type: 'text', text: resp.content, agent: resp.agentName });
+    // Multi-turn agent conversation loop:
+    // Each round, TurnManager picks who speaks. That agent sees the full
+    // history (including previous agents' messages) and responds.
+    // Loop continues until an agent says they're done or max rounds reached.
+    const MAX_ROUNDS = 5;
+    const responded = new Set<string>();
+
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const result = await tm.handleMessage(room, round === 0
+        ? rmsg
+        : room.history()[room.history().length - 1]!);
+
+      if (result.responses.length === 0) break;
+
+      let shouldContinue = false;
+      for (const resp of result.responses) {
+        onChunk({ type: 'text', text: resp.content, agent: resp.agentName });
+        responded.add(resp.agentName);
+
+        // Check if the agent is asking another agent or continuing discussion
+        const lower = resp.content.toLowerCase();
+        const mentionsOther = ['coder', 'researcher', 'assistant'].some(
+          name => name !== resp.agentName && lower.includes(name)
+        );
+        if (mentionsOther && responded.size < 3) {
+          shouldContinue = true;
+        }
+      }
+
+      if (!shouldContinue) break;
     }
 
-    const finalContent = result.responses.map(r => r.content).join('\n\n');
-    onChunk({ type: 'done', content: finalContent, agent: result.responses[0]?.agentName ?? 'assistant' });
+    const allContent = room.history().slice(-responded.size).map(m => m.content).join('\n\n');
+    onChunk({ type: 'done', content: allContent, agent: 'assistant' });
   },
 };
 

@@ -1,7 +1,16 @@
 /**
- * OpenAIProvider — OpenAI Chat Completions API 래핑.
+ * OpenAIProvider — unified LLM provider via OpenAI-compatible API.
  *
- * LLMProvider 인터페이스 구현. 스트리밍 + 도구 호출 지원.
+ * Works with any provider that exposes an OpenAI-compatible chat completions
+ * endpoint. Just change baseURL:
+ *
+ *   OpenAI direct:     baseURL = "https://api.openai.com/v1" (default)
+ *   OpenRouter:        baseURL = "https://openrouter.ai/api/v1"
+ *   Anthropic (proxy): baseURL = "https://openrouter.ai/api/v1", model = "anthropic/claude-..."
+ *   Local (vLLM):      baseURL = "http://localhost:8000/v1"
+ *   Local (Ollama):    baseURL = "http://localhost:11434/v1"
+ *
+ * For Anthropic-specific features (thinking, prompt cache), use AnthropicProvider instead.
  */
 
 import OpenAI from 'openai';
@@ -234,4 +243,67 @@ function safeJsonParse(s: string): unknown {
   } catch {
     return s;
   }
+}
+
+// ─── Provider presets (hermes base_url pattern) ─────────────────────────
+
+export interface ProviderPreset {
+  baseURL: string;
+  defaultModel: string;
+  defaultHeaders?: Record<string, string>;
+}
+
+export const PROVIDER_PRESETS: Readonly<Record<string, ProviderPreset>> = {
+  openai: {
+    baseURL: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o',
+  },
+  openrouter: {
+    baseURL: 'https://openrouter.ai/api/v1',
+    defaultModel: 'anthropic/claude-sonnet-4',
+    defaultHeaders: { 'HTTP-Referer': 'https://nexora.dev' },
+  },
+  ollama: {
+    baseURL: 'http://localhost:11434/v1',
+    defaultModel: 'llama3',
+  },
+  vllm: {
+    baseURL: 'http://localhost:8000/v1',
+    defaultModel: 'default',
+  },
+  lmstudio: {
+    baseURL: 'http://localhost:1234/v1',
+    defaultModel: 'default',
+  },
+};
+
+/**
+ * Create an OpenAIProvider from a preset name.
+ *
+ * Usage:
+ *   createProvider('openai', { apiKey: 'sk-...' })
+ *   createProvider('openrouter', { apiKey: 'or-...', model: 'anthropic/claude-sonnet-4' })
+ *   createProvider('ollama', { model: 'llama3' })
+ *   createProvider('vllm')
+ */
+export function createProvider(
+  preset: keyof typeof PROVIDER_PRESETS | string,
+  options: { apiKey?: string; model?: string; tools?: OpenAIProviderOptions['tools'] } = {},
+): OpenAIProvider {
+  const p = PROVIDER_PRESETS[preset];
+  if (!p) {
+    // Treat as custom baseURL
+    return new OpenAIProvider({
+      apiKey: options.apiKey ?? 'no-key',
+      baseURL: preset,
+      defaultModel: options.model ?? 'default',
+      tools: options.tools,
+    });
+  }
+  return new OpenAIProvider({
+    apiKey: options.apiKey ?? (preset === 'ollama' || preset === 'vllm' || preset === 'lmstudio' ? 'no-key' : undefined),
+    baseURL: p.baseURL,
+    defaultModel: options.model ?? p.defaultModel,
+    tools: options.tools,
+  });
 }

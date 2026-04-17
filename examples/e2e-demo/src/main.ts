@@ -69,28 +69,33 @@ const assistant = defineAgent({
 
 // ─── 2. Infrastructure ──────────────────────────────────────────────────
 
-import { AnthropicProvider, FallbackLLMProvider } from '@nexora/core';
+import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
 import type { LLMProvider } from '@nexora/contracts';
 
 function createLLM(): LLMProvider {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
-    const toolDefs = [...baseTools, createDelegateTool({ transport, registry, callerAgentName: 'assistant' })];
-    const anthropicTools = toolDefs.map(t => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.parameters,
-    }));
-    console.log('[LLM] Using Anthropic (claude-haiku-4-5) with tools:', anthropicTools.map(t => t.name).join(', '));
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
+
+  const toolDefs = [...baseTools, createDelegateTool({ transport, registry, callerAgentName: 'assistant' })];
+  const tools = toolDefs.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
+
+  // Priority: Anthropic direct → OpenRouter → Mock
+  if (anthropicKey) {
+    const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+    console.log('[LLM] Using Anthropic (claude-haiku-4-5)');
     return new FallbackLLMProvider({
       providers: [
-        { name: 'anthropic', provider: new AnthropicProvider({ apiKey, defaultModel: 'claude-haiku-4-5-20251001', tools: anthropicTools }) },
+        { name: 'anthropic', provider: new AnthropicProvider({ apiKey: anthropicKey, defaultModel: 'claude-haiku-4-5-20251001', tools: anthropicTools }) },
         { name: 'mock', provider: new SmartMockLLM() },
       ],
       onFallback: (from, to, reason) => console.log(`[LLM] ${from} → ${to}: ${reason}`),
     });
   }
-  console.log('[LLM] No ANTHROPIC_API_KEY — using mock LLM');
+  if (openrouterKey) {
+    console.log('[LLM] Using OpenRouter');
+    return createProvider('openrouter', { apiKey: openrouterKey, tools });
+  }
+  console.log('[LLM] No API key — using mock LLM');
   return new SmartMockLLM();
 }
 

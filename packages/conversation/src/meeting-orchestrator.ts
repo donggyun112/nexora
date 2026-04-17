@@ -76,6 +76,7 @@ export class MeetingOrchestrator {
     this.emit({ type: 'text', text: opening, agent: masterName });
 
     // Moderation loop
+    let silentRounds = 0;
     for (let round = 0; round < this.maxRounds; round++) {
       const history = this.mgr.formatHistory(meeting.id);
       const moderation = await this.agentSay(masterName,
@@ -103,7 +104,20 @@ export class MeetingOrchestrator {
           this.mgr.speak(meeting.id, masterName, msg);
           this.emit({ type: 'text', text: msg, agent: masterName });
         }
-        await this.freeFloor(meeting, participantNames);
+        let anySpoke = false;
+        await this.freeFloor(meeting, participantNames, () => { anySpoke = true; });
+        if (!anySpoke) silentRounds++;
+        else silentRounds = 0;
+
+        // Force conclude after 2 silent rounds
+        if (silentRounds >= 2) {
+          const summary = '참가자 응답 없음으로 회의를 종료합니다.';
+          this.mgr.speak(meeting.id, masterName, summary);
+          this.mgr.conclude(meeting.id, masterName, summary);
+          this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: masterName });
+          this.emit({ type: 'text', text: summary, agent: masterName });
+          return summary;
+        }
         continue;
       }
 
@@ -116,6 +130,7 @@ export class MeetingOrchestrator {
           this.emit({ type: 'text', text: masterMsg.trim(), agent: masterName });
         }
         await this.agentTurn(meeting, target);
+        silentRounds = 0;
         continue;
       }
 
@@ -162,7 +177,7 @@ export class MeetingOrchestrator {
   }
 
   /** Free floor: all participants can speak if they have something to say */
-  private async freeFloor(meeting: Meeting, agents: string[]): Promise<void> {
+  private async freeFloor(meeting: Meeting, agents: string[], onSpeak?: () => void): Promise<void> {
     const history = this.mgr.formatHistory(meeting.id);
     for (const agent of agents) {
       const text = await this.agentSay(agent,
@@ -170,6 +185,7 @@ export class MeetingOrchestrator {
       if (text && text !== 'PASS' && !text.includes('mock agent')) {
         this.mgr.speak(meeting.id, agent, text);
         this.emit({ type: 'text', text, agent });
+        onSpeak?.();
       }
     }
   }

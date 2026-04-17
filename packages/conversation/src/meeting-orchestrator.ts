@@ -108,7 +108,7 @@ export class MeetingOrchestrator {
       }
 
       // NEXT: designated speaker
-      const nextMatch = moderation.match(/^NEXT:\s*(coder|researcher|assistant)\s*(.*)/is);
+      const nextMatch = moderation.match(/^(?:\**)?\s*NEXT:\s*(coder|researcher|assistant)\S*\s*(.*)/is);
       if (nextMatch) {
         const [, target, masterMsg] = nextMatch;
         if (masterMsg.trim()) {

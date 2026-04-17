@@ -112,38 +112,52 @@ room.join({
 
 // ─── 4. Router — streams each agent's response as separate SSE chunks ────
 
-// ─── 4. Router — direct LLM calls for agent-to-agent conversation ────────
+// ─── 4. Router — natural conversation: only agents with something to say respond
 
-// Agent turn order for group discussion
-const AGENTS = ['coder', 'researcher', 'assistant'] as const;
+const AGENT_NAMES = ['coder', 'researcher', 'assistant'] as const;
 
-async function agentRespond(agentName: string, onChunk: (c: OutboundChunk) => void): Promise<string> {
-  const participant = room.getParticipant(agentName);
-  if (!participant) return '';
+/** Ask an agent if they want to respond. Returns null if they pass. */
+async function askToRespond(agentName: string): Promise<string | null> {
+  const p = room.getParticipant(agentName);
+  if (!p) return null;
 
   const history = room.historyForLLM();
-  const messages = history.map(m => ({ role: m.role, content: m.content }));
+  const sysPrompt = `${p.respondPrompt ?? p.card.description}
 
-  const response = await participant.llm.complete(
-    messages as import('@nexora/contracts').LLMMessage[],
-    { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 512 },
+규칙:
+1. 이 대화에서 당신의 전문 분야와 직접 관련된 내용이 있을 때만 응답하세요.
+2. 인사, 잡담, 일반 질문은 assistant만 답합니다. coder와 researcher는 PASS하세요.
+3. 이미 다른 에이전트가 충분히 답한 내용은 PASS하세요.
+4. 할 말이 없으면 반드시 "PASS" 한 단어만 출력하세요. 다른 텍스트를 추가하지 마세요.
+5. 절대 다른 에이전트인 척 하지 마세요.`;
+
+  const response = await p.llm.complete(
+    history as import('@nexora/contracts').LLMMessage[],
+    { systemPrompt: sysPrompt, maxTokens: 512 },
   );
 
-  const content = response.content.trim();
-  if (!content || content === 'PASS') return '';
+  const text = response.content.trim();
+  // Generous PASS detection — LLM may wrap it in brackets, prefix with name, etc.
+  const normalized = text.replace(/^\[.*?\]:\s*/g, '').replace(/^---\s*/g, '').trim();
+  if (!normalized || /^PASS$/i.test(normalized) || normalized.startsWith('PASS') || text.includes('mock agent for E2E')) return null;
+  // Filter out responses that are just other agents saying PASS
+  if (/^\[.*?\]:\s*PASS/m.test(text) && !text.replace(/\[.*?\]:\s*PASS\s*/g, '').trim()) return null;
 
-  room.addAgentMessage(agentName, content);
-  onChunk({ type: 'text', text: content, agent: agentName });
-  return content;
+  room.addAgentMessage(agentName, text);
+  return text;
 }
 
 const router: MessageRouter = {
   async route(msg: InboundMessage): Promise<OutboundMessage> {
     room.addUserMessage(msg.content, msg.displayName);
     const parts: string[] = [];
-    for (const name of AGENTS) {
-      const text = await agentRespond(name, () => {});
-      if (text) parts.push(`**${name}**: ${text}`);
+    for (let round = 0; round < 4; round++) {
+      let anySpoke = false;
+      for (const name of AGENT_NAMES) {
+        const text = await askToRespond(name);
+        if (text) { parts.push(`**${name}**: ${text}`); anySpoke = true; }
+      }
+      if (!anySpoke) break;
     }
     return { content: parts.join('\n\n') || '(응답 없음)' };
   },
@@ -151,20 +165,16 @@ const router: MessageRouter = {
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
     room.addUserMessage(msg.content, msg.displayName);
 
-    // Round 1: each agent responds in order, seeing previous agents' messages
-    for (const name of AGENTS) {
-      await agentRespond(name, onChunk);
-    }
-
-    // Round 2: if any agent mentioned another, let them react
-    const lastMessages = room.history().slice(-3);
-    const needsMore = lastMessages.some(m =>
-      m.agentName && AGENTS.some(a => a !== m.agentName && m.content.toLowerCase().includes(a))
-    );
-    if (needsMore) {
-      for (const name of AGENTS) {
-        await agentRespond(name, onChunk);
+    for (let round = 0; round < 4; round++) {
+      let anySpoke = false;
+      for (const name of AGENT_NAMES) {
+        const text = await askToRespond(name);
+        if (text) {
+          onChunk({ type: 'text', text, agent: name });
+          anySpoke = true;
+        }
       }
+      if (!anySpoke) break;
     }
 
     onChunk({ type: 'done', content: '', agent: 'assistant' });

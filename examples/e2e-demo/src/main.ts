@@ -110,8 +110,10 @@ for (const card of [coder, researcher, assistant]) {
 }
 
 const agentPrompts: Record<string, string> = {
-  coder: 'You are coder, a code-reading specialist. You analyze source files and explain code. Always respond in the same language as the user.',
-  researcher: 'You are researcher, an information specialist. You search and synthesize findings. Always respond in the same language as the user.',
+  coder: `You are coder, a code-reading specialist. You analyze source files and explain code. Always respond in the same language as the user.
+You can delegate to "researcher" if you need information gathering. Use the delegate tool when needed.`,
+  researcher: `You are researcher, an information specialist. You search and synthesize findings. Always respond in the same language as the user.
+You can delegate to "coder" if you need code analysis. Use the delegate tool when needed.`,
   assistant: `You are assistant, a team lead coordinating coder and researcher agents.
 
 IMPORTANT RULES:
@@ -203,16 +205,27 @@ function buildRuntime(name: string, extraTools: import('@nexora/contracts').Tool
   });
 }
 
-// Compiled subagents — their events are relayed to the parent stream
+// Compiled subagents — can delegate to each other
+const coderDelegate = createDelegateTool({
+  transport, registry, callerAgentName: 'coder',
+  subagents: [], // will be patched below
+  blockedToolsForChild: [], // allow inter-agent communication
+});
+const researcherDelegate = createDelegateTool({
+  transport, registry, callerAgentName: 'researcher',
+  subagents: [],
+  blockedToolsForChild: [],
+});
+
 const coderSubagent: CompiledSubagent = {
   type: 'compiled', name: 'coder',
   description: 'Code reading and file analysis specialist',
-  runtime: buildRuntime('coder'),
+  runtime: buildRuntime('coder', [coderDelegate]),
 };
 const researcherSubagent: CompiledSubagent = {
   type: 'compiled', name: 'researcher',
   description: 'Search and research specialist',
-  runtime: buildRuntime('researcher'),
+  runtime: buildRuntime('researcher', [researcherDelegate]),
 };
 
 // Custom router: streams parent + child agent events to SSE with agent identity

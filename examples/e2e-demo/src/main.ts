@@ -159,7 +159,7 @@ const router: MessageRouter = {
       onChunk({ type: 'text', text: topicPrompt, agent: m.master });
 
       // Discussion rounds — LLM only (no tools inside meetings to prevent open_meeting loops)
-      const agents = m.participants.filter((p: string) => p !== m.master);
+      const agents = m.participants;
       let silentRounds = 0;
       for (let round = 0; round < 10; round++) {
         let anySpoke = false;

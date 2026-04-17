@@ -205,6 +205,11 @@ function detectMode(text: string): { mode: 1 | 2 | 3; agents?: [string, string];
     return { mode: 3, agents: [threadMatch[1], threadMatch[2]], topic: text };
   }
 
+  // Mode 1 override: "각각", "각자" = individual responses, not discussion
+  if (lower.includes('각각') || lower.includes('각자') || lower.includes('회의없이') || lower.includes('회의 없이')) {
+    return { mode: 1 };
+  }
+
   // Mode 2: discussion/debate request
   if (lower.includes('토론') || lower.includes('논의') || lower.includes('회의') ||
       lower.includes('정해') || lower.includes('결정') || lower.includes('브레인스토밍') ||

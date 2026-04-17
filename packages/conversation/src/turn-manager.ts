@@ -268,10 +268,14 @@ export class TurnManager {
       const lastUser = [...messages].reverse().find(m => m.role === 'user');
       const prompt = lastUser?.content ?? '';
       let content = '';
-      for await (const event of participant.runtime.execute({ prompt, history: messages.map(m => ({ role: m.role, content: m.content })) })) {
+      const toolCalls: string[] = [];
+      for await (const event of participant.runtime.execute({ prompt })) {
         if (event.type === 'done') content = event.content;
+        else if (event.type === 'tool_call') toolCalls.push(event.name);
       }
-      return content || '(no response)';
+      // Prefix tool calls to content so they're visible
+      const prefix = toolCalls.length ? toolCalls.map(t => `🔧 ${t}`).join(' ') + '\n' : '';
+      return prefix + (content || '(no response)');
     }
 
     // LLM-only fallback

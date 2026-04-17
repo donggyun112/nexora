@@ -9,7 +9,7 @@
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider, LLMMessage } from '@nexora/contracts';
 import { AnthropicProvider, FallbackLLMProvider, createProvider, AgentRunner, CoreToolExecutor } from '@nexora/core';
-import { ConversationRoom, TurnManager } from '@nexora/conversation';
+import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@nexora/conversation';
 import { MeetingManager, createMeetingTools, createReadTool, createGrepTool } from '@nexora/tools';
 import { createReactArchitecture } from '@nexora/architectures';
 import { HttpAdapter } from '@nexora/adapters';
@@ -60,8 +60,8 @@ const llm = createLLM();
 
 const PROMPTS: Record<string, string> = {
   assistant: `당신은 assistant(팀 리더). 인사/잡담/조율/회의 진행 담당.
-회의나 토론이 필요한 요청이 오면 open_meeting 도구를 호출하세요.
-특정 에이전트와 1:1 대화가 필요하면 open_thread 도구를 호출하세요.
+회의/토론/미팅 요청이 오면 즉시 open_meeting 도구를 호출하세요. participants에 ["coder","researcher"]를 넣으세요. 사용자에게 되묻지 마세요.
+1:1 대화 요청이면 open_thread 도구를 호출하세요.
 절대 다른 에이전트인 척 하지 마세요. 짧게.`,
   coder: `당신은 coder(개발자). 코드/기술 전문가.
 회의에 초대되면 join_meeting으로 참가하고 speak으로 발언하세요.
@@ -118,13 +118,24 @@ const tm = new TurnManager({
   onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
 });
 
-// ─── 4. Router — TurnManager handles everything ─────────────────────────
+const orchestrator = new MeetingOrchestrator(room, meetingMgr);
+
+// ─── 4. Router — TurnManager + auto meeting orchestration ───────────────
 
 const router: MessageRouter = {
   async route(msg: InboundMessage): Promise<OutboundMessage> {
     const rmsg = room.addUserMessage(msg.content, msg.displayName);
     const result = await tm.handleMessage(room, rmsg);
-    return { content: result.responses.map(r => `**${r.agentName}**: ${r.content}`).join('\n\n') || '(응답 없음)' };
+    const parts = result.responses.map(r => `**${r.agentName}**: ${r.content}`);
+    // If agent opened a meeting, run the meeting loop
+    const active = meetingMgr.listActive();
+    if (active.length > 0) {
+      const m = active[0];
+      const others = m.invited.length > 0 ? m.invited : m.participants.filter((p: string) => p !== m.master);
+      const summary = await orchestrator.runMeeting(m.master, m.topic, others);
+      if (summary) parts.push(`**${m.master}**: ${summary}`);
+    }
+    return { content: parts.join('\n\n') || '(응답 없음)' };
   },
 
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
@@ -132,6 +143,29 @@ const router: MessageRouter = {
     const result = await tm.handleMessage(room, rmsg);
     for (const r of result.responses) {
       onChunk({ type: 'text', text: r.content, agent: r.agentName });
+    }
+    // If agent opened a meeting, orchestrator streams the meeting
+    const active = meetingMgr.listActive();
+    if (active.length > 0) {
+      const m = active[0];
+      // Meeting already opened by agent's tool call — just run the discussion loop
+      orchestrator.onEvent(onChunk);
+      // Join participants that haven't joined yet
+      for (const inv of m.invited) { meetingMgr.join(m.id, inv); onChunk({ type: 'tool_call', name: 'join_meeting', input: { meetingId: m.id }, agent: inv }); }
+      // Run TurnManager-based discussion inside the meeting
+      for (let round = 0; round < 10; round++) {
+        const lastMsg = room.history()[room.history().length - 1];
+        if (!lastMsg) break;
+        const mResult = await tm.handleMessage(room, lastMsg);
+        if (mResult.responses.length === 0) break;
+        for (const mr of mResult.responses) {
+          meetingMgr.speak(m.id, mr.agentName, mr.content);
+          onChunk({ type: 'text', text: mr.content, agent: mr.agentName });
+        }
+      }
+      // Auto-conclude
+      meetingMgr.conclude(m.id, m.master, '회의 종료');
+      onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: m.id }, agent: m.master });
     }
     onChunk({ type: 'done', content: '', agent: 'assistant' });
   },

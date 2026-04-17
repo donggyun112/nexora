@@ -196,29 +196,27 @@ async function threadConversation(
 /**
  * Detect which mode to use based on user message.
  */
-function detectMode(text: string): { mode: 1 | 2 | 3; agents?: [string, string]; topic?: string } {
-  const lower = text.toLowerCase();
+async function detectMode(text: string): Promise<{ mode: 1 | 2 | 3; agents?: [string, string] }> {
+  const resp = await llm.complete(
+    [{ role: 'user', content: text }],
+    {
+      systemPrompt: `당신은 대화 모드를 결정하는 오라클입니다. 사용자 메시지를 보고 JSON 하나만 출력하세요.
 
-  // Mode 3: explicit 1:1 thread request
-  const threadMatch = lower.match(/(coder|researcher|assistant)\s*(?:와|랑|하고)\s*(coder|researcher|assistant)/);
-  if (threadMatch && (lower.includes('둘이') || lower.includes('1:1') || lower.includes('스레드') || lower.includes('따로'))) {
-    return { mode: 3, agents: [threadMatch[1], threadMatch[2]], topic: text };
-  }
+{"mode":1} — 사용자에게 직접 답변. 질문, 인사, 의견 요청 등.
+{"mode":2} — 에이전트들끼리 자율 토론 필요. 주제 선정, 의사결정, 브레인스토밍, 비교 분석 등.
+{"mode":3,"agents":["A","B"]} — 특정 두 에이전트가 1:1 심층 논의. A,B는 coder/researcher/assistant 중 선택.
 
-  // Mode 1 override: "각각", "각자" = individual responses, not discussion
-  if (lower.includes('각각') || lower.includes('각자') || lower.includes('회의없이') || lower.includes('회의 없이')) {
-    return { mode: 1 };
-  }
-
-  // Mode 2: discussion/debate request
-  if (lower.includes('토론') || lower.includes('논의') || lower.includes('회의') ||
-      lower.includes('정해') || lower.includes('결정') || lower.includes('브레인스토밍') ||
-      (lower.includes('끼리') && lower.includes('대화')) ||
-      (lower.includes('이야기') && (lower.includes('해서') || lower.includes('해봐')))) {
-    return { mode: 2 };
-  }
-
-  // Mode 1: default — multi-response
+에이전트: coder(개발), researcher(연구), assistant(일반)
+JSON만 출력. 설명 금지.`,
+      maxTokens: 50,
+    },
+  );
+  try {
+    const cleaned = resp.content.replace(/```json?\s*|\s*```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (parsed.mode === 3 && Array.isArray(parsed.agents)) return { mode: 3, agents: parsed.agents };
+    if (parsed.mode === 2) return { mode: 2 };
+  } catch { /* fallback to mode 1 */ }
   return { mode: 1 };
 }
 
@@ -227,20 +225,20 @@ function detectMode(text: string): { mode: 1 | 2 | 3; agents?: [string, string];
 const router: MessageRouter = {
   async route(msg: InboundMessage): Promise<OutboundMessage> {
     const parts: string[] = [];
-    const { mode } = detectMode(msg.content);
+    const { mode } = await detectMode(msg.content);
     if (mode === 1) {
       await multiResponse(msg.content, c => { if (c.type === 'text') parts.push(`**${c.agent}**: ${c.text}`); });
     } else if (mode === 2) {
       await autonomousDiscussion(msg.content, c => { if (c.type === 'text') parts.push(`**${c.agent}**: ${c.text}`); });
     } else {
-      const { agents } = detectMode(msg.content);
+      const { agents } = await detectMode(msg.content);
       await threadConversation(agents![0], agents![1], msg.content, c => { if (c.type === 'text') parts.push(`**${c.agent}**: ${c.text}`); });
     }
     return { content: parts.join('\n\n') || '(응답 없음)' };
   },
 
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
-    const detected = detectMode(msg.content);
+    const detected = await detectMode(msg.content);
     console.log(`[Oracle] mode=${detected.mode}`, detected.agents || '');
 
     if (detected.mode === 1) {

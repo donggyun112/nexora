@@ -12,7 +12,7 @@
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
 import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
-import { ConversationRoom } from '@nexora/conversation';
+import { ConversationRoom, TurnManager } from '@nexora/conversation';
 import { HttpAdapter } from '@nexora/adapters';
 import { SmartMockLLM } from './mock-llm.js';
 
@@ -112,69 +112,46 @@ room.join({
 
 // ─── 4. Router — streams each agent's response as separate SSE chunks ────
 
-// ─── 4. Router — natural conversation: only agents with something to say respond
+// ─── 4. TurnManager — framework handles who speaks ──────────────────────
 
-const AGENT_NAMES = ['coder', 'researcher', 'assistant'] as const;
+const tm = new TurnManager({
+  maxResponders: 2,
+  minConfidence: 0.4,
+  followUpMinConfidence: 0.5,
+  onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
+});
 
-/** Ask an agent if they want to respond. Returns null if they pass. */
-async function askToRespond(agentName: string): Promise<string | null> {
-  const p = room.getParticipant(agentName);
-  if (!p) return null;
-
-  const history = room.historyForLLM();
-  const sysPrompt = `${p.respondPrompt ?? p.card.description}
-
-규칙:
-1. 이 대화에서 당신의 전문 분야와 직접 관련된 내용이 있을 때만 응답하세요.
-2. 인사, 잡담, 일반 질문은 assistant만 답합니다. coder와 researcher는 PASS하세요.
-3. 이미 다른 에이전트가 충분히 답한 내용은 PASS하세요.
-4. 할 말이 없으면 반드시 "PASS" 한 단어만 출력하세요. 다른 텍스트를 추가하지 마세요.
-5. 절대 다른 에이전트인 척 하지 마세요.`;
-
-  const response = await p.llm.complete(
-    history as import('@nexora/contracts').LLMMessage[],
-    { systemPrompt: sysPrompt, maxTokens: 512 },
-  );
-
-  const text = response.content.trim();
-  // Generous PASS detection — LLM may wrap it in brackets, prefix with name, etc.
-  const normalized = text.replace(/^\[.*?\]:\s*/g, '').replace(/^---\s*/g, '').trim();
-  if (!normalized || /^PASS$/i.test(normalized) || normalized.startsWith('PASS') || text.includes('mock agent for E2E')) return null;
-  // Filter out responses that are just other agents saying PASS
-  if (/^\[.*?\]:\s*PASS/m.test(text) && !text.replace(/\[.*?\]:\s*PASS\s*/g, '').trim()) return null;
-
-  room.addAgentMessage(agentName, text);
-  return text;
-}
+// ─── 5. Router — multi-turn conversation via TurnManager ─────────────────
 
 const router: MessageRouter = {
   async route(msg: InboundMessage): Promise<OutboundMessage> {
-    room.addUserMessage(msg.content, msg.displayName);
-    const parts: string[] = [];
-    for (let round = 0; round < 4; round++) {
-      let anySpoke = false;
-      for (const name of AGENT_NAMES) {
-        const text = await askToRespond(name);
-        if (text) { parts.push(`**${name}**: ${text}`); anySpoke = true; }
-      }
-      if (!anySpoke) break;
-    }
-    return { content: parts.join('\n\n') || '(응답 없음)' };
+    const rmsg = room.addUserMessage(msg.content, msg.displayName);
+    const result = await tm.handleMessage(room, rmsg);
+    const content = result.responses.map(r => `**${r.agentName}**: ${r.content}`).join('\n\n');
+    return { content: content || '(응답 없음)' };
   },
 
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
-    room.addUserMessage(msg.content, msg.displayName);
+    const rmsg = room.addUserMessage(msg.content, msg.displayName);
 
-    for (let round = 0; round < 4; round++) {
-      let anySpoke = false;
-      for (const name of AGENT_NAMES) {
-        const text = await askToRespond(name);
-        if (text) {
-          onChunk({ type: 'text', text, agent: name });
-          anySpoke = true;
-        }
+    // Round 1: TurnManager evaluates all agents, picks who responds
+    const result = await tm.handleMessage(room, rmsg);
+    for (const resp of result.responses) {
+      onChunk({ type: 'text', text: resp.content, agent: resp.agentName });
+    }
+
+    // Round 2+: if an agent's response warrants further discussion,
+    // feed the last agent message back into TurnManager
+    for (let round = 1; round < 4; round++) {
+      const lastMsg = room.history()[room.history().length - 1];
+      if (!lastMsg || lastMsg.role !== 'assistant') break;
+
+      const nextResult = await tm.handleMessage(room, lastMsg);
+      if (nextResult.responses.length === 0) break;
+
+      for (const resp of nextResult.responses) {
+        onChunk({ type: 'text', text: resp.content, agent: resp.agentName });
       }
-      if (!anySpoke) break;
     }
 
     onChunk({ type: 'done', content: '', agent: 'assistant' });
@@ -211,4 +188,4 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-export { llm, room, http };
+export { llm, room, tm, http };

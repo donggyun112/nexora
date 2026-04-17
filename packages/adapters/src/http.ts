@@ -318,13 +318,20 @@ function createAgent(){
     bubble:row.querySelector('.bubble'),
     meta:row.querySelector('.meta'),
     _t0:Date.now(),_tc:0,_tokens:0,
-    addTool(name,type,isErr){
+    addTool(name,type,isErr,input){
       this._tc++;
       const d=document.createElement('div');
       const cls=name==='delegate'?'tool-ev delegate-ev':type==='call'?'tool-ev tool-call':('tool-ev tool-result'+(isErr?' err':''));
       d.className=cls;
       const icon=name==='delegate'?'🤝':name==='read'?'📄':name==='grep'?'🔍':name==='exec'?'⚡':'🔧';
-      d.innerHTML='<span class="icon">'+icon+'</span><span class="name">'+h(name)+'</span>';
+      let detail='';
+      if(input&&type==='call'){
+        if(name==='delegate'&&input.capability)detail=' → '+input.capability;
+        else if(name==='read'&&input.path)detail=' '+input.path;
+        else if(name==='grep'&&input.pattern)detail=' /'+input.pattern+'/';
+        else if(name==='exec'){const c=input.command||input.argv;if(c)detail=' '+String(Array.isArray(c)?c.join(' '):c).slice(0,40);}
+      }
+      d.innerHTML='<span class="icon">'+icon+'</span><span class="name">'+h(name)+h(detail)+'</span>';
       this.tools.appendChild(d);scroll();
       return d;
     },
@@ -370,7 +377,7 @@ async function send(){
         try{
           const c=JSON.parse(line.slice(6));
           if(c.type==='text')agent.appendText(c.text);
-          else if(c.type==='tool_call')agent.addTool(c.name,'call');
+          else if(c.type==='tool_call')agent.addTool(c.name,'call',false,c.input);
           else if(c.type==='tool_result')agent.addTool(c.name,'result',c.isError);
           else if(c.type==='thinking')agent.addThinking(c.content);
           else if(c.type==='error')agent.appendText('[Error] '+c.message);

@@ -63,7 +63,7 @@ export interface OutboundMessage {
 
 export type OutboundChunk =
   | { type: 'text'; text: string }
-  | { type: 'tool_call'; name: string }
+  | { type: 'tool_call'; name: string; input?: unknown }
   | { type: 'tool_result'; name: string; isError: boolean }
   | { type: 'thinking'; content: string }
   | { type: 'done'; content: string }

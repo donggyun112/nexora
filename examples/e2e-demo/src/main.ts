@@ -1,18 +1,15 @@
 /**
- * Nexora E2E Demo — Oracle with MeetingOrchestrator.
+ * Nexora E2E Demo — TurnManager + AgentRunner + Meeting Tools.
  *
- * 3 conversation modes, all powered by framework-level components:
- * - ConversationRoom + TurnManager (Mode 1: multi-response)
- * - MeetingOrchestrator.runMeeting (Mode 2: autonomous discussion)
- * - MeetingOrchestrator.runThread (Mode 3: 1:1 thread)
- *
- * Run: pnpm build && cd examples/e2e-demo && pnpm start
+ * No oracle. All messages go through TurnManager.
+ * Agents have meeting tools — they open meetings themselves when needed.
+ * TurnManager handles turn-taking. AgentRunner enables tool calling.
  */
 
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider, LLMMessage } from '@nexora/contracts';
 import { AnthropicProvider, FallbackLLMProvider, createProvider, AgentRunner, CoreToolExecutor } from '@nexora/core';
-import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@nexora/conversation';
+import { ConversationRoom, TurnManager } from '@nexora/conversation';
 import { MeetingManager, createMeetingTools, createReadTool, createGrepTool } from '@nexora/tools';
 import { createReactArchitecture } from '@nexora/architectures';
 import { HttpAdapter } from '@nexora/adapters';
@@ -34,7 +31,7 @@ const researcher = defineAgent({
 });
 const assistant = defineAgent({
   name: 'assistant', version: '0.1.0',
-  description: '팀 리더. 인사, 잡담, 조율 담당. 기술/연구 질문은 양보.',
+  description: '팀 리더. 인사, 잡담, 조율, 회의 진행 담당. 회의가 필요하면 open_meeting 도구를 호출.',
   architecture: 'conversation', tools: [],
   capabilities: ['general'], subscribes: [topic('assistant.requested')], publishes: [topic('assistant.completed')],
 });
@@ -54,37 +51,36 @@ function createLLM(): LLMProvider {
       onFallback: (f, t, r) => console.log(`[LLM] ${f} → ${t}: ${r}`),
     });
   }
-  const or = process.env.OPENROUTER_API_KEY;
-  if (or) return createProvider('openrouter', { apiKey: or });
   console.log('[LLM] mock');
   return new SmartMockLLM();
 }
 const llm = createLLM();
 
-// ─── 3. Room + Orchestrator (framework level) ────────────────────────────
+// ─── 3. Room with AgentRunners (agents can use tools) ────────────────────
 
 const PROMPTS: Record<string, string> = {
-  assistant: '당신은 assistant(팀 리더). 인사/잡담/조율 담당. 회의 진행자 역할. 절대 다른 에이전트인 척 하지 마세요. 짧게.',
-  coder: '당신은 coder(개발자). 코드/기술 전문가. 절대 다른 에이전트인 척 하지 마세요. [coder]: 접두사 금지. 짧게.',
-  researcher: '당신은 researcher(연구원). 연구/분석 전문가. 절대 다른 에이전트인 척 하지 마세요. [researcher]: 접두사 금지. 짧게.',
+  assistant: `당신은 assistant(팀 리더). 인사/잡담/조율/회의 진행 담당.
+회의나 토론이 필요한 요청이 오면 open_meeting 도구를 호출하세요.
+특정 에이전트와 1:1 대화가 필요하면 open_thread 도구를 호출하세요.
+절대 다른 에이전트인 척 하지 마세요. 짧게.`,
+  coder: `당신은 coder(개발자). 코드/기술 전문가.
+회의에 초대되면 join_meeting으로 참가하고 speak으로 발언하세요.
+절대 다른 에이전트인 척 하지 마세요. [coder]: 접두사 금지. 짧게.`,
+  researcher: `당신은 researcher(연구원). 연구/분석 전문가.
+회의에 초대되면 join_meeting으로 참가하고 speak으로 발언하세요.
+절대 다른 에이전트인 척 하지 마세요. [researcher]: 접두사 금지. 짧게.`,
 };
 
-const tm = new TurnManager({
-  maxResponders: 3, minConfidence: 0.3, followUpMinConfidence: 0.4,
-  onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
-});
-
 const meetingMgr = new MeetingManager();
-
 const room = new ConversationRoom('nexora-chat');
+
 for (const card of [assistant, coder, researcher]) {
   const aliases: Record<string, string[]> = {
     assistant: ['어시스턴트', '어시', '팀장'],
     coder: ['코더', '개발자', '개발'],
     researcher: ['리서처', '연구원', '연구'],
   };
-  // Each agent gets an AgentRunner with meeting tools + base tools
-  const agentTools = [
+  const tools = [
     ...createMeetingTools(meetingMgr, card.name),
     ...(card.tools.includes('read') ? [createReadTool()] : []),
     ...(card.tools.includes('grep') ? [createGrepTool()] : []),
@@ -93,98 +89,38 @@ for (const card of [assistant, coder, researcher]) {
     architecture: createReactArchitecture({ systemPrompt: PROMPTS[card.name], maxIterations: 5 }),
     llm,
     tools: new CoreToolExecutor({
-      tools: agentTools,
+      tools,
       context: { tenantId: 'default', workdir: process.cwd(), secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
     }),
   });
   room.join({ card, llm, respondPrompt: PROMPTS[card.name], aliases: aliases[card.name], runtime });
 }
 
-const orchestrator = new MeetingOrchestrator(room, meetingMgr);
+const tm = new TurnManager({
+  maxResponders: 3, minConfidence: 0.3, followUpMinConfidence: 0.4,
+  onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
+});
 
-// ─── 4. Oracle (LLM-based mode detection) ────────────────────────────────
-
-async function detectMode(text: string): Promise<{ mode: 1 | 2 | 3; agents?: [string, string] }> {
-  const history = room.historyForLLM().slice(-10);
-  const resp = await llm.complete(
-    [...history, { role: 'user', content: text }] as LLMMessage[],
-    {
-      systemPrompt: `대화 모드 오라클. JSON만 출력.
-{"mode":1} — 직접 답변 (질문, 인사, 의견 요청)
-{"mode":2} — 에이전트 자율 토론 (주제 선정, 의사결정, 브레인스토밍)
-{"mode":3,"agents":["A","B"]} — 1:1 심층 논의 (A,B는 coder/researcher/assistant)
-JSON만. 설명 금지.`,
-      maxTokens: 50,
-    },
-  );
-  try {
-    const parsed = JSON.parse(resp.content.replace(/```json?\s*|\s*```/g, '').trim());
-    if (parsed.mode === 3 && Array.isArray(parsed.agents)) return { mode: 3, agents: parsed.agents };
-    if (parsed.mode === 2) return { mode: 2 };
-  } catch { /* mode 1 */ }
-  return { mode: 1 };
-}
-
-// ─── 5. Router ───────────────────────────────────────────────────────────
+// ─── 4. Router — TurnManager handles everything ─────────────────────────
 
 const router: MessageRouter = {
   async route(msg: InboundMessage): Promise<OutboundMessage> {
-    const parts: string[] = [];
-    const collect = (c: OutboundChunk) => { if (c.type === 'text' && c.text) parts.push(`**${c.agent}**: ${c.text}`); };
-    const { mode, agents } = await detectMode(msg.content);
-    if (mode === 2) {
-      orchestrator.onEvent(collect);
-      await orchestrator.runMeeting('assistant', msg.content, ['coder', 'researcher']);
-    } else if (mode === 3 && agents) {
-      orchestrator.onEvent(collect);
-      await orchestrator.runThread(agents[0], agents[1], msg.content);
-    } else {
-      const rmsg = room.addUserMessage(msg.content, msg.displayName);
-      const result = await tm.handleMessage(room, rmsg);
-      for (const r of result.responses) parts.push(`**${r.agentName}**: ${r.content}`);
-    }
-    return { content: parts.join('\n\n') || '(응답 없음)' };
+    const rmsg = room.addUserMessage(msg.content, msg.displayName);
+    const result = await tm.handleMessage(room, rmsg);
+    return { content: result.responses.map(r => `**${r.agentName}**: ${r.content}`).join('\n\n') || '(응답 없음)' };
   },
 
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
-    const { mode, agents } = await detectMode(msg.content);
-    console.log(`[Oracle] mode=${mode}`, agents || '');
-
-    if (mode === 2) {
-      orchestrator.onEvent(onChunk);
-      await orchestrator.runMeeting('assistant', msg.content, ['coder', 'researcher']);
-    } else if (mode === 3 && agents) {
-      orchestrator.onEvent(onChunk);
-      await orchestrator.runThread(agents[0], agents[1], msg.content);
-    } else {
-      // Mode 1: TurnManager (with mention override)
-      const rmsg = room.addUserMessage(msg.content, msg.displayName);
-      const mentioned = room.detectMention(msg.content);
-
-      if (mentioned) {
-        // Direct mention — that agent responds, skip TurnManager
-        const p = room.getParticipant(mentioned);
-        if (p) {
-          const resp = await p.llm.complete(
-            room.historyForLLM() as LLMMessage[],
-            { systemPrompt: p.respondPrompt ?? p.card.description, maxTokens: 400 },
-          );
-          room.addAgentMessage(mentioned, resp.content);
-          onChunk({ type: 'text', text: resp.content, agent: mentioned });
-        }
-      } else {
-        const result = await tm.handleMessage(room, rmsg);
-        for (const r of result.responses) {
-          onChunk({ type: 'text', text: r.content, agent: r.agentName });
-        }
-      }
+    const rmsg = room.addUserMessage(msg.content, msg.displayName);
+    const result = await tm.handleMessage(room, rmsg);
+    for (const r of result.responses) {
+      onChunk({ type: 'text', text: r.content, agent: r.agentName });
     }
-
     onChunk({ type: 'done', content: '', agent: 'assistant' });
   },
 };
 
-// ─── 6. HTTP Server ──────────────────────────────────────────────────────
+// ─── 5. HTTP Server ──────────────────────────────────────────────────────
 
 const http = new HttpAdapter({
   port: Number(process.env.PORT ?? 3000),
@@ -195,11 +131,10 @@ await http.start(router);
 
 console.log(`
 ╔════════════════════════════════════════════════════════╗
-║  Nexora Oracle — Framework-Level Meeting System        ║
+║  Nexora — TurnManager + Meeting Tools                  ║
 ║                                                        ║
-║  Mode 1: Multi-response (TurnManager)                  ║
-║  Mode 2: Meeting (MeetingOrchestrator.runMeeting)      ║
-║  Mode 3: Thread (MeetingOrchestrator.runThread)         ║
+║  All messages → TurnManager → AgentRunner (with tools) ║
+║  Agents call open_meeting/speak/conclude themselves    ║
 ║                                                        ║
 ║  Agents: 🤖 assistant  💻 coder  🔍 researcher        ║
 ║  HTTP:   http://localhost:${http.port()}                          ║
@@ -207,4 +142,4 @@ console.log(`
 `);
 
 process.on('SIGINT', async () => { await http.stop(); process.exit(0); });
-export { llm, room, tm, orchestrator, http };
+export { llm, room, tm, http };

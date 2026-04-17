@@ -263,6 +263,18 @@ export class TurnManager {
     participant: RoomParticipant,
     messages: { role: 'user' | 'assistant'; content: string }[],
   ): Promise<string> {
+    // If participant has a runtime, use AgentRunner (enables tool calling)
+    if (participant.runtime) {
+      const lastUser = [...messages].reverse().find(m => m.role === 'user');
+      const prompt = lastUser?.content ?? '';
+      let content = '';
+      for await (const event of participant.runtime.execute({ prompt, history: messages.map(m => ({ role: m.role, content: m.content })) })) {
+        if (event.type === 'done') content = event.content;
+      }
+      return content || '(no response)';
+    }
+
+    // LLM-only fallback
     const systemPrompt = participant.respondPrompt
       ?? `You are ${participant.card.name}. ${participant.card.description}. Be concise and helpful.`;
 

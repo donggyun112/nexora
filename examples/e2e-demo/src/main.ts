@@ -85,9 +85,26 @@ for (const card of [assistant, coder, researcher]) {
     ...(card.tools.includes('read') ? [createReadTool()] : []),
     ...(card.tools.includes('grep') ? [createGrepTool()] : []),
   ];
+
+  // Per-agent LLM with tool definitions registered
+  const key = process.env.ANTHROPIC_API_KEY;
+  const auth = process.env.ANTHROPIC_AUTH_TOKEN;
+  const agentLlm = (key || auth)
+    ? new FallbackLLMProvider({
+        providers: [
+          { name: 'anthropic', provider: new AnthropicProvider({
+            apiKey: key, authToken: auth, defaultModel: 'claude-haiku-4-5-20251001',
+            tools: tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters })),
+          })},
+          { name: 'mock', provider: new SmartMockLLM() },
+        ],
+        onFallback: (f, t, r) => console.log(`[LLM] ${card.name}: ${f} → ${t}: ${r}`),
+      })
+    : llm;
+
   const runtime = new AgentRunner({
     architecture: createReactArchitecture({ systemPrompt: PROMPTS[card.name], maxIterations: 5 }),
-    llm,
+    llm: agentLlm,
     tools: new CoreToolExecutor({
       tools,
       context: { tenantId: 'default', workdir: process.cwd(), secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },

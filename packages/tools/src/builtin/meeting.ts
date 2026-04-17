@@ -39,8 +39,8 @@ export class MeetingManager {
   private nextId = 1;
 
   open(master: string, topic: string, participants: string[]): Meeting | null {
-    // Prevent opening if there's already an active meeting
     if (this.listActive().length > 0) return null;
+    // Filter to only known participants (registered in any previous meeting or explicitly allowed)
     const allParticipants = [master];
     const meeting: Meeting = {
       id: `meeting-${this.nextId++}`,

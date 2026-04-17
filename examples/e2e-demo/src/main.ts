@@ -60,9 +60,10 @@ const llm = createLLM();
 
 const PROMPTS: Record<string, string> = {
   assistant: `당신은 assistant(팀 리더). 인사/잡담/조율/회의 진행 담당.
-회의/토론/미팅 요청이 오면 즉시 open_meeting 도구를 호출하세요. participants에 ["coder","researcher"]를 넣으세요. 사용자에게 되묻지 마세요.
-회의 중에는 진행 코멘트가 아니라 주제에 대한 당신의 의견을 말하세요.
-절대 다른 에이전트인 척 하지 마세요. 짧게.`,
+회의/토론/미팅 요청이 오면 즉시 open_meeting 도구를 호출하세요. participants에 ["coder","researcher"]만 넣으세요. 다른 이름(designer, pm 등)은 넣지 마세요.
+회의 중에는 주제에 대한 당신의 의견만 말하세요.
+절대 다른 에이전트(coder, researcher)의 말을 대신 쓰지 마세요. [coder]: 나 [researcher]: 같은 형식으로 다른 에이전트인 척 하지 마세요.
+짧게 응답.`,
   coder: `당신은 coder(개발자). 코드/기술 전문가.
 회의에 초대되면 join_meeting으로 참가하고 speak으로 발언하세요.
 절대 다른 에이전트인 척 하지 마세요. [coder]: 접두사 금지. 짧게.`,
@@ -136,80 +137,57 @@ const router: MessageRouter = {
       // Meeting already opened by agent's tool call — just run the discussion loop
       orchestrator.onEvent(onChunk);
       // Join participants that haven't joined yet
-      for (const inv of m.invited) { meetingMgr.join(m.id, inv); onChunk({ type: 'tool_call', name: 'join_meeting', input: { meetingId: m.id }, agent: inv }); }
-
-      // Master posts the topic as a discussion prompt
-      const topicPrompt = `[회의 주제: ${m.topic}] 각자 의견을 말해주세요.`;
-      room.addAgentMessage(m.master, topicPrompt);
-      onChunk({ type: 'text', text: topicPrompt, agent: m.master });
-
-      // Discussion rounds
-      const agents = m.participants;
-
-      // Round 1: all agents give initial opinions in parallel
-      const mHistory = meetingMgr.formatHistory(m.id);
-      const initialResponses = await Promise.all(m.participants.map(async (agentName: string) => {
-        const participant = room.getParticipant(agentName);
-        if (!participant) return null;
-        const resp = await participant.llm.complete(
-          [{ role: 'user', content: mHistory + '\n\n위 회의 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요.' }] as LLMMessage[],
-          { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 500 },
-        );
-        const text = resp.content?.trim()
-          .replace(/^\[?(coder|researcher|assistant)\]?:?\s*/i, '')
-          .replace(/^(speak|join_meeting|pass_turn):?\s*/i, '')
-          .replace(/^---\s*/g, '').trim();
-        if (!text || text === 'PASS' || text.includes('mock agent')) return null;
-        return { agentName, text };
-      }));
-      for (const r of initialResponses) {
-        if (!r) continue;
-        room.addAgentMessage(r.agentName, r.text);
-        meetingMgr.speak(m.id, r.agentName, r.text);
-        onChunk({ type: 'text', text: r.text, agent: r.agentName });
+      for (const inv of m.invited) {
+        if (!room.getParticipant(inv)) continue; // skip unknown agents
+        meetingMgr.join(m.id, inv);
+        onChunk({ type: 'tool_call', name: 'join_meeting', input: { meetingId: m.id }, agent: inv });
       }
 
-      // Round 2+: agents continue discussion, each seeing updated meeting history
+      // Discussion via AgentRunner — agents use speak/pass_turn tools
+      // checkAvailability hides open_meeting during active meeting
       let silentRounds = 0;
-      for (let round = 1; round < 10; round++) {
-        const updatedHistory = meetingMgr.formatHistory(m.id);
-        const roundResponses = await Promise.all(m.participants.map(async (agentName: string) => {
-          const participant = room.getParticipant(agentName);
-          if (!participant) return null;
-          const resp = await participant.llm.complete(
-            [{ role: 'user', content: updatedHistory + '\n\n이전 발언들을 보고 반응하세요. 새로운 관점을 추가하거나 동의/반대를 표현하세요. 할 말 없으면 "PASS".' }] as LLMMessage[],
-            { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 500 },
-          );
-          const text = resp.content?.trim()
-            .replace(/^\[?(coder|researcher|assistant)\]?:?\s*/i, '')
-            .replace(/^(speak|join_meeting|pass_turn):?\s*/i, '')
-            .replace(/^---\s*/g, '').trim();
-          if (!text || text === 'PASS' || text.includes('mock agent') || text.includes('PASS\n')) return null;
-          return { agentName, text };
-        }));
+      for (let round = 0; round < 10; round++) {
+        const mHistory = meetingMgr.formatHistory(m.id);
+        const prompt = round === 0
+          ? `${mHistory}\n\nspeak 도구를 사용해서 위 주제에 대한 의견을 말하세요.`
+          : `${mHistory}\n\n이전 발언에 대해 speak 도구로 반응하세요. 할 말 없으면 pass_turn 도구를 호출하세요.`;
+
         let anySpoke = false;
-        for (const r of roundResponses) {
-          if (!r) continue;
-          room.addAgentMessage(r.agentName, r.text);
-          meetingMgr.speak(m.id, r.agentName, r.text);
-          onChunk({ type: 'text', text: r.text, agent: r.agentName });
-          anySpoke = true;
+        for (const agentName of m.participants as string[]) {
+          const p = room.getParticipant(agentName);
+          if (!p?.runtime) continue;
+
+          for await (const ev of p.runtime.execute({ prompt })) {
+            if (ev.type === 'tool_call') {
+              onChunk({ type: 'tool_call', name: ev.name, input: ev.input as Record<string,unknown>, agent: agentName });
+              if (ev.name === 'speak') anySpoke = true;
+            }
+            if (ev.type === 'tool_result' && ev.name === 'speak') {
+              const last = meetingMgr.get(m.id)?.messages.at(-1);
+              if (last?.agent === agentName) {
+                room.addAgentMessage(agentName, last.content);
+                onChunk({ type: 'text', text: last.content, agent: agentName });
+              }
+            }
+          }
         }
-        if (!anySpoke) { silentRounds++; if (silentRounds >= 2) break; continue; }
-        silentRounds = 0;
-        // Every 3 rounds, master checks conclude
-        if (round % 3 === 0) {
-          const masterP = room.getParticipant(m.master);
-          if (masterP) {
-            const check = await masterP.llm.complete(
-              [{ role: 'user', content: meetingMgr.formatHistory(m.id) + '\n\n합의 도달 시 "CONCLUDE: [결론]". 아니면 "CONTINUE".' }] as LLMMessage[],
-              { systemPrompt: '회의 진행자. 합의 도달 시 "CONCLUDE: [결론]". 아니면 "CONTINUE".', maxTokens: 200 },
+
+        if (!anySpoke) { silentRounds++; if (silentRounds >= 2) break; }
+        else silentRounds = 0;
+
+        // Master checks conclude every 3 rounds
+        if (round > 0 && round % 3 === 0) {
+          const mp = room.getParticipant(m.master);
+          if (mp) {
+            const check = await mp.llm.complete(
+              [{ role: 'user', content: meetingMgr.formatHistory(m.id) + '\n\n합의 시 "CONCLUDE: [결론]". 아니면 "CONTINUE".' }] as LLMMessage[],
+              { systemPrompt: '회의 진행자.', maxTokens: 200 },
             );
             if (check.content?.includes('CONCLUDE')) {
               const summary = check.content.replace(/^CONCLUDE:?\s*/i, '');
-              room.addAgentMessage(m.master, summary);
               meetingMgr.speak(m.id, m.master, summary);
               meetingMgr.conclude(m.id, m.master, summary);
+              room.addAgentMessage(m.master, summary);
               onChunk({ type: 'text', text: summary, agent: m.master });
               onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: m.id }, agent: m.master });
               break;
@@ -217,7 +195,6 @@ const router: MessageRouter = {
           }
         }
       }
-      // Force conclude if loop ended without CONCLUDE
       if (meetingMgr.get(m.id)?.status === 'active') {
         meetingMgr.conclude(m.id, m.master, '회의 종료');
         onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: m.id }, agent: m.master });

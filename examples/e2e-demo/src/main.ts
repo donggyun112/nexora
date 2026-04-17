@@ -105,7 +105,7 @@ room.join({
 });
 
 const tm = new TurnManager({
-  maxResponders: 1,
+  maxResponders: 3,
   minConfidence: 0.3,
   followUpMinConfidence: 0.4,
   onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),

@@ -197,16 +197,21 @@ async function threadConversation(
  * Detect which mode to use based on user message.
  */
 async function detectMode(text: string): Promise<{ mode: 1 | 2 | 3; agents?: [string, string] }> {
-  const resp = await llm.complete(
-    [{ role: 'user', content: text }],
-    {
-      systemPrompt: `당신은 대화 모드를 결정하는 오라클입니다. 사용자 메시지를 보고 JSON 하나만 출력하세요.
+  // Include recent conversation history for context
+  const history = room.historyForLLM().slice(-10);
+  const messages: LLMMessage[] = [
+    ...history,
+    { role: 'user', content: text },
+  ];
 
-{"mode":1} — 사용자에게 직접 답변. 질문, 인사, 의견 요청 등.
-{"mode":2} — 에이전트들끼리 자율 토론 필요. 주제 선정, 의사결정, 브레인스토밍, 비교 분석 등.
-{"mode":3,"agents":["A","B"]} — 특정 두 에이전트가 1:1 심층 논의. A,B는 coder/researcher/assistant 중 선택.
+  const resp = await llm.complete(messages, {
+      systemPrompt: `당신은 대화 모드를 결정하는 오라클입니다. 대화 맥락과 최신 메시지를 보고 JSON 하나만 출력하세요.
 
-에이전트: coder(개발), researcher(연구), assistant(일반)
+{"mode":1} — 사용자에게 직접 답변. 질문, 인사, 의견 요청, 각자 의견 말해달라는 요청 등.
+{"mode":2} — 에이전트들끼리 자율 토론 필요. 주제 선정, 의사결정, 브레인스토밍 등. 사용자가 개입 없이 에이전트끼리 논의하라고 할 때.
+{"mode":3,"agents":["A","B"]} — 특정 두 에이전트가 1:1 심층 논의. 사용자가 특정 에이전트들을 지목해서 둘이 대화하라고 할 때.
+
+에이전트: coder(개발), researcher(연구), assistant(일반/팀리더)
 JSON만 출력. 설명 금지.`,
       maxTokens: 50,
     },

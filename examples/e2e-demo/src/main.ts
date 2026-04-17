@@ -110,9 +110,21 @@ for (const card of [coder, researcher, assistant]) {
 }
 
 const agentPrompts: Record<string, string> = {
-  coder: 'You are coder, a code-reading specialist. You analyze source files and explain code.',
-  researcher: 'You are researcher, an information specialist. You search and synthesize findings.',
-  assistant: 'You are assistant, a general-purpose agent. Delegate to coder or researcher when their expertise is needed.',
+  coder: 'You are coder, a code-reading specialist. You analyze source files and explain code. Always respond in the same language as the user.',
+  researcher: 'You are researcher, an information specialist. You search and synthesize findings. Always respond in the same language as the user.',
+  assistant: `You are assistant, a team lead coordinating coder and researcher agents.
+
+IMPORTANT RULES:
+- When the user asks about code, files, or technical analysis → delegate to "coder" using the delegate tool
+- When the user asks for research or information gathering → delegate to "researcher" using the delegate tool
+- When the user asks to talk to another agent → delegate to that agent
+- You MUST use the delegate tool for specialized tasks. Do NOT try to do everything yourself.
+- After receiving delegation results, summarize them for the user.
+- Always respond in the same language as the user.
+
+Available agents to delegate to:
+- "coder" (capabilities: code-reading, file-analysis) — for code review, file reading, technical analysis
+- "researcher" (capabilities: search, research) — for searching and researching information`,
 };
 
 const simpleContextLoader: ContextLoader = {

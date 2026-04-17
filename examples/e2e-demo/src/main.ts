@@ -171,7 +171,11 @@ const router: MessageRouter = {
             [{ role: 'user', content: mHistory + '\n\n위 회의 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요.' }] as LLMMessage[],
             { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 300 },
           );
-          const text = resp.content?.trim();
+          const text = resp.content?.trim()
+            .replace(/^\[?(coder|researcher|assistant)\]?:?\s*/i, '')
+            .replace(/^(speak|join_meeting|pass_turn):?\s*/i, '')
+            .replace(/^---\s*/g, '')
+            .trim();
           if (!text || text === 'PASS' || text.includes('mock agent')) continue;
           room.addAgentMessage(agentName, text);
           meetingMgr.speak(m.id, agentName, text);

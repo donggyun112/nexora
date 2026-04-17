@@ -157,54 +157,50 @@ async function autonomousDiscussion(
   meetingMgr.speak(meeting.id, master, opening);
   onChunk({ type: 'text', text: opening, agent: master });
 
-  // Discussion loop
+  // Discussion loop — master moderates each turn
   for (let round = 0; round < 10; round++) {
     const history = meetingMgr.formatHistory(meeting.id);
 
-    // Dynamic turn order: if last message mentions an agent, they go first
-    const lastMsg = meeting.messages[meeting.messages.length - 1];
-    const turnOrder = [...agents];
-    if (lastMsg) {
-      const mentioned = agents.find(a => a !== lastMsg.agent && lastMsg.content.toLowerCase().includes(a));
-      if (mentioned) {
-        turnOrder.splice(turnOrder.indexOf(mentioned), 1);
-        turnOrder.unshift(mentioned);
-      }
-    }
-
-    for (const agent of turnOrder) {
-      const text = await agentSay(agent, [
-        { role: 'user', content: `${history}\n\n---\n이전 대화를 보고 발언하세요. 할 말 없으면 "PASS"만 출력. 절대 [이름]: 접두사를 붙이지 마세요.` },
-      ]);
-      if (!text || text === 'PASS' || text.includes('mock agent') || text.includes('PASS\n')) {
-        continue;
-      }
-      meetingMgr.speak(meeting.id, agent, text);
-      onChunk({ type: 'text', text, agent });
-    }
-
-    // Master decides
-    const updatedHistory = meetingMgr.formatHistory(meeting.id);
-    const decision = await agentSay(master, [
-      { role: 'user', content: `${updatedHistory}\n\n---\n당신은 턴마스터입니다. 두 가지 중 하나만 하세요:
-1. 합의 도달 시: "CONCLUDE: [한 줄 결론]"
-2. 더 필요 시: "CONTINUE" (한 마디만. 길게 정리하지 마세요.)
-에이전트들이 대화 중이면 끼어들지 말고 CONTINUE만 출력하세요.` },
+    // Master decides: who speaks next, or conclude?
+    const moderation = await agentSay(master, [
+      { role: 'user', content: `${history}\n\n---\n당신은 회의 진행자입니다. 다음 중 하나를 하세요:
+1. 특정 에이전트를 지명: "NEXT: [에이전트이름] [질문이나 요청]" (예: "NEXT: coder 기술적으로 가능한가요?")
+2. 회의 종료: "CONCLUDE: [최종 결론 한 줄]"
+반드시 NEXT: 또는 CONCLUDE: 로 시작하세요.` },
     ]);
 
-    if (decision.includes('CONCLUDE')) {
-      const summary = decision.replace(/^CONCLUDE:?\s*/i, '');
+    if (moderation.includes('CONCLUDE')) {
+      const summary = moderation.replace(/^CONCLUDE:?\s*/i, '');
+      meetingMgr.speak(meeting.id, master, summary);
       meetingMgr.conclude(meeting.id, master, summary);
       onChunk({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: master });
       onChunk({ type: 'text', text: summary, agent: master });
-      return; // Exit immediately after conclude
+      return;
     }
 
-    meetingMgr.speak(meeting.id, master, decision);
-    // Only show master's message if it's not just "CONTINUE"
-    const cleanDecision = decision.replace(/^CONTINUE:?\s*/i, '').trim();
-    if (cleanDecision && cleanDecision !== 'CONTINUE') {
-      onChunk({ type: 'text', text: cleanDecision, agent: master });
+    // Parse NEXT: [agent] [message]
+    const nextMatch = moderation.match(/^NEXT:\s*(coder|researcher)\s*(.*)/is);
+    if (nextMatch) {
+      const [, targetAgent, masterMsg] = nextMatch;
+      // Show master's moderation message
+      if (masterMsg.trim()) {
+        meetingMgr.speak(meeting.id, master, masterMsg.trim());
+        onChunk({ type: 'text', text: masterMsg.trim(), agent: master });
+      }
+
+      // Designated agent speaks
+      const agentHistory = meetingMgr.formatHistory(meeting.id);
+      const response = await agentSay(targetAgent, [
+        { role: 'user', content: `${agentHistory}\n\n---\n진행자가 당신에게 발언을 요청했습니다. 응답하세요. 짧고 핵심적으로.` },
+      ]);
+      if (response && response !== 'PASS' && !response.includes('mock agent')) {
+        meetingMgr.speak(meeting.id, targetAgent, response);
+        onChunk({ type: 'text', text: response, agent: targetAgent });
+      }
+    } else {
+      // Fallback: master said something but didn't follow format
+      meetingMgr.speak(meeting.id, master, moderation);
+      onChunk({ type: 'text', text: moderation, agent: master });
     }
   }
 }

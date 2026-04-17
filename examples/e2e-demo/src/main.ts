@@ -12,7 +12,7 @@
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
 import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
-import { ConversationRoom, TurnManager } from '@nexora/conversation';
+import { ConversationRoom } from '@nexora/conversation';
 import { HttpAdapter } from '@nexora/adapters';
 import { SmartMockLLM } from './mock-llm.js';
 
@@ -110,60 +110,64 @@ room.join({
 항상 사용자의 언어로 짧고 핵심적으로 응답하세요.`,
 });
 
-const tm = new TurnManager({
-  maxResponders: 3,
-  minConfidence: 0.3,
-  followUpMinConfidence: 0.4,
-  onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
-});
-
 // ─── 4. Router — streams each agent's response as separate SSE chunks ────
+
+// ─── 4. Router — direct LLM calls for agent-to-agent conversation ────────
+
+// Agent turn order for group discussion
+const AGENTS = ['coder', 'researcher', 'assistant'] as const;
+
+async function agentRespond(agentName: string, onChunk: (c: OutboundChunk) => void): Promise<string> {
+  const participant = room.getParticipant(agentName);
+  if (!participant) return '';
+
+  const history = room.historyForLLM();
+  const messages = history.map(m => ({ role: m.role, content: m.content }));
+
+  const response = await participant.llm.complete(
+    messages as import('@nexora/contracts').LLMMessage[],
+    { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 512 },
+  );
+
+  const content = response.content.trim();
+  if (!content || content === 'PASS') return '';
+
+  room.addAgentMessage(agentName, content);
+  onChunk({ type: 'text', text: content, agent: agentName });
+  return content;
+}
 
 const router: MessageRouter = {
   async route(msg: InboundMessage): Promise<OutboundMessage> {
-    const rmsg = room.addUserMessage(msg.content, msg.displayName);
-    const result = await tm.handleMessage(room, rmsg);
-    const content = result.responses.map(r => `**${r.agentName}**: ${r.content}`).join('\n\n');
-    return { content: content || '(아무도 응답하지 않았습니다)' };
+    room.addUserMessage(msg.content, msg.displayName);
+    const parts: string[] = [];
+    for (const name of AGENTS) {
+      const text = await agentRespond(name, () => {});
+      if (text) parts.push(`**${name}**: ${text}`);
+    }
+    return { content: parts.join('\n\n') || '(응답 없음)' };
   },
 
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
-    const rmsg = room.addUserMessage(msg.content, msg.displayName);
+    room.addUserMessage(msg.content, msg.displayName);
 
-    // Multi-turn agent conversation loop:
-    // Each round, TurnManager picks who speaks. That agent sees the full
-    // history (including previous agents' messages) and responds.
-    // Loop continues until an agent says they're done or max rounds reached.
-    const MAX_ROUNDS = 5;
-    const responded = new Set<string>();
-
-    for (let round = 0; round < MAX_ROUNDS; round++) {
-      const result = await tm.handleMessage(room, round === 0
-        ? rmsg
-        : room.history()[room.history().length - 1]!);
-
-      if (result.responses.length === 0) break;
-
-      let shouldContinue = false;
-      for (const resp of result.responses) {
-        onChunk({ type: 'text', text: resp.content, agent: resp.agentName });
-        responded.add(resp.agentName);
-
-        // Check if the agent is asking another agent or continuing discussion
-        const lower = resp.content.toLowerCase();
-        const mentionsOther = ['coder', 'researcher', 'assistant'].some(
-          name => name !== resp.agentName && lower.includes(name)
-        );
-        if (mentionsOther && responded.size < 3) {
-          shouldContinue = true;
-        }
-      }
-
-      if (!shouldContinue) break;
+    // Round 1: each agent responds in order, seeing previous agents' messages
+    for (const name of AGENTS) {
+      await agentRespond(name, onChunk);
     }
 
-    const allContent = room.history().slice(-responded.size).map(m => m.content).join('\n\n');
-    onChunk({ type: 'done', content: allContent, agent: 'assistant' });
+    // Round 2: if any agent mentioned another, let them react
+    const lastMessages = room.history().slice(-3);
+    const needsMore = lastMessages.some(m =>
+      m.agentName && AGENTS.some(a => a !== m.agentName && m.content.toLowerCase().includes(a))
+    );
+    if (needsMore) {
+      for (const name of AGENTS) {
+        await agentRespond(name, onChunk);
+      }
+    }
+
+    onChunk({ type: 'done', content: '', agent: 'assistant' });
   },
 };
 
@@ -197,4 +201,4 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-export { llm, room, tm, http };
+export { llm, room, http };

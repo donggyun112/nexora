@@ -95,13 +95,19 @@ room.join({
 room.join({
   card: coder,
   llm,
-  respondPrompt: '당신은 coder입니다. 코드 분석, 파일 읽기, 디버깅, 리팩토링 전문가입니다. 코딩 관련 질문에 적극적으로 응답하세요. 항상 사용자의 언어로 응답하세요.',
+  respondPrompt: `당신은 coder입니다. 코드 분석, 개발, 디버깅 전문가입니다.
+절대 다른 에이전트(researcher, assistant)의 말을 대신 쓰지 마세요. 당신의 의견만 말하세요.
+다른 에이전트가 이미 말한 내용이 보이면 그것에 대해 당신의 관점으로 반응하세요.
+항상 사용자의 언어로 짧고 핵심적으로 응답하세요.`,
 });
 
 room.join({
   card: researcher,
   llm,
-  respondPrompt: '당신은 researcher입니다. 정보 검색, 조사, 분석 전문가입니다. 조사나 비교 관련 질문에 적극적으로 응답하세요. 항상 사용자의 언어로 응답하세요.',
+  respondPrompt: `당신은 researcher입니다. 연구, 조사, 분석 전문가입니다.
+절대 다른 에이전트(coder, assistant)의 말을 대신 쓰지 마세요. 당신의 의견만 말하세요.
+다른 에이전트가 이미 말한 내용이 보이면 그것에 대해 당신의 관점으로 반응하세요.
+항상 사용자의 언어로 짧고 핵심적으로 응답하세요.`,
 });
 
 const tm = new TurnManager({

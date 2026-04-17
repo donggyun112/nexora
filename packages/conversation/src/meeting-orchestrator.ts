@@ -80,11 +80,11 @@ export class MeetingOrchestrator {
     for (let round = 0; round < this.maxRounds; round++) {
       const history = this.mgr.formatHistory(meeting.id);
       const moderation = await this.agentSay(masterName,
-        `${history}\n\n---\n회의 진행자로서 다음 중 하나를 하세요:
+        `${history}\n\n---\n회의 진행자로서 다음 중 하나만 하세요 (이전 발언을 반복하지 마세요):
 1. 지명: "NEXT: [이름] [질문]"
 2. 자유발언: "OPEN: [질문]"
 3. 종료: "CONCLUDE: [결론]"
-반드시 NEXT: 또는 OPEN: 또는 CONCLUDE: 로 시작.`);
+NEXT/OPEN/CONCLUDE 중 하나로만 시작. 부가 설명 금지.`);
 
       // CONCLUDE
       if (moderation.includes('CONCLUDE')) {

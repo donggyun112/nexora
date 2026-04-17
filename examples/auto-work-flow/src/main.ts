@@ -90,7 +90,25 @@ function reply(content: string): LLMResponse {
 
 // ─── 3. Infrastructure ──────────────────────────────────────────────────
 
-const llm = new SmartMockLLM();
+import { AnthropicProvider, FallbackLLMProvider } from '@nexora/core';
+
+function createLLM(): LLMProvider {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (apiKey) {
+    console.log('[LLM] Using Anthropic (claude-haiku-4-5)');
+    return new FallbackLLMProvider({
+      providers: [
+        { name: 'anthropic', provider: new AnthropicProvider({ apiKey, defaultModel: 'claude-haiku-4-5-20251001' }) },
+        { name: 'mock', provider: new SmartMockLLM() },
+      ],
+      onFallback: (from, to, reason) => console.log(`[LLM] ${from} → ${to}: ${reason}`),
+    });
+  }
+  console.log('[LLM] No ANTHROPIC_API_KEY — using mock LLM');
+  return new SmartMockLLM();
+}
+
+const llm = createLLM();
 const transport = new LocalTransport();
 const registry = new InMemoryAgentRegistry();
 const workdir = process.cwd();

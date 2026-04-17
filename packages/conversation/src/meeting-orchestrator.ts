@@ -178,14 +178,35 @@ export class MeetingOrchestrator {
 
   /** Free floor: all participants can speak if they have something to say */
   private async freeFloor(meeting: Meeting, agents: string[], onSpeak?: () => void): Promise<void> {
-    const history = this.mgr.formatHistory(meeting.id);
     for (const agent of agents) {
-      const text = await this.agentSay(agent,
-        `${history}\n\n---\n진행자가 자유 발언을 열었습니다. 위 대화 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요. 반드시 한 마디 이상 하세요.`);
-      if (text && text !== 'PASS' && !text.includes('mock agent')) {
-        this.mgr.speak(meeting.id, agent, text);
-        this.emit({ type: 'text', text, agent });
-        onSpeak?.();
+      const participant = this.room.getParticipant(agent);
+      if (!participant) continue;
+
+      const history = this.mgr.formatHistory(meeting.id);
+
+      if (participant.runtime) {
+        // Use AgentRunner — agent can call tools (speak, pass_turn, etc.)
+        let content = '';
+        const input: AgentInput = { prompt: `${history}\n\n---\n진행자가 자유 발언을 열었습니다. 당신의 전문 분야 관점에서 의견을 말하세요.` };
+        for await (const event of participant.runtime.execute(input)) {
+          if (event.type === 'tool_call') this.emit({ type: 'tool_call', name: event.name, input: event.input as Record<string, unknown>, agent });
+          else if (event.type === 'tool_result') this.emit({ type: 'tool_result', name: event.name, isError: event.isError, agent });
+          else if (event.type === 'done') content = event.content;
+        }
+        if (content && content !== 'PASS') {
+          this.mgr.speak(meeting.id, agent, content);
+          this.emit({ type: 'text', text: content, agent });
+          onSpeak?.();
+        }
+      } else {
+        // LLM fallback
+        const text = await this.agentSay(agent,
+          `${history}\n\n---\n진행자가 자유 발언을 열었습니다. 당신의 전문 분야 관점에서 의견을 말하세요. 할 말 없으면 "PASS".`);
+        if (text && text !== 'PASS' && !text.includes('mock agent')) {
+          this.mgr.speak(meeting.id, agent, text);
+          this.emit({ type: 'text', text, agent });
+          onSpeak?.();
+        }
       }
     }
   }

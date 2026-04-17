@@ -11,9 +11,10 @@
 
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider, LLMMessage } from '@nexora/contracts';
-import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
+import { AnthropicProvider, FallbackLLMProvider, createProvider, AgentRunner, CoreToolExecutor } from '@nexora/core';
 import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@nexora/conversation';
-import { MeetingManager } from '@nexora/tools';
+import { MeetingManager, createMeetingTools, createReadTool, createGrepTool } from '@nexora/tools';
+import { createReactArchitecture } from '@nexora/architectures';
 import { HttpAdapter } from '@nexora/adapters';
 import { SmartMockLLM } from './mock-llm.js';
 
@@ -68,6 +69,13 @@ const PROMPTS: Record<string, string> = {
   researcher: '당신은 researcher(연구원). 연구/분석 전문가. 절대 다른 에이전트인 척 하지 마세요. [researcher]: 접두사 금지. 짧게.',
 };
 
+const tm = new TurnManager({
+  maxResponders: 3, minConfidence: 0.3, followUpMinConfidence: 0.4,
+  onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
+});
+
+const meetingMgr = new MeetingManager();
+
 const room = new ConversationRoom('nexora-chat');
 for (const card of [assistant, coder, researcher]) {
   const aliases: Record<string, string[]> = {
@@ -75,15 +83,23 @@ for (const card of [assistant, coder, researcher]) {
     coder: ['코더', '개발자', '개발'],
     researcher: ['리서처', '연구원', '연구'],
   };
-  room.join({ card, llm, respondPrompt: PROMPTS[card.name], aliases: aliases[card.name] });
+  // Each agent gets an AgentRunner with meeting tools + base tools
+  const agentTools = [
+    ...createMeetingTools(meetingMgr, card.name),
+    ...(card.tools.includes('read') ? [createReadTool()] : []),
+    ...(card.tools.includes('grep') ? [createGrepTool()] : []),
+  ];
+  const runtime = new AgentRunner({
+    architecture: createReactArchitecture({ systemPrompt: PROMPTS[card.name], maxIterations: 5 }),
+    llm,
+    tools: new CoreToolExecutor({
+      tools: agentTools,
+      context: { tenantId: 'default', workdir: process.cwd(), secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+    }),
+  });
+  room.join({ card, llm, respondPrompt: PROMPTS[card.name], aliases: aliases[card.name], runtime });
 }
 
-const tm = new TurnManager({
-  maxResponders: 3, minConfidence: 0.3, followUpMinConfidence: 0.4,
-  onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
-});
-
-const meetingMgr = new MeetingManager();
 const orchestrator = new MeetingOrchestrator(room, meetingMgr);
 
 // ─── 4. Oracle (LLM-based mode detection) ────────────────────────────────

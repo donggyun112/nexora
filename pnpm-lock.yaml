@@ -66,6 +66,9 @@ importers:
       '@nexora/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@nexora/conversation':
+        specifier: workspace:*
+        version: link:../../packages/conversation
       '@nexora/core':
         specifier: workspace:*
         version: link:../../packages/core

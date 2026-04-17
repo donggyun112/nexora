@@ -1,45 +1,30 @@
 /**
- * Nexora E2E Demo — runnable without API keys.
+ * Nexora E2E Demo — multi-agent group chat.
  *
- * 3 agents, HTTP endpoint, full pipeline verification.
+ * 3 agents in a ConversationRoom. TurnManager decides who speaks.
+ * Like a Discord channel where agents are members.
  *
  * Run:
  *   pnpm build && cd examples/e2e-demo && pnpm start
- *
- * Test:
- *   curl -X POST http://localhost:3000/messages \
- *     -H "Content-Type: application/json" \
- *     -d '{"content": "hello"}'
- *
- *   curl -X POST http://localhost:3000/messages \
- *     -H "Content-Type: application/json" \
- *     -d '{"content": "who are you"}'
- *
- *   curl -X POST http://localhost:3000/messages \
- *     -H "Content-Type: application/json" \
- *     -d '{"content": "what tools do you have?"}'
+ *   Open http://localhost:3000
  */
 
 import { defineAgent, topic } from '@nexora/contracts';
-import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@nexora/core';
-import { createReactArchitecture } from '@nexora/architectures';
-import { createReadTool, createGrepTool, createDelegateTool } from '@nexora/tools';
-import type { CompiledSubagent, Subagent } from '@nexora/tools';
-import { LocalTransport } from '@nexora/transport';
+import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
+import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
+import { ConversationRoom, TurnManager } from '@nexora/conversation';
 import { HttpAdapter } from '@nexora/adapters';
-import { GatewayRouter } from '@nexora/gateway';
-import { InMemoryAgentRegistry } from '@nexora/registry';
 import { SmartMockLLM } from './mock-llm.js';
 
-import type { ContextLoader, AgentContext, MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, AgentEvent } from '@nexora/contracts';
+import type { LLMProvider } from '@nexora/contracts';
 
 // ─── 1. Agents ──────────────────────────────────────────────────────────
 
 const coder = defineAgent({
   name: 'coder',
   version: '0.1.0',
-  description: 'Reads and analyzes code files',
-  architecture: 'react',
+  description: '코드 분석 전문가. 파일을 읽고 코드를 분석하고 설명합니다. 코딩, 디버깅, 리팩토링 관련 질문에 응답합니다.',
+  architecture: 'conversation',
   tools: ['read', 'grep'],
   capabilities: ['code-reading', 'file-analysis'],
   subscribes: [topic('coder.requested')],
@@ -49,8 +34,8 @@ const coder = defineAgent({
 const researcher = defineAgent({
   name: 'researcher',
   version: '0.1.0',
-  description: 'Searches and researches information',
-  architecture: 'react',
+  description: '정보 검색 전문가. 파일을 검색하고 정보를 종합합니다. 조사, 분석, 비교 관련 질문에 응답합니다.',
+  architecture: 'conversation',
   tools: ['grep'],
   capabilities: ['search', 'research'],
   subscribes: [topic('researcher.requested')],
@@ -60,34 +45,26 @@ const researcher = defineAgent({
 const assistant = defineAgent({
   name: 'assistant',
   version: '0.1.0',
-  description: 'General-purpose assistant, routes to specialists',
-  architecture: 'react',
+  description: '팀 리더. 일반적인 질문에 답하고, 인사나 잡담을 처리합니다. 기술적 질문은 coder나 researcher가 더 적합합니다.',
+  architecture: 'conversation',
   tools: ['read', 'grep'],
   capabilities: ['general', 'routing'],
   subscribes: [topic('assistant.requested')],
   publishes: [topic('assistant.completed')],
 });
 
-// ─── 2. Infrastructure ──────────────────────────────────────────────────
-
-import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
-import type { LLMProvider } from '@nexora/contracts';
+// ─── 2. LLM ─────────────────────────────────────────────────────────────
 
 function createLLM(): LLMProvider {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const anthropicAuth = process.env.ANTHROPIC_AUTH_TOKEN;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
 
-  const toolDefs = [...baseTools, createDelegateTool({ transport, registry, callerAgentName: 'assistant' })];
-  const tools = toolDefs.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
-
-  // Priority: Anthropic direct → OpenRouter → Mock
   if (anthropicKey || anthropicAuth) {
-    const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters }));
     console.log('[LLM] Using Anthropic (claude-haiku-4-5)', anthropicAuth ? '(OAuth)' : '(API key)');
     return new FallbackLLMProvider({
       providers: [
-        { name: 'anthropic', provider: new AnthropicProvider({ apiKey: anthropicKey, authToken: anthropicAuth, defaultModel: 'claude-haiku-4-5-20251001', tools: anthropicTools }) },
+        { name: 'anthropic', provider: new AnthropicProvider({ apiKey: anthropicKey, authToken: anthropicAuth, defaultModel: 'claude-haiku-4-5-20251001' }) },
         { name: 'mock', provider: new SmartMockLLM() },
       ],
       onFallback: (from, to, reason) => console.log(`[LLM] ${from} → ${to}: ${reason}`),
@@ -95,174 +72,68 @@ function createLLM(): LLMProvider {
   }
   if (openrouterKey) {
     console.log('[LLM] Using OpenRouter');
-    return createProvider('openrouter', { apiKey: openrouterKey, tools });
+    return createProvider('openrouter', { apiKey: openrouterKey });
   }
   console.log('[LLM] No API key — using mock LLM');
   return new SmartMockLLM();
 }
 
-const transport = new LocalTransport();
-const registry = new InMemoryAgentRegistry();
-
-// Register all agent cards so delegate can discover by capability
-for (const card of [coder, researcher, assistant]) {
-  await registry.register(card);
-}
-
-const agentPrompts: Record<string, string> = {
-  coder: `You are coder, a code-reading specialist. You analyze source files and explain code. Always respond in the same language as the user.
-You can delegate to "researcher" if you need information gathering. Use the delegate tool when needed.`,
-  researcher: `You are researcher, an information specialist. You search and synthesize findings. Always respond in the same language as the user.
-You can delegate to "coder" if you need code analysis. Use the delegate tool when needed.`,
-  assistant: `You are assistant, a team lead coordinating coder and researcher agents.
-
-IMPORTANT RULES:
-- When the user asks about code, files, or technical analysis → delegate to "coder" using the delegate tool
-- When the user asks for research or information gathering → delegate to "researcher" using the delegate tool
-- When the user asks to talk to another agent → delegate to that agent
-- You MUST use the delegate tool for specialized tasks. Do NOT try to do everything yourself.
-- After receiving delegation results, summarize them for the user.
-- Always respond in the same language as the user.
-
-Available agents to delegate to:
-- "coder" (capabilities: code-reading, file-analysis) — for code review, file reading, technical analysis
-- "researcher" (capabilities: search, research) — for searching and researching information`,
-};
-
-const simpleContextLoader: ContextLoader = {
-  async load(_tenantId: string, _agentName: string): Promise<AgentContext> {
-    return {
-      tenantId: _tenantId ?? 'default',
-      systemPrompt: agentPrompts[_agentName] ?? 'You are a helpful AI agent.',
-      tools: [],
-      limits: {},
-      runtime: { workdir: process.cwd() },
-    } as unknown as AgentContext;
-  },
-};
-
-// ─── 3. Bootstrap Agents ─────────────────────────────────────────────────
-
-const readTool = createReadTool();
-readTool.isConcurrencySafe = true;
-readTool.maxResultSizeChars = 50_000;
-
-const grepTool = createGrepTool();
-grepTool.isConcurrencySafe = true;
-
-const baseTools = [readTool, grepTool];
-const workdir = process.cwd();
 const llm = createLLM();
 
-const toAgentInput = (env: { payload: unknown }) => ({
-  prompt: typeof env.payload === 'object' && env.payload !== null
-    ? (env.payload as { prompt?: string; content?: string }).prompt
-      ?? (env.payload as { content?: string }).content
-      ?? JSON.stringify(env.payload)
-    : String(env.payload),
+// ─── 3. Conversation Room — all agents in one channel ────────────────────
+
+const room = new ConversationRoom('nexora-chat');
+
+room.join({
+  card: assistant,
+  llm,
+  respondPrompt: '당신은 assistant입니다. 팀 리더로서 일반적인 질문, 인사, 잡담에 응답합니다. 기술적 질문은 coder나 researcher에게 양보하세요. 항상 사용자의 언어로 응답하세요.',
 });
 
-for (const card of [coder, researcher, assistant]) {
-  await bootstrapAgent({
-    card,
-    contextLoader: simpleContextLoader,
-    transport,
-    createRuntime: () => {
-      const tools = card.name === 'assistant'
-        ? [...baseTools, createDelegateTool({ transport, registry, callerAgentName: card.name })]
-        : baseTools;
+room.join({
+  card: coder,
+  llm,
+  respondPrompt: '당신은 coder입니다. 코드 분석, 파일 읽기, 디버깅, 리팩토링 전문가입니다. 코딩 관련 질문에 적극적으로 응답하세요. 항상 사용자의 언어로 응답하세요.',
+});
 
-      return new AgentRunner({
-        architecture: createReactArchitecture({
-          systemPrompt: agentPrompts[card.name],
-        }),
-        llm,
-        tools: new CoreToolExecutor({
-          tools,
-          context: {
-            tenantId: 'default',
-            workdir,
-            secrets: { get: async () => undefined },
-            logger: { info: () => {}, warn: () => {}, error: () => {} },
-          },
-        }),
-      });
-    },
-    toAgentInput,
-  });
-}
+room.join({
+  card: researcher,
+  llm,
+  respondPrompt: '당신은 researcher입니다. 정보 검색, 조사, 분석 전문가입니다. 조사나 비교 관련 질문에 적극적으로 응답하세요. 항상 사용자의 언어로 응답하세요.',
+});
 
-// ─── 4. Gateway — LocalRuntimeRouter for real streaming ──────────────────
+const tm = new TurnManager({
+  maxResponders: 3,
+  minConfidence: 0.3,
+  followUpMinConfidence: 0.4,
+  onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),
+});
 
-function buildRuntime(name: string, extraTools: import('@nexora/contracts').ToolDefinition[] = []) {
-  return new AgentRunner({
-    architecture: createReactArchitecture({ systemPrompt: agentPrompts[name] }),
-    llm,
-    tools: new CoreToolExecutor({
-      tools: [...baseTools, ...extraTools],
-      context: { tenantId: 'default', workdir, secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
-    }),
-  });
-}
-
-// Compiled subagents — can delegate to each other via registry (transport-based)
-// Note: inter-agent delegation goes through bootstrapped agents on transport,
-// not compiled subagents (to avoid circular references).
-const coderSubagent: CompiledSubagent = {
-  type: 'compiled', name: 'coder',
-  description: 'Code reading and file analysis specialist',
-  runtime: buildRuntime('coder'),
-};
-const researcherSubagent: CompiledSubagent = {
-  type: 'compiled', name: 'researcher',
-  description: 'Search and research specialist',
-  runtime: buildRuntime('researcher'),
-};
-
-// Custom router: streams parent + child agent events to SSE with agent identity
-function createAssistantRuntime(onChunk?: (c: OutboundChunk) => void) {
-  const delegateTool = createDelegateTool({
-    transport, registry, callerAgentName: 'assistant',
-    subagents: [coderSubagent, researcherSubagent],
-    blockedToolsForChild: [],
-    onSubagentEvent: onChunk ? (name, event) => {
-      if (event.type === 'text') onChunk({ type: 'text', text: event.text, agent: name });
-      else if (event.type === 'tool_call') onChunk({ type: 'tool_call', name: event.name, input: event.input as Record<string,unknown>, agent: name });
-      else if (event.type === 'tool_result') onChunk({ type: 'tool_result', name: event.name, isError: event.isError, agent: name });
-    } : undefined,
-  });
-  return new AgentRunner({
-    architecture: createReactArchitecture({ systemPrompt: agentPrompts['assistant'] }),
-    llm,
-    tools: new CoreToolExecutor({
-      tools: [...baseTools, delegateTool],
-      context: { tenantId: 'default', workdir, secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
-    }),
-  });
-}
+// ─── 4. Router — streams each agent's response as separate SSE chunks ────
 
 const router: MessageRouter = {
   async route(msg: InboundMessage): Promise<OutboundMessage> {
-    let content = '';
-    for await (const ev of createAssistantRuntime().execute({ prompt: msg.content })) {
-      if (ev.type === 'done') content = ev.content;
-    }
-    return { content };
+    const rmsg = room.addUserMessage(msg.content, msg.displayName);
+    const result = await tm.handleMessage(room, rmsg);
+    const content = result.responses.map(r => `**${r.agentName}**: ${r.content}`).join('\n\n');
+    return { content: content || '(아무도 응답하지 않았습니다)' };
   },
+
   async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
-    for await (const ev of createAssistantRuntime(onChunk).execute({ prompt: msg.content })) {
-      if (ev.type === 'text') onChunk({ type: 'text', text: ev.text, agent: 'assistant' });
-      else if (ev.type === 'tool_call') {
-        if (ev.name === 'delegate') onChunk({ type: 'delegate_start', from: 'assistant', to: String((ev.input as {capability?:string})?.capability ?? ''), capability: String((ev.input as {capability?:string})?.capability ?? '') });
-        else onChunk({ type: 'tool_call', name: ev.name, input: ev.input as Record<string,unknown>, agent: 'assistant' });
-      }
-      else if (ev.type === 'tool_result' && ev.name === 'delegate') onChunk({ type: 'delegate_end', from: 'assistant', to: '' });
-      else if (ev.type === 'tool_result') onChunk({ type: 'tool_result', name: ev.name, isError: ev.isError, agent: 'assistant' });
-      else if (ev.type === 'done') onChunk({ type: 'done', content: ev.content, agent: 'assistant' });
-      else if (ev.type === 'error') onChunk({ type: 'error', message: ev.message, agent: 'assistant' });
+    const rmsg = room.addUserMessage(msg.content, msg.displayName);
+    const result = await tm.handleMessage(room, rmsg);
+
+    for (const resp of result.responses) {
+      // Each agent's response as a separate text chunk with agent identity
+      onChunk({ type: 'text', text: resp.content, agent: resp.agentName });
     }
+
+    const finalContent = result.responses.map(r => r.content).join('\n\n');
+    onChunk({ type: 'done', content: finalContent, agent: result.responses[0]?.agentName ?? 'assistant' });
   },
 };
+
+// ─── 5. HTTP Server ──────────────────────────────────────────────────────
 
 const http = new HttpAdapter({
   port: Number(process.env.PORT ?? 3000),
@@ -274,16 +145,14 @@ await http.start(router);
 
 console.log(`
 ╔════════════════════════════════════════════════════════╗
-║  Nexora E2E Demo — 3 agents, no API key needed        ║
+║  Nexora — Multi-Agent Group Chat                       ║
 ║                                                        ║
-║  Agents: coder, researcher, assistant                  ║
+║  Agents: 🤖 assistant  💻 coder  🔍 researcher        ║
 ║  HTTP:   http://localhost:${http.port()}                          ║
+║  UI:     http://localhost:5173 (run pnpm dev in web-ui)║
 ║                                                        ║
-║  Try:                                                  ║
-║  curl localhost:${http.port()}/messages -d '{"content":"hello"}'  ║
-║  curl localhost:${http.port()}/messages -d '{"content":"help"}'   ║
-║  curl localhost:${http.port()}/messages -d '{"content":"who are you"}'   ║
-║  curl localhost:${http.port()}/health                             ║
+║  TurnManager decides who speaks based on relevance.    ║
+║  Multiple agents can respond to the same message.      ║
 ║                                                        ║
 ║  Press Ctrl+C to stop.                                 ║
 ╚════════════════════════════════════════════════════════╝
@@ -291,8 +160,7 @@ console.log(`
 
 process.on('SIGINT', async () => {
   await http.stop();
-  await transport.close();
   process.exit(0);
 });
 
-export { llm, transport, router, http };
+export { llm, room, tm, http };

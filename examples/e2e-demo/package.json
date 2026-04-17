@@ -15,6 +15,7 @@
     "@nexora/architectures": "workspace:*",
     "@nexora/context": "workspace:*",
     "@nexora/contracts": "workspace:*",
+    "@nexora/conversation": "workspace:*",
     "@nexora/core": "workspace:*",
     "@nexora/gateway": "workspace:*",
     "@nexora/registry": "workspace:*",

@@ -163,10 +163,10 @@ const router: MessageRouter = {
       let silentRounds = 0;
       for (let round = 0; round < 10; round++) {
         let anySpoke = false;
-        for (const agentName of agents) {
+        const mHistory = meetingMgr.formatHistory(m.id);
+        const responses = await Promise.all(agents.map(async (agentName: string) => {
           const participant = room.getParticipant(agentName);
-          if (!participant) continue;
-          const mHistory = meetingMgr.formatHistory(m.id);
+          if (!participant) return null;
           const resp = await participant.llm.complete(
             [{ role: 'user', content: mHistory + '\n\n위 회의 내용을 보고 당신의 전문 분야 관점에서 의견을 말하세요.' }] as LLMMessage[],
             { systemPrompt: participant.respondPrompt ?? participant.card.description, maxTokens: 500 },
@@ -176,10 +176,14 @@ const router: MessageRouter = {
             .replace(/^(speak|join_meeting|pass_turn):?\s*/i, '')
             .replace(/^---\s*/g, '')
             .trim();
-          if (!text || text === 'PASS' || text.includes('mock agent')) continue;
-          room.addAgentMessage(agentName, text);
-          meetingMgr.speak(m.id, agentName, text);
-          onChunk({ type: 'text', text, agent: agentName });
+          if (!text || text === 'PASS' || text.includes('mock agent')) return null;
+          return { agentName, text };
+        }));
+        for (const r of responses) {
+          if (!r) continue;
+          room.addAgentMessage(r.agentName, r.text);
+          meetingMgr.speak(m.id, r.agentName, r.text);
+          onChunk({ type: 'text', text: r.text, agent: r.agentName });
           anySpoke = true;
         }
         if (!anySpoke) { silentRounds++; if (silentRounds >= 2) break; }

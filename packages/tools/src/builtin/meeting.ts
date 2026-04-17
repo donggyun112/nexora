@@ -28,6 +28,8 @@ export interface Meeting {
   messages: MeetingMessage[];
   status: 'active' | 'concluded';
   summary?: string;
+  /** Agents who raised their hand (want to speak next) */
+  handRaised: string[];
 }
 
 export class MeetingManager {
@@ -43,6 +45,7 @@ export class MeetingManager {
       participants: allParticipants,
       messages: [],
       status: 'active',
+      handRaised: [],
     };
     this.meetings.set(meeting.id, meeting);
     return meeting;
@@ -70,11 +73,30 @@ export class MeetingManager {
     return true;
   }
 
+  raiseHand(id: string, agent: string): boolean {
+    const m = this.meetings.get(id);
+    if (!m || m.status !== 'active' || !m.participants.includes(agent)) return false;
+    if (!m.handRaised.includes(agent)) m.handRaised.push(agent);
+    return true;
+  }
+
+  /** Get next speaker (first in hand-raised queue), removes from queue */
+  nextSpeaker(id: string): string | null {
+    const m = this.meetings.get(id);
+    if (!m || m.handRaised.length === 0) return null;
+    return m.handRaised.shift()!;
+  }
+
+  /** Get who has their hand raised */
+  getHandsRaised(id: string): string[] {
+    return this.meetings.get(id)?.handRaised ?? [];
+  }
+
   /** Format meeting history for LLM context */
   formatHistory(id: string): string {
     const m = this.meetings.get(id);
     if (!m) return '';
-    const lines = [`📋 Meeting: ${m.topic} (${m.status})`, `Master: ${m.master}`, `Participants: ${m.participants.join(', ')}`, '---'];
+    const lines = [`📋 Meeting: ${m.topic} (${m.status})`, `Master: ${m.master}`, `Participants: ${m.participants.join(', ')}`, ...(m.handRaised.length ? [`🙋 Hands raised: ${m.handRaised.join(', ')}`] : []), '---'];
     for (const msg of m.messages) {
       lines.push(`[${msg.agent}]: ${msg.content}`);
     }
@@ -150,15 +172,28 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
     description: 'Skip your turn in a meeting. Use when you have nothing to add.',
     parameters: {
       type: 'object',
-      properties: {
-        meetingId: { type: 'string', description: 'Meeting ID' },
-      },
+      properties: { meetingId: { type: 'string', description: 'Meeting ID' } },
       required: ['meetingId'],
     },
     execute: async (_callId, input): Promise<ToolResult> => {
       const { meetingId } = input as { meetingId: string };
       manager.speak(meetingId, agentName, 'PASS');
       return textResult(`[${agentName}] passed in ${meetingId}`);
+    },
+  };
+
+  const raiseHand: ToolDefinition = {
+    name: 'raise_hand',
+    description: 'Raise your hand to request a turn to speak in a meeting. The master will call on you.',
+    parameters: {
+      type: 'object',
+      properties: { meetingId: { type: 'string', description: 'Meeting ID' } },
+      required: ['meetingId'],
+    },
+    execute: async (_callId, input): Promise<ToolResult> => {
+      const { meetingId } = input as { meetingId: string };
+      if (!manager.raiseHand(meetingId, agentName)) return errorResult('Cannot raise hand');
+      return textResult(`[${agentName}] raised hand in ${meetingId}`);
     },
   };
 
@@ -200,5 +235,5 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
     },
   };
 
-  return [openMeeting, openThread, speak, pass, conclude, getMeeting];
+  return [openMeeting, openThread, speak, pass, raiseHand, conclude, getMeeting];
 }

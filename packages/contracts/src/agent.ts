@@ -39,7 +39,7 @@ export type AgentEvent =
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError: boolean }
   | { type: 'text'; text: string }
   | { type: 'thinking'; content: string }
-  | { type: 'progress'; message: string }
+  | { type: 'progress'; message: string; agent?: string }
   | { type: 'done'; content: string; toolCalls: ToolCallSummary[] }
   | { type: 'error'; message: string };
 

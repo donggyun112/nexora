@@ -60,6 +60,12 @@ export interface ToolContext {
    * exec, fetch 등 장기 실행 도구는 이 signal을 child process / fetch options에 전달해야 한다.
    */
   signal?: AbortSignal;
+
+  /**
+   * Emit a progress event to the parent agent's event stream.
+   * Used by delegate tool to relay child agent events in real-time.
+   */
+  emitProgress?: (message: string, agent?: string) => void;
 }
 
 export interface SecretAccessor {

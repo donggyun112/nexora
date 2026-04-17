@@ -200,6 +200,7 @@ function mapEventToChunk(event: AgentEvent): OutboundChunk | null {
     case 'tool_call': return { type: 'tool_call', name: event.name, input: event.input };
     case 'tool_result': return { type: 'tool_result', name: event.name, isError: event.isError };
     case 'thinking': return { type: 'thinking', content: event.content };
+    case 'progress': return { type: 'text', text: event.message, agent: event.agent };
     case 'done': return { type: 'done', content: event.content };
     case 'error': return { type: 'error', message: event.message };
     default: return null;

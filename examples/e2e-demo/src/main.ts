@@ -27,11 +27,11 @@ import { createReadTool, createGrepTool, createDelegateTool } from '@nexora/tool
 import type { CompiledSubagent, Subagent } from '@nexora/tools';
 import { LocalTransport } from '@nexora/transport';
 import { HttpAdapter } from '@nexora/adapters';
-import { GatewayRouter, LocalRuntimeRouter } from '@nexora/gateway';
+import { GatewayRouter } from '@nexora/gateway';
 import { InMemoryAgentRegistry } from '@nexora/registry';
 import { SmartMockLLM } from './mock-llm.js';
 
-import type { ContextLoader, AgentContext } from '@nexora/contracts';
+import type { ContextLoader, AgentContext, MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, AgentEvent } from '@nexora/contracts';
 
 // ─── 1. Agents ──────────────────────────────────────────────────────────
 
@@ -202,29 +202,49 @@ const researcherSubagent: CompiledSubagent = {
   runtime: buildRuntime('researcher'),
 };
 
-const router = new LocalRuntimeRouter({
-  createRuntime: (message) => {
-    const tenantId = message.tenantId ?? 'default';
-    // Collect subagent events into a log that gets appended to delegate result
-    const subagentLog: string[] = [];
-    const delegateTool = createDelegateTool({
-      transport, registry, callerAgentName: 'assistant',
-      subagents: [coderSubagent, researcherSubagent],
-      onSubagentEvent: (name, event) => {
-        if (event.type === 'tool_call') subagentLog.push(`[${name}] 🔧 ${event.name}`);
-        else if (event.type === 'text') subagentLog.push(`[${name}] ${event.text.slice(0, 80)}`);
-      },
-    });
-    return new AgentRunner({
-      architecture: createReactArchitecture({ systemPrompt: agentPrompts['assistant'] }),
-      llm,
-      tools: new CoreToolExecutor({
-        tools: [...baseTools, delegateTool],
-        context: { tenantId, workdir, secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
-      }),
-    });
+// Custom router: streams parent + child agent events to SSE with agent identity
+function createAssistantRuntime(onChunk?: (c: OutboundChunk) => void) {
+  const delegateTool = createDelegateTool({
+    transport, registry, callerAgentName: 'assistant',
+    subagents: [coderSubagent, researcherSubagent],
+    onSubagentEvent: onChunk ? (name, event) => {
+      if (event.type === 'text') onChunk({ type: 'text', text: event.text, agent: name });
+      else if (event.type === 'tool_call') onChunk({ type: 'tool_call', name: event.name, input: event.input as Record<string,unknown>, agent: name });
+      else if (event.type === 'tool_result') onChunk({ type: 'tool_result', name: event.name, isError: event.isError, agent: name });
+    } : undefined,
+  });
+  return new AgentRunner({
+    architecture: createReactArchitecture({ systemPrompt: agentPrompts['assistant'] }),
+    llm,
+    tools: new CoreToolExecutor({
+      tools: [...baseTools, delegateTool],
+      context: { tenantId: 'default', workdir, secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
+    }),
+  });
+}
+
+const router: MessageRouter = {
+  async route(msg: InboundMessage): Promise<OutboundMessage> {
+    let content = '';
+    for await (const ev of createAssistantRuntime().execute({ prompt: msg.content })) {
+      if (ev.type === 'done') content = ev.content;
+    }
+    return { content };
   },
-});
+  async routeStream(msg: InboundMessage, onChunk: (c: OutboundChunk) => void): Promise<void> {
+    for await (const ev of createAssistantRuntime(onChunk).execute({ prompt: msg.content })) {
+      if (ev.type === 'text') onChunk({ type: 'text', text: ev.text, agent: 'assistant' });
+      else if (ev.type === 'tool_call') {
+        if (ev.name === 'delegate') onChunk({ type: 'delegate_start', from: 'assistant', to: String((ev.input as {capability?:string})?.capability ?? ''), capability: String((ev.input as {capability?:string})?.capability ?? '') });
+        else onChunk({ type: 'tool_call', name: ev.name, input: ev.input as Record<string,unknown>, agent: 'assistant' });
+      }
+      else if (ev.type === 'tool_result' && ev.name === 'delegate') onChunk({ type: 'delegate_end', from: 'assistant', to: '' });
+      else if (ev.type === 'tool_result') onChunk({ type: 'tool_result', name: ev.name, isError: ev.isError, agent: 'assistant' });
+      else if (ev.type === 'done') onChunk({ type: 'done', content: ev.content, agent: 'assistant' });
+      else if (ev.type === 'error') onChunk({ type: 'error', message: ev.message, agent: 'assistant' });
+    }
+  },
+};
 
 const http = new HttpAdapter({
   port: Number(process.env.PORT ?? 3000),

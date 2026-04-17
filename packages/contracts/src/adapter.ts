@@ -62,9 +62,12 @@ export interface OutboundMessage {
 }
 
 export type OutboundChunk =
-  | { type: 'text'; text: string }
-  | { type: 'tool_call'; name: string; input?: unknown }
-  | { type: 'tool_result'; name: string; isError: boolean }
-  | { type: 'thinking'; content: string }
-  | { type: 'done'; content: string }
+  | { type: 'text'; text: string; agent?: string }
+  | { type: 'tool_call'; name: string; input?: unknown; agent?: string }
+  | { type: 'tool_result'; name: string; isError: boolean; agent?: string }
+  | { type: 'thinking'; content: string; agent?: string }
+  | { type: 'done'; content: string; agent?: string }
+  | { type: 'delegate_start'; from: string; to: string; capability: string }
+  | { type: 'delegate_end'; from: string; to: string }
+  | { type: 'error'; message: string; agent?: string }
   | { type: 'error'; message: string };

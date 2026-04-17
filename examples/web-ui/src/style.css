@@ -1,0 +1,96 @@
+:root {
+  color-scheme: dark;
+}
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0a0a0a;
+  color: #e5e5e5;
+}
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.app-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid #1a1a1a;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #0a0a0a;
+}
+.app-header h1 { font-size: 17px; font-weight: 600; color: #fff; margin: 0; }
+.agent-tags { display: flex; gap: 8px; }
+.agent-tag {
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  border: 1px solid;
+  background: transparent;
+}
+
+/* chatscope dark overrides */
+.cs-main-container { background: #0a0a0a !important; border: none !important; flex: 1; }
+.cs-chat-container { background: #0a0a0a !important; border: none !important; }
+.cs-message-list { background: #0a0a0a !important; padding: 16px !important; }
+.cs-message { margin-bottom: 4px !important; }
+.cs-message__content { background: none !important; padding: 0 !important; }
+.cs-message--incoming .cs-message__content-wrapper { margin-left: 4px; }
+.cs-message--outgoing .cs-message__content-wrapper { margin-right: 0; }
+.cs-message-input { background: #111 !important; border-top: 1px solid #1a1a1a !important; }
+.cs-message-input__content-editor-wrapper { background: #1a1a1a !important; border-radius: 10px !important; }
+.cs-message-input__content-editor { color: #e5e5e5 !important; }
+.cs-button--send { color: #3b82f6 !important; }
+.cs-typing-indicator { background: transparent !important; }
+.cs-typing-indicator__text { color: #666 !important; }
+.cs-typing-indicator__dot { background: #555 !important; }
+
+/* agent avatar */
+.agent-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+}
+.cs-avatar > div { overflow: visible !important; }
+.cs-avatar img { display: none; }
+
+/* agent name */
+.agent-name { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+
+/* message text */
+.msg-text {
+  background: #141414;
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 600px;
+}
+.cs-message--outgoing .msg-text {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+/* tool badges */
+.tool-list { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.tool-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tool-badge.call { background: #0c1a2e; border: 1px solid #1a3050; color: #60a5fa; }
+.tool-badge.result { background: #0a1a0a; border: 1px solid #1a3a1a; color: #4ade80; }
+.tool-badge.error { background: #1a0a0a; border: 1px solid #3a1a1a; color: #f87171; }
+
+/* typing */
+.typing-dot { color: #555; font-size: 14px; animation: blink 1.4s infinite; margin-top: 4px; }
+@keyframes blink { 0%,80%,100%{opacity:.2} 40%{opacity:1} }

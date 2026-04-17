@@ -70,7 +70,12 @@ const PROMPTS: Record<string, string> = {
 
 const room = new ConversationRoom('nexora-chat');
 for (const card of [assistant, coder, researcher]) {
-  room.join({ card, llm, respondPrompt: PROMPTS[card.name] });
+  const aliases: Record<string, string[]> = {
+    assistant: ['어시스턴트', '어시', '팀장'],
+    coder: ['코더', '개발자', '개발'],
+    researcher: ['리서처', '연구원', '연구'],
+  };
+  room.join({ card, llm, respondPrompt: PROMPTS[card.name], aliases: aliases[card.name] });
 }
 
 const tm = new TurnManager({
@@ -138,8 +143,7 @@ const router: MessageRouter = {
     } else {
       // Mode 1: TurnManager (with mention override)
       const rmsg = room.addUserMessage(msg.content, msg.displayName);
-      const lower = msg.content.toLowerCase();
-      const mentioned = ['coder', 'researcher', 'assistant'].find(n => lower.includes(n) || lower.includes(n === 'coder' ? '코더' : n === 'researcher' ? '리서처' : '어시스턴트'));
+      const mentioned = room.detectMention(msg.content);
 
       if (mentioned) {
         // Direct mention — that agent responds, skip TurnManager

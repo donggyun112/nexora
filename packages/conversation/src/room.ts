@@ -64,6 +64,8 @@ export interface RoomParticipant {
    * If not set, the agent can only generate text via LLM.
    */
   runtime?: AgentRuntime;
+  /** Aliases for mention detection (e.g. ['코더', 'dev'] for 'coder') */
+  aliases?: string[];
 }
 
 export class ConversationRoom {
@@ -202,5 +204,22 @@ export class ConversationRoom {
         agentName,
       });
     }
+  }
+
+  /**
+   * Detect if a message mentions a specific agent by name or alias.
+   * Returns the agent's card.name (internal ID) or null.
+   */
+  detectMention(text: string): string | null {
+    const lower = text.toLowerCase();
+    for (const [name, p] of this.participants) {
+      if (lower.includes(name.toLowerCase())) return name;
+      if (p.aliases) {
+        for (const alias of p.aliases) {
+          if (lower.includes(alias.toLowerCase())) return name;
+        }
+      }
+    }
+    return null;
   }
 }

@@ -136,11 +136,27 @@ const router: MessageRouter = {
       orchestrator.onEvent(onChunk);
       await orchestrator.runThread(agents[0], agents[1], msg.content);
     } else {
-      // Mode 1: TurnManager
+      // Mode 1: TurnManager (with mention override)
       const rmsg = room.addUserMessage(msg.content, msg.displayName);
-      const result = await tm.handleMessage(room, rmsg);
-      for (const r of result.responses) {
-        onChunk({ type: 'text', text: r.content, agent: r.agentName });
+      const lower = msg.content.toLowerCase();
+      const mentioned = ['coder', 'researcher', 'assistant'].find(n => lower.includes(n) || lower.includes(n === 'coder' ? '코더' : n === 'researcher' ? '리서처' : '어시스턴트'));
+
+      if (mentioned) {
+        // Direct mention — that agent responds, skip TurnManager
+        const p = room.getParticipant(mentioned);
+        if (p) {
+          const resp = await p.llm.complete(
+            room.historyForLLM() as LLMMessage[],
+            { systemPrompt: p.respondPrompt ?? p.card.description, maxTokens: 400 },
+          );
+          room.addAgentMessage(mentioned, resp.content);
+          onChunk({ type: 'text', text: resp.content, agent: mentioned });
+        }
+      } else {
+        const result = await tm.handleMessage(room, rmsg);
+        for (const r of result.responses) {
+          onChunk({ type: 'text', text: r.content, agent: r.agentName });
+        }
       }
     }
 

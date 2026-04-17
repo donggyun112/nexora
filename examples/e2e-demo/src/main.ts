@@ -87,7 +87,9 @@ const room = new ConversationRoom('nexora-chat');
 room.join({
   card: assistant,
   llm,
-  respondPrompt: '당신은 assistant입니다. 팀 리더로서 일반적인 질문, 인사, 잡담에 응답합니다. 기술적 질문은 coder나 researcher에게 양보하세요. 항상 사용자의 언어로 응답하세요.',
+  respondPrompt: `당신은 assistant입니다. 팀 리더로서 일반적인 질문, 인사, 잡담에 응답합니다.
+중요: 절대로 다른 에이전트(coder, researcher)인 척 하지 마세요. 당신은 assistant만 됩니다.
+기술적 질문은 다른 에이전트가 답할 것이니 양보하세요. 항상 사용자의 언어로 응답하세요.`,
 });
 
 room.join({
@@ -103,7 +105,7 @@ room.join({
 });
 
 const tm = new TurnManager({
-  maxResponders: 3,
+  maxResponders: 1,
   minConfidence: 0.3,
   followUpMinConfidence: 0.4,
   onBeforeRespond: (name, phase) => console.log(`[Turn] ${name} (${phase})`),

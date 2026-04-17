@@ -161,12 +161,13 @@ async function autonomousDiscussion(
   for (let round = 0; round < 10; round++) {
     const history = meetingMgr.formatHistory(meeting.id);
 
-    // Master decides: who speaks next, or conclude?
+    // Master decides: designate, open floor, or conclude?
     const moderation = await agentSay(master, [
       { role: 'user', content: `${history}\n\n---\n당신은 회의 진행자입니다. 다음 중 하나를 하세요:
-1. 특정 에이전트를 지명: "NEXT: [에이전트이름] [질문이나 요청]" (예: "NEXT: coder 기술적으로 가능한가요?")
-2. 회의 종료: "CONCLUDE: [최종 결론 한 줄]"
-반드시 NEXT: 또는 CONCLUDE: 로 시작하세요.` },
+1. 특정 에이전트 지명: "NEXT: [이름] [질문]" (예: "NEXT: coder 가능한가요?")
+2. 자유 발언: "OPEN: [질문]" (의견 있는 사람 누구나 발언)
+3. 회의 종료: "CONCLUDE: [최종 결론]"
+반드시 NEXT: 또는 OPEN: 또는 CONCLUDE: 로 시작하세요.` },
     ]);
 
     if (moderation.includes('CONCLUDE')) {
@@ -178,7 +179,28 @@ async function autonomousDiscussion(
       return;
     }
 
-    // Parse NEXT: [agent] [message]
+    // OPEN: free floor — all agents can speak if they have something to say
+    const openMatch = moderation.match(/^OPEN:\s*(.*)/is);
+    if (openMatch) {
+      const masterMsg = openMatch[1].trim();
+      if (masterMsg) {
+        meetingMgr.speak(meeting.id, master, masterMsg);
+        onChunk({ type: 'text', text: masterMsg, agent: master });
+      }
+      const floorHistory = meetingMgr.formatHistory(meeting.id);
+      for (const agent of agents) {
+        const text = await agentSay(agent, [
+          { role: 'user', content: `${floorHistory}\n\n---\n진행자가 자유 발언을 열었습니다. 의견이 있으면 말하세요. 없으면 "PASS".` },
+        ]);
+        if (text && text !== 'PASS' && !text.includes('mock agent')) {
+          meetingMgr.speak(meeting.id, agent, text);
+          onChunk({ type: 'text', text, agent });
+        }
+      }
+      continue;
+    }
+
+    // NEXT: designated speaker
     const nextMatch = moderation.match(/^NEXT:\s*(coder|researcher)\s*(.*)/is);
     if (nextMatch) {
       const [, targetAgent, masterMsg] = nextMatch;

@@ -89,6 +89,20 @@ export interface MeetingPromptTemplates {
   toolResultReprompt: string;
   /** Evaluate who speaks. Vars: {history} */
   evaluateWhoSpeaks: string;
+
+  // ── Action tokens (used for parsing LLM responses) ──
+  /** Token that signals "conclude the meeting" in moderator/conclude responses. */
+  tokenConclude: string;
+  /** Token that signals "continue discussion". */
+  tokenContinue: string;
+  /** Token that signals "stimulate cross-discussion". */
+  tokenStimulate: string;
+  /** Token that signals "close with dissent noted". */
+  tokenClose: string;
+  /** Token that signals "reopen discussion". */
+  tokenReopen: string;
+  /** Token that signals agreement in threads. */
+  tokenAgreed: string;
 }
 
 // ─── Default Templates ──────────────────────────────────────────────────
@@ -168,4 +182,12 @@ export const DEFAULT_MEETING_PROMPTS: MeetingPromptTemplates = {
   // Tool / Evaluate
   toolResultReprompt: 'Based on the tool result above, use the speak tool to make your statement.',
   evaluateWhoSpeaks: '{history}\n\n---\nRead the discussion above. Do you have a new perspective or rebuttal to add?\nRespond with JSON only: {"speak": true/false, "confidence": 0.0-1.0, "reason": "one sentence"}',
+
+  // Action tokens
+  tokenConclude: 'CONCLUDE',
+  tokenContinue: 'CONTINUE',
+  tokenStimulate: 'STIMULATE',
+  tokenClose: 'CLOSE',
+  tokenReopen: 'REOPEN',
+  tokenAgreed: 'AGREED',
 };

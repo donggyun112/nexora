@@ -100,8 +100,8 @@ export class MeetingOrchestrator {
       if (round > 0 && round % 3 === 0) {
         const shouldEnd = await this.moderatorSay(masterName,
           interpolate(this.prompts.simpleConcludeCheck, { history: this.mgr.formatHistory(meeting.id) }));
-        if (shouldEnd.includes('CONCLUDE')) {
-          return this.concludeWith(meeting, masterName, shouldEnd.replace(/^CONCLUDE:?\s*/i, ''));
+        if (shouldEnd.includes(this.prompts.tokenConclude)) {
+          return this.concludeWith(meeting, masterName, shouldEnd.replace(new RegExp(`^${this.prompts.tokenConclude}:?\\s*`, 'i'), ''));
         }
       }
     }
@@ -117,7 +117,6 @@ export class MeetingOrchestrator {
     this.mgr.join(meeting.id, otherName);
     this.emit({ type: 'tool_call', name: 'join_meeting', input: { meetingId: meeting.id }, agent: otherName });
     const speakers = [openerName, otherName];
-    let staleCount = 0;
     for (let turn = 0; turn < 20; turn++) {
       const speaker = speakers[turn % 2];
       const history = this.mgr.formatHistory(meeting.id);
@@ -126,21 +125,18 @@ export class MeetingOrchestrator {
       if (!text || text.includes('mock agent')) break;
       this.mgr.speak(meeting.id, speaker, text);
       this.emit({ type: 'text', text, agent: speaker });
-      if (text.includes('AGREED')) {
-        const summary = text.replace(/^AGREED:?\s*/i, '');
+      if (text.includes(this.prompts.tokenAgreed)) {
+        const summary = text.replace(new RegExp(`^${this.prompts.tokenAgreed}:?\\s*`, 'i'), '');
         this.mgr.conclude(meeting.id, openerName, summary);
         this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: openerName });
         return summary;
       }
-      if (text.includes('정보') && text.includes('필요')) staleCount++; else staleCount = 0;
-      if (staleCount >= 3) {
-        const summary = this.prompts.threadStaleConclusion;
-        this.mgr.conclude(meeting.id, openerName, summary);
-        this.emit({ type: 'text', text: summary, agent: openerName });
-        return summary;
-      }
     }
-    return '';
+    // Max turns reached — force conclude so meeting slot is freed
+    const fallbackSummary = this.prompts.threadStaleConclusion;
+    this.mgr.conclude(meeting.id, openerName, fallbackSummary);
+    this.emit({ type: 'text', text: fallbackSummary, agent: openerName });
+    return fallbackSummary;
   }
 
   // ─── Conclude helpers ─────────────────────────────────────────────────
@@ -472,7 +468,7 @@ export class MeetingOrchestrator {
     const check = await this.moderatorSay(meeting.master,
       interpolate(this.prompts.moderatorCheck, { history: mHistory, interactionCount, completedRounds, msgCount }));
 
-    if (check.includes('CONCLUDE')) {
+    if (check.includes(this.prompts.tokenConclude)) {
       if (interactionCount < this.minInteractions || completedRounds < 2) {
         console.log(`[Moderator] conclude blocked: interactions=${interactionCount}/${this.minInteractions}, rounds=${completedRounds}/2`);
         // Force stimulate instead
@@ -483,7 +479,7 @@ export class MeetingOrchestrator {
       return { action: 'conclude' };
     }
 
-    if (check.includes('STIMULATE')) {
+    if (check.includes(this.prompts.tokenStimulate)) {
       const allNames = [...meeting.participants as string[]].filter(n => n !== meeting.master);
       const prompt = interpolate(this.prompts.generalStimulation, { history: mHistory });
       return { action: 'stimulate', prompt };
@@ -555,7 +551,7 @@ export class MeetingOrchestrator {
         voteLabel, objSummary, recommendation,
       }));
 
-    if (masterDecision.includes('CLOSE')) {
+    if (masterDecision.includes(this.prompts.tokenClose)) {
       const finalSummary = (summary.content ?? '') + `\n\n[남은 이견] ${objections.map(o => `${o.name}: ${o.content.slice(0, 80)}`).join('; ')}`;
       this.mgr.speak(meeting.id, meeting.master, finalSummary);
       this.mgr.conclude(meeting.id, meeting.master, finalSummary);

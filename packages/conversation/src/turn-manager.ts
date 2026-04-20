@@ -189,7 +189,8 @@ export class TurnManager {
       room.activeResponder = candidate.agentName;
 
       try {
-        primaryContent = await this.generateResponse(participant, history);
+        const agentHistory = room.historyForLLM(candidate.agentName);
+        primaryContent = await this.generateResponse(participant, agentHistory);
         primaryAgentName = candidate.agentName;
       } catch {
         // Primary LLM failed — try next standby as primary (failover).
@@ -235,7 +236,7 @@ export class TurnManager {
           message,
           primaryAgentName,
           primaryContent,
-          room.historyForLLM(),
+          room.historyForLLM(candidate.agentName),
         );
 
         room.activeResponder = null;

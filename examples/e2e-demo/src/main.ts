@@ -266,6 +266,44 @@ const tm = new TurnManager({
 
 const orchestrator = new MeetingOrchestrator(room, meetingMgr);
 
+// ─── 3b. Async event-based raise_hand ───────────────────────────────────
+// Agents independently watch meeting history and raise_hand when they have
+// something to say but weren't tagged. This runs outside the orchestrator's
+// synchronous turn loop — true async event-driven participation.
+
+meetingMgr.onSpeak((meetingId, speaker, content) => {
+  console.log(`[AsyncEvent] onSpeak fired: ${speaker} in ${meetingId}`);
+  const meeting = meetingMgr.get(meetingId);
+  if (!meeting || meeting.status !== 'active') return;
+
+  // Each non-speaking participant evaluates whether they want to respond
+  const others = [...meeting.participants as string[]].filter(n => n !== speaker);
+  for (const name of others) {
+    // Skip if already in handRaised queue
+    if (meetingMgr.getHandsRaised(meetingId).includes(name)) continue;
+
+    const p = room.getParticipant(name);
+    if (!p) continue;
+
+    // Fire-and-forget: async evaluation without blocking the meeting loop
+    void (async () => {
+      try {
+        const history = meetingMgr.formatHistory(meetingId);
+        const resp = await p.llm.complete(
+          [{ role: 'user' as const, content: `${history}\n\n---\n[${speaker}]가 방금 발언했습니다. 당신은 "${name}"입니다.\n태그를 받지 않았지만, 지금 반드시 끼어들어야 할 중요한 반론이나 정보가 있습니까?\nJSON으로만 답하세요: {"raise": true/false, "reason": "한 문장"}` }],
+          { systemPrompt: p.respondPrompt ?? p.card.description, maxTokens: 60 },
+        );
+        const cleaned = resp.content.trim().replace(/^```(?:json)?\n?|\n?```$/g, '');
+        const parsed = JSON.parse(cleaned) as { raise?: boolean };
+        if (parsed.raise === true) {
+          meetingMgr.raiseHand(meetingId, name);
+          console.log(`[AsyncEvent] 🙋 ${name} raised hand (reason: ${cleaned.slice(0, 60)})`);
+        }
+      } catch { /* eval failed — agent stays silent */ }
+    })();
+  }
+});
+
 // ─── 4. Router — TurnManager + auto meeting orchestration ───────────────
 
 const router: MessageRouter = {

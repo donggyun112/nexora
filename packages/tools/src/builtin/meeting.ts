@@ -34,9 +34,18 @@ export interface Meeting {
   handRaised: string[];
 }
 
+export type MeetingSpeakListener = (meetingId: string, agent: string, content: string) => void;
+
 export class MeetingManager {
   private meetings = new Map<string, Meeting>();
   private nextId = 1;
+  private speakListeners: MeetingSpeakListener[] = [];
+
+  /** Subscribe to new messages in any active meeting. */
+  onSpeak(listener: MeetingSpeakListener): () => void {
+    this.speakListeners.push(listener);
+    return () => { this.speakListeners = this.speakListeners.filter(l => l !== listener); };
+  }
 
   open(master: string, topic: string, participants: string[]): Meeting | null {
     if (this.listActive().length > 0) return null;
@@ -76,6 +85,8 @@ export class MeetingManager {
     if (!m.participants.includes(agent)) return null;
     const msg: MeetingMessage = { agent, content, timestamp: Date.now() };
     m.messages.push(msg);
+    // Notify listeners (for async event-based agents)
+    for (const fn of this.speakListeners) { try { fn(id, agent, content); } catch {} }
     return msg;
   }
 

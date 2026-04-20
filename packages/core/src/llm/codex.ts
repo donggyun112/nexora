@@ -142,9 +142,8 @@ export class CodexProvider implements LLMProvider {
       input,
       stream: true,
       store: false,
-      text: { verbosity: options?.maxTokens && options.maxTokens <= 200 ? 'short' : 'medium' },
+      text: { verbosity: options?.maxTokens && options.maxTokens <= 200 ? 'low' : 'medium' },
       include: ['reasoning.encrypted_content'],
-      ...(options?.maxTokens ? { max_output_tokens: options.maxTokens } : {}),
     };
 
     if (options?.tools?.length) {

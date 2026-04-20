@@ -191,6 +191,8 @@ export class MeetingOrchestrator {
     let attentionRoundRobin: string[] = [];
     // Single-target tag (lightweight, doesn't block moderator)
     const pending: { next: { agent: string; caller: string; message: string } | null } = { next: null };
+    // Explicit caller tracking — set in Phase B, consumed in buildPrompt/emitSpeak
+    const ctx: { calledBy: string | undefined } = { calledBy: undefined };
 
     log(`Started. master=${meeting.master}, participants=[${allP}]`);
 
@@ -203,31 +205,44 @@ export class MeetingOrchestrator {
       ? interpolate(this.prompts.researchGoal, { topic: meeting.topic })
       : interpolate(this.prompts.decisionGoal, { topic: meeting.topic });
 
-    const buildPrompt = (agentName: string): string => {
-      const freshH = this.mgr.formatHistory(meeting.id);
+    const buildMessages = (agentName: string): { systemPrompt: string; messages: LLMMessage[] } => {
       const others = allP.filter(n => n !== agentName);
       const othersStr = others.map(n => `"${n}"`).join(', ');
 
-      // Reply context
+      // System prompt: identity + topic + rules
       let replyCtx = '';
-      const caller = activeGroup?.callees.includes(agentName) ? activeGroup.caller
-        : pending.next?.agent === agentName ? pending.next.caller : null;
-      if (caller) replyCtx = interpolate(this.prompts.replyContext, { caller });
-
+      if (ctx.calledBy) replyCtx = interpolate(this.prompts.replyContext, { caller: ctx.calledBy });
       const identityStr = interpolate(this.prompts.identity, { agentName, others: othersStr }) + replyCtx;
       const anchor = interpolate(this.prompts.topicAnchor, { goalDesc });
+      const p = this.room.getParticipant(agentName);
+      const systemPrompt = `${p?.respondPrompt ?? ''}\n\n${identityStr}${anchor}${this.prompts.rules}`;
 
-      return totalSpeaks === 0
-        ? `${identityStr}${anchor}${freshH}\n\n${interpolate(this.prompts.firstSpeak, { agentName, others: othersStr })}\n${this.prompts.rules}`
-        : `${identityStr}${anchor}${freshH}\n\n${interpolate(this.prompts.continueSpeak, { others: othersStr })}\n${this.prompts.rules}`;
+      // Messages: meeting history with perspective (my messages = assistant, others = user)
+      const messages: LLMMessage[] = [];
+      for (const msg of meeting.messages) {
+        const role: 'user' | 'assistant' = msg.agent === agentName ? 'assistant' : 'user';
+        const text = `[${msg.agent}]: ${msg.content}`;
+        const last = messages[messages.length - 1];
+        if (last && last.role === role) {
+          last.content = (last.content as string) + '\n' + text;
+        } else {
+          messages.push({ role, content: text });
+        }
+      }
+
+      // Final instruction
+      const instruction = totalSpeaks === 0
+        ? interpolate(this.prompts.firstSpeak, { agentName, others: othersStr })
+        : interpolate(this.prompts.continueSpeak, { others: othersStr });
+      messages.push({ role: 'user', content: instruction });
+
+      return { systemPrompt, messages };
     };
 
     const emitSpeak = async (agentName: string, result: { content: string; to?: string[] }) => {
       if (totalSpeaks > 0) await sleep(800);
-      // Include replyTo (who called this speaker) for UI context
-      const replyTo = activeGroup?.callees.includes(agentName) ? activeGroup.caller
-        : pending.next?.agent === agentName ? pending.next.caller
-        : undefined;
+      // calledBy is set explicitly during Phase B speaker selection. Filter self-reply.
+      const replyTo = ctx.calledBy && ctx.calledBy !== agentName ? ctx.calledBy : undefined;
       this.emit({ type: 'tool_call', name: 'speak', input: { to: result.to, message: result.content, replyTo }, agent: agentName });
       this.room.addAgentMessage(agentName, result.content);
       this.emit({ type: 'text', text: result.content, agent: agentName });
@@ -306,27 +321,27 @@ export class MeetingOrchestrator {
       // ═══ Phase B: Select next speaker ═══
       let speaker: string | null = null;
       let reason = '';
+      ctx.calledBy = undefined; // reset each turn
 
-      // Check if initial round-robin is still needed (not everyone has spoken once)
+      // Check if initial round-robin is still needed
       const initialRRDone = allP.every(n => lastSpokeTurn[n] >= 0);
       const nextRRAgent = !initialRRDone ? allP.find(n => lastSpokeTurn[n] < 0) : null;
 
       if (nextRRAgent) {
-        // Initial round-robin takes priority over everything
-        // (defer ReplyGroups until everyone has spoken once)
         speaker = nextRRAgent;
         reason = `initial-rr → ${speaker} (ensuring voice equity)`;
       } else if (activeGroup) {
-        // Drain active ReplyGroup
         const next = activeGroup.callees.find(c => !activeGroup!.responded.has(c));
         if (next) {
           speaker = next;
-          reason = `reply-group (${activeGroup.responded.size + 1}/${activeGroup.callees.length}, caller: ${activeGroup.caller})`;
+          ctx.calledBy = activeGroup.caller || undefined;
+          reason = `reply-group (${activeGroup.responded.size + 1}/${activeGroup.callees.length}, caller: ${ctx.calledBy})`;
         } else {
           activeGroup = null;
           if (overflowQueue.length > 0) {
             activeGroup = overflowQueue.shift()!;
             speaker = activeGroup.callees[0];
+            ctx.calledBy = activeGroup.caller || undefined;
             reason = `overflow-group → ${speaker}`;
           }
         }
@@ -340,14 +355,35 @@ export class MeetingOrchestrator {
       if (!speaker && !activeGroup && overflowQueue.length > 0) {
         activeGroup = overflowQueue.shift()!;
         speaker = activeGroup.callees[0];
+        ctx.calledBy = activeGroup.caller;
         reason = `overflow → ${speaker}`;
+      }
+
+      // raise_hand before pending.next
+      // Drain ALL raised hands into a ReplyGroup (they all requested to speak)
+      if (!speaker) {
+        const allRaised: string[] = [];
+        let next = this.mgr.nextSpeaker(meeting.id);
+        while (next) { allRaised.push(next); next = this.mgr.nextSpeaker(meeting.id); }
+        if (allRaised.length > 1) {
+          // Multiple hands → ReplyGroup so they all get to speak
+          activeGroup = { caller: '', message: '', callees: allRaised, responded: new Set() };
+          speaker = allRaised[0];
+          reason = `raise-hand group [${allRaised}]`;
+          log(`turn ${turn}: 🙋 ${allRaised.length} hands raised → group: [${allRaised}]`);
+          for (const r of allRaised) this.emit({ type: 'tool_call', name: 'raise_hand', input: {}, agent: r });
+        } else if (allRaised.length === 1) {
+          speaker = allRaised[0];
+          reason = `raise-hand → ${speaker}`;
+          log(`turn ${turn}: 🙋 ${speaker} raised hand`);
+          this.emit({ type: 'tool_call', name: 'raise_hand', input: {}, agent: speaker });
+        }
       }
 
       if (!speaker && pending.next) {
         speaker = pending.next.agent;
-        reason = `pending-next → ${speaker} (caller: ${pending.next.caller})`;
-        // Don't clear pending.next here — buildPrompt/emitSpeak need it for reply context.
-        // It gets cleared after the speaker executes (below).
+        ctx.calledBy = pending.next.caller;
+        reason = `pending-next → ${speaker} (caller: ${ctx.calledBy})`;
       }
 
       if (!speaker) {
@@ -389,7 +425,7 @@ export class MeetingOrchestrator {
       log(`turn ${turn}: ${reason}`);
 
       // ═══ Phase C: Speaker executes ═══
-      const prompt = buildPrompt(speaker);
+      const prompt = buildMessages(speaker);
       log(`turn ${turn}: calling singleShotAction(${speaker})`);
       const result = await this.singleShotAction(speaker, prompt, meeting.id);
       log(`turn ${turn}: ${speaker} → ${result.action}, to=${JSON.stringify(result.to)?.slice(0, 40)}`);
@@ -526,6 +562,12 @@ export class MeetingOrchestrator {
       }
     }
 
+    // Show vote result
+    const agreeNames = others.filter(n => !objections.some(o => o.name === n));
+    const voteResult = `[Vote: ${agreeNames.map(n => `${n} ✅`).join(', ')}${objections.length ? ', ' + objections.map(o => `${o.name} ❌`).join(', ') : ''} → ${objections.length === 0 ? 'unanimous' : `agree ${agreeNames.length} / object ${objections.length}`}]`;
+    this.emit({ type: 'text', text: voteResult, agent: meeting.master });
+    console.log(`[Meeting:${meeting.id}] ${voteResult}`);
+
     if (objections.length === 0) {
       // Unanimous — close
       const finalSummary = summary.content ?? await this.say(meeting.master, interpolate(this.prompts.concludeSummary, { history: this.mgr.formatHistory(meeting.id) }));
@@ -570,7 +612,7 @@ export class MeetingOrchestrator {
 
   private async singleShotAction(
     agentName: string,
-    prompt: string,
+    promptOrMessages: string | { systemPrompt: string; messages: LLMMessage[] },
     meetingId: string,
   ): Promise<{ action: 'speak' | 'pass' | 'attention' | 'none'; content?: string; to?: string[] }> {
     const p = this.room.getParticipant(agentName);
@@ -629,12 +671,20 @@ export class MeetingOrchestrator {
     }
 
     const allTools = [...meetingTools, ...agentTools];
-    let messages: LLMMessage[] = [{ role: 'user', content: prompt }];
+
+    // Support both string prompt (legacy) and structured messages (perspective-aware)
+    const isStructured = typeof promptOrMessages !== 'string';
+    let messages: LLMMessage[] = isStructured
+      ? [...promptOrMessages.messages]
+      : [{ role: 'user', content: promptOrMessages }];
+    const systemPrompt = isStructured
+      ? promptOrMessages.systemPrompt
+      : (p.respondPrompt ?? p.card.description);
 
     for (;;) {
       const resp = await p.llm.complete(
         messages,
-        { systemPrompt: p.respondPrompt ?? p.card.description, maxTokens: this.maxTokens, tools: allTools },
+        { systemPrompt, maxTokens: this.maxTokens, tools: allTools },
       );
 
       if (resp.toolCalls && resp.toolCalls.length > 0) {

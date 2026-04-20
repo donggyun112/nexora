@@ -311,7 +311,7 @@ header h1{font-size:16px;font-weight:600;color:#f2f3f5}
 </div>
 <script>
 const A={assistant:{av:'🤖',c:'#5865f2'},coder:{av:'💻',c:'#9b59b6'},researcher:{av:'🔍',c:'#2ecc71'},researcher2:{av:'🧠',c:'#e67e22'},researcher3:{av:'⚙️',c:'#e74c3c'},system:{av:'⚠️',c:'#95a5a6'}};
-const TI={read:'📄',grep:'🔍',exec:'⚡',write:'✏️',edit:'✏️',delegate:'🤝',knowledge:'📚',speak:'💬',attention:'🚨',web_search:'🌐',join_meeting:'🚪',open_meeting:'📢',conclude_meeting:'✅'};
+const TI={read:'📄',grep:'🔍',exec:'⚡',write:'✏️',edit:'✏️',delegate:'🤝',knowledge:'📚',speak:'💬',attention:'🚨',web_search:'🌐',join_meeting:'🚪',open_meeting:'📢',conclude_meeting:'✅',raise_hand:'🙋'};
 const msgs=document.getElementById('msgs'),inp=document.getElementById('inp'),btn=document.getElementById('btn');
 let first=true;
 function scroll(){msgs.scrollTop=msgs.scrollHeight}

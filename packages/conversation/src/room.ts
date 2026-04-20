@@ -153,19 +153,42 @@ export class ConversationRoom {
     return [...this.messages];
   }
 
-  /** Convert history to LLM message format, merging consecutive assistant messages only.
-   *  User messages are never merged — each user turn stays separate so TurnManager
-   *  can correctly extract the latest prompt via messages.slice(-1). */
-  historyForLLM(): { role: 'user' | 'assistant'; content: string }[] {
+  /**
+   * Convert history to LLM message format.
+   *
+   * If `perspective` is given (agent name), messages from that agent become
+   * role:'assistant' and all other messages (users + other agents) become role:'user'.
+   * This gives each agent a proper self/other distinction.
+   *
+   * If `perspective` is omitted, falls back to the original behavior:
+   * human messages = 'user', all agent messages = 'assistant' (merged if consecutive).
+   */
+  historyForLLM(perspective?: string): { role: 'user' | 'assistant'; content: string }[] {
     const result: { role: 'user' | 'assistant'; content: string }[] = [];
     for (const m of this.messages) {
       const text = m.agentName ? `[${m.agentName}]: ${m.content}` : m.content;
+      let role: 'user' | 'assistant';
+
+      if (perspective) {
+        // Perspective mode: my messages = assistant, everything else = user
+        role = m.agentName === perspective ? 'assistant' : 'user';
+      } else {
+        // Default mode: human = user, all agents = assistant
+        role = m.role;
+      }
+
       const last = result[result.length - 1];
-      // Only merge consecutive assistant messages (multiple agents = same role)
-      if (last && last.role === 'assistant' && m.role === 'assistant') {
+      if (last && last.role === role && role === 'assistant') {
+        // Merge consecutive same-role assistant messages
+        last.content += '\n' + text;
+      } else if (last && last.role === role && role === 'user' && !perspective) {
+        // In default mode, don't merge user messages
+        result.push({ role, content: text });
+      } else if (last && last.role === role && role === 'user' && perspective) {
+        // In perspective mode, merge consecutive "other" messages
         last.content += '\n' + text;
       } else {
-        result.push({ role: m.role, content: text });
+        result.push({ role, content: text });
       }
     }
     return result;

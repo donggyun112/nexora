@@ -267,9 +267,11 @@ export class TurnManager {
     if (participant.runtime) {
       const lastUser = [...messages].reverse().find(m => m.role === 'user');
       const prompt = lastUser?.content ?? '';
+      // Pass full conversation history so agent maintains context
+      const history = messages.slice(0, -1);
       let content = '';
       const toolCalls: string[] = [];
-      for await (const event of participant.runtime.execute({ prompt })) {
+      for await (const event of participant.runtime.execute({ prompt, history })) {
         if (event.type === 'done') content = event.content;
         else if (event.type === 'tool_call') toolCalls.push(event.name);
       }

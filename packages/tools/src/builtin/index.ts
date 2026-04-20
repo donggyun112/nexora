@@ -15,6 +15,9 @@ export { createKnowledgeTool } from './knowledge.js';
 export { createWebSearchTool } from './web-search.js';
 export type { SearchBackend, SearchResult } from './web-search.js';
 
+export { createBraveBackend } from './brave-search.js';
+export type { BraveSearchOptions } from './brave-search.js';
+
 export { createHandraiseTool } from './handraise.js';
 export type {
   HandraiseToolOptions,

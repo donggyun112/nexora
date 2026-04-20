@@ -158,7 +158,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
       const { topic, participants } = input as { topic: string; participants: string[] };
       const meeting = manager.open(agentName, topic, participants);
       if (!meeting) return errorResult('Cannot open meeting: another meeting is already active');
-      return textResult(`Meeting opened: ${meeting.id}\nTopic: ${topic}\nMaster: ${agentName}\nInvited: ${participants.join(', ')}`);
+      return textResult(`Meeting opened: ${meeting.id}\nTopic: ${topic}\nMaster: ${agentName}\nInvited: ${participants.join(', ')}\n\n[STOP] 회의가 열렸습니다. 더 이상 도구를 호출하지 마세요. 오케스트레이터가 회의를 진행합니다. 사용자에게 회의가 시작되었다고 간단히 알려주세요.`);
     },
   };
 
@@ -178,7 +178,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
       const { agent, topic } = input as { agent: string; topic: string };
       const meeting = manager.open(agentName, topic, [agent]);
       if (!meeting) return errorResult('Cannot open thread: another meeting is already active');
-      return textResult(`Thread opened: ${meeting.id}\nWith: ${agent}\nTopic: ${topic}`);
+      return textResult(`Thread opened: ${meeting.id}\nWith: ${agent}\nTopic: ${topic}\n\n[STOP] 스레드가 열렸습니다. 더 이상 도구를 호출하지 마세요. 오케스트레이터가 진행합니다.`);
     },
   };
 
@@ -274,6 +274,7 @@ export function createMeetingTools(manager: MeetingManager, agentName: string): 
   const getMeeting: ToolDefinition = {
     name: 'get_meeting',
     description: 'View meeting status, participants, and conversation history.',
+    checkAvailability: () => manager.isInMeeting(agentName),
     parameters: {
       type: 'object',
       properties: {

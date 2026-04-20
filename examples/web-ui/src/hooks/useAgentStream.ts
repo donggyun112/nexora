@@ -36,14 +36,17 @@ export function useAgentStream() {
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
 
-    // Track current agent bubble
+    // Track current agent bubble — new bubble when agent changes
     let currentAgent = 'assistant';
-    const agentMsgs = new Map<string, string>(); // agentName → msgId
+    let lastChunkAgent = '';
+    let lastMsgId = '';
+    const allMsgIds = new Set<string>();
     const getOrCreateMsg = (agent: string): string => {
-      const existing = agentMsgs.get(agent);
-      if (existing) return existing;
+      if (agent === lastChunkAgent && lastMsgId) return lastMsgId;
       const id = `a${++msgId}`;
-      agentMsgs.set(agent, id);
+      lastChunkAgent = agent;
+      lastMsgId = id;
+      allMsgIds.add(id);
       setMessages(prev => [...prev, { id, agent, role: 'agent', text: '', tools: [], done: false }]);
       return id;
     };
@@ -98,7 +101,7 @@ export function useAgentStream() {
             currentAgent = 'assistant';
           } else if (c.type === 'done') {
             // Mark all agent messages as done
-            setMessages(prev => prev.map(m => agentMsgs.has(m.agent) ? { ...m, done: true } : m));
+            setMessages(prev => prev.map(m => allMsgIds.has(m.id) ? { ...m, done: true } : m));
           } else if (c.type === 'error') {
             setMessages(prev => prev.map(m => m.id === mid ? { ...m, text: m.text + `\n[Error] ${c.message}`, done: true } : m));
           }

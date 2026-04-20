@@ -153,14 +153,22 @@ export class ConversationRoom {
     return [...this.messages];
   }
 
-  /** Convert history to LLM message format. */
+  /** Convert history to LLM message format, merging consecutive assistant messages only.
+   *  User messages are never merged — each user turn stays separate so TurnManager
+   *  can correctly extract the latest prompt via messages.slice(-1). */
   historyForLLM(): { role: 'user' | 'assistant'; content: string }[] {
-    return this.messages.map(m => ({
-      role: m.role,
-      content: m.agentName
-        ? `[${m.agentName}]: ${m.content}`
-        : m.content,
-    }));
+    const result: { role: 'user' | 'assistant'; content: string }[] = [];
+    for (const m of this.messages) {
+      const text = m.agentName ? `[${m.agentName}]: ${m.content}` : m.content;
+      const last = result[result.length - 1];
+      // Only merge consecutive assistant messages (multiple agents = same role)
+      if (last && last.role === 'assistant' && m.role === 'assistant') {
+        last.content += '\n' + text;
+      } else {
+        result.push({ role: m.role, content: text });
+      }
+    }
+    return result;
   }
 
   /** Which agent is currently generating a response (null = nobody). */

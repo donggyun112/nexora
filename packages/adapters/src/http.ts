@@ -297,6 +297,8 @@ header h1{font-size:16px;font-weight:600;color:#f2f3f5}
 <span class="tag" style="border-color:#5865f2;color:#5865f2">🤖 assistant</span>
 <span class="tag" style="border-color:#9b59b6;color:#9b59b6">💻 coder</span>
 <span class="tag" style="border-color:#2ecc71;color:#2ecc71">🔍 researcher</span>
+<span class="tag" style="border-color:#e67e22;color:#e67e22">😈 critic</span>
+<span class="tag" style="border-color:#e74c3c;color:#e74c3c">⚙️ researcher3</span>
 </div>
 </header>
 <div class="msgs" id="msgs">
@@ -308,8 +310,8 @@ header h1{font-size:16px;font-weight:600;color:#f2f3f5}
 </div>
 </div>
 <script>
-const A={assistant:{av:'🤖',c:'#5865f2'},coder:{av:'💻',c:'#9b59b6'},researcher:{av:'🔍',c:'#2ecc71'},system:{av:'⚠️',c:'#e74c3c'}};
-const TI={read:'📄',grep:'🔍',exec:'⚡',write:'✏️',edit:'✏️',delegate:'🤝',knowledge:'📚'};
+const A={assistant:{av:'🤖',c:'#5865f2'},coder:{av:'💻',c:'#9b59b6'},researcher:{av:'🔍',c:'#2ecc71'},researcher2:{av:'🧠',c:'#e67e22'},researcher3:{av:'⚙️',c:'#e74c3c'},system:{av:'⚠️',c:'#95a5a6'}};
+const TI={read:'📄',grep:'🔍',exec:'⚡',write:'✏️',edit:'✏️',delegate:'🤝',knowledge:'📚',speak:'💬',attention:'🚨',web_search:'🌐',join_meeting:'🚪',open_meeting:'📢',conclude_meeting:'✅'};
 const msgs=document.getElementById('msgs'),inp=document.getElementById('inp'),btn=document.getElementById('btn');
 let first=true;
 function scroll(){msgs.scrollTop=msgs.scrollHeight}
@@ -323,19 +325,28 @@ function addUser(text){
   msgs.appendChild(r);scroll();
 }
 
-const agentEls=new Map();
-function newBubble(name){
+let lastAgent='';let lastBubble=null;
+function getBubble(name){
+  if(name===lastAgent&&lastBubble)return lastBubble;
+  lastAgent=name;
   const a=A[name]||A.system;
   const r=document.createElement('div');r.className='mrow';
-  r.innerHTML='<div class="av" style="background:'+a.c+'">'+a.av+'</div><div class="mc"><div class="an" style="color:'+a.c+'">'+h(name)+'</div><div class="tc"></div><div class="abbl"></div></div>';
+  const av=document.createElement('div');av.className='av';av.style.background=a.c;av.textContent=a.av;
+  const mc=document.createElement('div');mc.className='mc';
+  const an=document.createElement('div');an.className='an';an.style.color=a.c;an.textContent=name;
+  const tc=document.createElement('div');tc.className='tc';
+  const bbl=document.createElement('div');bbl.className='abbl';
+  mc.append(an,tc,bbl);r.append(av,mc);
   msgs.appendChild(r);scroll();
-  return {el:r,tc:r.querySelector('.tc'),bbl:r.querySelector('.abbl')};
+  lastBubble={el:r,tc:tc,bbl:bbl};
+  return lastBubble;
 }
+function newBubble(name){lastAgent='';return getBubble(name);}
 
 async function send(){
   const text=inp.value.trim();if(!text)return;
   inp.value='';addUser(text);
-  agentEls.clear();
+  lastAgent='';lastBubble=null;
   btn.disabled=true;inp.disabled=true;
   const typ=document.createElement('div');typ.className='typ';
   typ.innerHTML='<span>●</span><span>●</span><span>●</span>';
@@ -355,25 +366,29 @@ async function send(){
         try{
           const c=JSON.parse(line.slice(6));
           const ag=c.agent||'assistant';
-          if(c.type==='text'){const o=newBubble(ag);o.bbl.textContent=c.text||''}
+          if(c.type==='text'){const o=getBubble(ag);if(o.bbl.textContent)o.bbl.textContent+=String.fromCharCode(10)+String.fromCharCode(10)+(c.text||'');else o.bbl.textContent=c.text||''}
           else if(c.type==='tool_call'){
-            const o=agentEls.get(ag)||newBubble(ag);
+            const o=getBubble(ag);
             const icon=TI[c.name]||'🔧';
             let det='';
             if(c.input){
-              if(c.name==='read'&&c.input.path)det=' '+c.input.path;
+              if(c.name==='speak'&&c.input.to){det=' → @'+(Array.isArray(c.input.to)?c.input.to.join(', @'):c.input.to);if(c.input.replyTo)det=' ← @'+c.input.replyTo+det;}
+              else if(c.name==='attention')det=' ⚠️';
+              else if(c.name==='read'&&c.input.path)det=' '+c.input.path;
               else if(c.name==='grep'&&c.input.pattern)det=' /'+c.input.pattern+'/';
-              else if(c.name==='delegate'&&c.input.capability)det=' → @'+c.input.capability;
+              else if(c.name==='delegate'&&c.input.capability)det=' '+c.input.capability;
             }
-            o.tc.insertAdjacentHTML('beforeend','<span class="tch c">'+icon+' '+h(c.name)+h(det)+'</span>');
+            const cls=c.name==='attention'?'tch e':'tch c';
+            const s=document.createElement('span');s.className=cls;s.textContent=icon+' '+c.name+(det||'');
+            o.tc.appendChild(s);
           }
-          else if(c.type==='tool_result'){const o=agentEls.get(ag)||newBubble(ag);o.tc.insertAdjacentHTML('beforeend','<span class="tch '+(c.isError?'e':'r')+'">✓ '+h(c.name)+'</span>')}
+          else if(c.type==='tool_result'){const o=getBubble(ag);const s=document.createElement('span');s.className='tch '+(c.isError?'e':'r');s.textContent='✓ '+c.name;o.tc.appendChild(s)}
           else if(c.type==='error'){const o=newBubble(ag);o.bbl.textContent='[Error] '+(c.message||'')}
         }catch{}
       }
       scroll();
     }
-  }catch(e){typ.remove();const o=getAgent('system');o.bbl.textContent='Error: '+e.message}
+  }catch(e){typ.remove();const o=newBubble('system');o.bbl.textContent='Error: '+e.message}
   btn.disabled=false;inp.disabled=false;inp.focus();
 }
 btn.addEventListener('click',send);

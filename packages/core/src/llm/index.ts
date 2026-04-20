@@ -14,3 +14,6 @@ export type { OpenAIProviderOptions, ProviderPreset } from './openai.js';
 
 export { FallbackLLMProvider, classifyError } from './fallback.js';
 export type { FallbackLLMProviderOptions, FallbackProviderEntry, ErrorClass } from './fallback.js';
+
+export { CodexProvider } from './codex.js';
+export type { CodexProviderOptions } from './codex.js';

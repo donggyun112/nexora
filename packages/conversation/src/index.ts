@@ -22,3 +22,6 @@ export type { EvaluationResult } from './evaluate.js';
 
 export { MeetingOrchestrator } from './meeting-orchestrator.js';
 export type { MeetingEvent, MeetingOrchestratorOptions } from './meeting-orchestrator.js';
+
+export { DEFAULT_MEETING_PROMPTS, interpolate } from './meeting-prompts.js';
+export type { MeetingPromptTemplates } from './meeting-prompts.js';

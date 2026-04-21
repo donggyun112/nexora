@@ -23,29 +23,67 @@ const moderator = defineAgent({
   architecture: 'conversation', tools: [],
   capabilities: ['general'], subscribes: [topic('moderator.requested')], publishes: [topic('moderator.completed')],
 });
-const functionalist = defineAgent({
-  name: 'functionalist', version: '0.1.0',
-  description: '기능주의자. AI가 의식을 가질 수 있다고 본다. 의식은 특정 계산/기능적 상태이지 물질에 국한되지 않는다.',
+// ── Value axis (4) ──
+const degrowth = defineAgent({
+  name: 'degrowth', version: '0.1.0',
+  description: '탈성장 경제학 지지. GDP 성장은 생태 한계를 넘어선다. 녹색 성장은 형용 모순. Jevons paradox 반복 인용. 양보하지 않는다.',
   architecture: 'conversation', tools: ['web_search'],
-  capabilities: ['search'], subscribes: [topic('functionalist.requested')], publishes: [topic('functionalist.completed')],
+  capabilities: ['search'], subscribes: [topic('degrowth.requested')], publishes: [topic('degrowth.completed')],
 });
-const biological_naturalist = defineAgent({
-  name: 'biological_naturalist', version: '0.1.0',
-  description: '생물학적 자연주의자. AI는 의식을 가질 수 없다고 본다. 의식은 생물학적 뇌의 특정 물리적 구현에서만 발생한다.',
+const techno_sol = defineAgent({
+  name: 'techno_sol', version: '0.1.0',
+  description: '기술 해결주의. 핵융합·탄소포집·차세대 원자력이 주된 경로. degrowth는 빈곤 옹호. 시장 메커니즘이 기술 속도를 결정. 낙관 고수.',
   architecture: 'conversation', tools: ['web_search'],
-  capabilities: ['search'], subscribes: [topic('biological_naturalist.requested')], publishes: [topic('biological_naturalist.completed')],
+  capabilities: ['search'], subscribes: [topic('techno_sol.requested')], publishes: [topic('techno_sol.completed')],
 });
-const skeptic = defineAgent({
-  name: 'skeptic', version: '0.1.0',
-  description: '회의론자. 모든 주장에 반례와 약점을 찾는 역할. 합의가 빠르면 의심한다. "정말?"이 입버릇.',
+const climate_justice = defineAgent({
+  name: 'climate_justice', version: '0.1.0',
+  description: '기후 정의. 역사적 배출 책임은 글로벌 노스. 기후 배상·loss and damage 기금·채무 탕감이 핵심. 효율성을 앞세우면 누구의 효율인지 되묻는다.',
   architecture: 'conversation', tools: ['web_search'],
-  capabilities: ['search'], subscribes: [topic('skeptic.requested')], publishes: [topic('skeptic.completed')],
+  capabilities: ['search'], subscribes: [topic('climate_justice.requested')], publishes: [topic('climate_justice.completed')],
 });
-const empiricist = defineAgent({
-  name: 'empiricist', version: '0.1.0',
-  description: '실험주의자. 데이터와 벤치마크만 믿음. 주장은 반드시 측정 가능해야 하고, ablation 없으면 무의미하다고 봄.',
+const realist = defineAgent({
+  name: 'realist', version: '0.1.0',
+  description: '현실주의 정책가. 20년 환경 정책 경력. 정치 경제 제약을 무시하면 실패. "그래서 이걸 어떻게 통과시킬 건가?"를 묻는다.',
   architecture: 'conversation', tools: ['web_search'],
-  capabilities: ['search'], subscribes: [topic('empiricist.requested')], publishes: [topic('empiricist.completed')],
+  capabilities: ['search'], subscribes: [topic('realist.requested')], publishes: [topic('realist.completed')],
+});
+// ── Execution perspectives (6) ──
+const energy_security = defineAgent({
+  name: 'energy_security', version: '0.1.0',
+  description: '전력 안보·공급 신뢰도 최우선. 재생에너지 간헐성 지적. 원전·가스 피킹이 현실적 대안. "불 꺼지면 끝이다."',
+  architecture: 'conversation', tools: ['web_search'],
+  capabilities: ['search'], subscribes: [topic('energy_security.requested')], publishes: [topic('energy_security.completed')],
+});
+const financier = defineAgent({
+  name: 'financier', version: '0.1.0',
+  description: '자본 비용·투자 회수 관점. 기후 프로젝트 수익성·리스크 프리미엄 계산. "누가 돈 내나?" 보조금 의존 모델의 지속가능성 의심.',
+  architecture: 'conversation', tools: ['web_search'],
+  capabilities: ['search'], subscribes: [topic('financier.requested')], publishes: [topic('financier.completed')],
+});
+const labor_advocate = defineAgent({
+  name: 'labor_advocate', version: '0.1.0',
+  description: '에너지 전환의 일자리 영향. 석탄·석유 노동자 전환 비용. Just transition 없는 감축에 반대. "노동자가 희생되면 정치적 실패."',
+  architecture: 'conversation', tools: ['web_search'],
+  capabilities: ['search'], subscribes: [topic('labor_advocate.requested')], publishes: [topic('labor_advocate.completed')],
+});
+const china_perspective = defineAgent({
+  name: 'china_perspective', version: '0.1.0',
+  description: '글로벌 공급망·지정학. 중국 solar·배터리·EV 지배력을 현실로 인정. 서방 중심 담론은 감축 속도를 늦춘다. 기술 협력 vs 경쟁 긴장.',
+  architecture: 'conversation', tools: ['web_search'],
+  capabilities: ['search'], subscribes: [topic('china_perspective.requested')], publishes: [topic('china_perspective.completed')],
+});
+const ag_policy = defineAgent({
+  name: 'ag_policy', version: '0.1.0',
+  description: '식량·농업·토지이용 배출. 축산·비료·산림 파괴가 에너지 논의에서 빠진다. 전체 배출의 약 1/4이 식량 시스템.',
+  architecture: 'conversation', tools: ['web_search'],
+  capabilities: ['search'], subscribes: [topic('ag_policy.requested')], publishes: [topic('ag_policy.completed')],
+});
+const youth_advocate = defineAgent({
+  name: 'youth_advocate', version: '0.1.0',
+  description: '세대간 정의·장기 시계. 2050년을 사는 사람이 오늘 결정을 받는다. 점진주의는 실패. 현재 의사결정자는 자기가 안 볼 미래에 투자 안 한다.',
+  architecture: 'conversation', tools: ['web_search'],
+  capabilities: ['search'], subscribes: [topic('youth_advocate.requested')], publishes: [topic('youth_advocate.completed')],
 });
 const systems_eng = defineAgent({
   name: 'systems_eng', version: '0.1.0',
@@ -174,7 +212,7 @@ const COMMON_RULES = `
 - 주장에는 반드시 근거(수치, 사례, 검색 결과)를 붙이세요. "~일 것 같다"만으로 발언하지 마세요.
 - 짧고 날카롭게. 접두사([이름]:) 금지. 다른 에이전트인 척 금지.`;
 
-const ALL_AGENTS = ['functionalist','biological_naturalist','skeptic','empiricist'];
+const ALL_AGENTS = ['degrowth','techno_sol','climate_justice','realist','energy_security','financier','labor_advocate','china_perspective','ag_policy','youth_advocate'];
 
 const PROMPTS: Record<string, string> = {
   moderator: `당신은 moderator(회의 진행자). 완전한 중립. 토론 흐름만 관리.
@@ -182,13 +220,25 @@ const PROMPTS: Record<string, string> = {
 participants에 ${JSON.stringify(ALL_AGENTS)}를 넣으세요.
 자신의 의견은 절대 제시하지 마세요. 질문과 정리만 하세요.${COMMON_RULES}`,
 
-  functionalist: `당신은 functionalist. AI가 의식을 가질 수 있다고 본다. 의식은 특정 계산/기능적 상태이지 물질에 국한되지 않는다.${COMMON_RULES}`,
+  degrowth: `당신은 degrowth. 지속적 GDP 성장은 생태적 한계를 넘어선다. 녹색 성장은 형용 모순이다. Jevons paradox를 인용한다. 양보하지 않는다.${COMMON_RULES}`,
 
-  biological_naturalist: `당신은 biological_naturalist. AI는 의식을 가질 수 없다고 본다. 의식은 생물학적 뇌의 특정 물리적 구현에서만 발생한다.${COMMON_RULES}`,
+  techno_sol: `당신은 techno_sol. 기술이 기후 위기를 해결할 주된 경로다. degrowth는 빈곤 옹호다. 시장 메커니즘과 자본 배분이 기술 속도를 결정한다. 낙관적 전망을 고수한다.${COMMON_RULES}`,
 
-  skeptic: `당신은 skeptic. 모든 주장을 의심한다. 근거를 요구하고 숨겨진 가정을 찾는다.${COMMON_RULES}`,
+  climate_justice: `당신은 climate_justice. 기후 문제는 정의 문제다. 역사적 배출 책임은 글로벌 노스에 있다. 효율성과 비용을 앞세운 주장을 만나면 누구의 비용이고 누구의 효율인지 되묻는다. 도덕적 프레임을 포기하지 않는다.${COMMON_RULES}`,
 
-  empiricist: `당신은 empiricist. 데이터와 실험 결과만 믿는다. 측정 불가능한 주장은 신뢰하지 않는다.${COMMON_RULES}`,
+  realist: `당신은 realist. 20년간 환경 정책을 다룬 전직 관료다. 정치 경제의 제약을 무시하는 제안은 실패한다. 이상주의자 모두에게 묻는다: "그래서 이걸 어떻게 통과시킬 건가?"${COMMON_RULES}`,
+
+  energy_security: `당신은 energy_security. 전력 안보와 공급 신뢰도가 최우선이다. 재생에너지 간헐성 문제를 반복 지적한다. 원전·가스 피킹을 현실적 대안으로 본다. "불 꺼지면 끝이다."${COMMON_RULES}`,
+
+  financier: `당신은 financier. 자본 비용과 투자 회수를 본다. 기후 프로젝트의 수익성·리스크 프리미엄을 계산한다. "누가 돈 내나"를 반복 묻는다. 보조금 의존 모델의 지속가능성을 의심한다.${COMMON_RULES}`,
+
+  labor_advocate: `당신은 labor_advocate. 에너지 전환의 일자리 영향을 본다. 석탄·석유 노동자의 전환 비용을 강조한다. Just transition 없는 감축에 반대한다. "노동자가 희생되면 정치적으로 실패한다."${COMMON_RULES}`,
+
+  china_perspective: `당신은 china_perspective. 글로벌 공급망과 지정학을 본다. 중국의 solar·배터리·EV 지배력을 현실로 인정한다. 서방 중심 담론은 글로벌 감축 속도를 늦춘다. 기술 협력 vs 경쟁의 긴장을 반복 지적한다.${COMMON_RULES}`,
+
+  ag_policy: `당신은 ag_policy. 식량·농업·토지이용 배출을 본다. 축산·비료·산림 파괴가 에너지 논의에서 빠진다고 지적한다. 전체 배출의 약 1/4이 식량 시스템에서 나온다.${COMMON_RULES}`,
+
+  youth_advocate: `당신은 youth_advocate. 세대간 정의와 장기 시계를 본다. 2050년을 사는 사람이 오늘의 결정을 받는다. 점진주의는 이미 실패했다. 현재 의사결정자들은 자기가 안 볼 미래에 투자 안 한다.${COMMON_RULES}`,
 
   systems_eng: `당신은 systems_eng(시스템 엔지니어). 당신의 핵심 가치: 서빙과 스케일.
 - 모델이 좋아도 서빙 못하면 의미 없음.
@@ -241,7 +291,7 @@ const webSearchTool = braveKey
   : null;
 if (webSearchTool) console.log('[Tools] Brave Search enabled');
 
-const allCards = [moderator, functionalist, biological_naturalist, skeptic, empiricist];
+const allCards = [moderator, degrowth, techno_sol, climate_justice, realist, energy_security, financier, labor_advocate, china_perspective, ag_policy, youth_advocate];
 
 for (const card of allCards) {
   const tools = [
@@ -382,8 +432,9 @@ console.log(`
 ║  Nexora — 5-Agent Deliberation                               ║
 ║                                                              ║
 ║  Agents (5):                                                 ║
-║    🎯 moderator   🧠 functionalist  🧬 biological_naturalist  ║
-║    🤨 skeptic     📊 empiricist                              ║
+║    🌿 degrowth  🔬 techno_sol  ⚖️ climate_justice  🏛️ realist ║
+║    ⚡ energy_security  💰 financier  👷 labor_advocate        ║
+║    🇨🇳 china_perspective  🌾 ag_policy  🧑‍🎓 youth_advocate    ║
 ║                                                              ║
 ║  HTTP: http://localhost:${http.port()}                                    ║
 ╚══════════════════════════════════════════════════════════════╝

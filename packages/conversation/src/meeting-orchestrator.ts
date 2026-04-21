@@ -250,9 +250,12 @@ export class MeetingOrchestrator {
       totalSpeaks++;
       lastSpokeTurn[agentName] = turn;
 
-      // Track cross-references
+      // Track cross-references — count if to targets a specific participant (not everyone)
+      const toTargets = (result.to ?? []).filter(t => t !== 'everyone' && t !== agentName && allP.includes(t));
+      if (toTargets.length > 0) interactionCount++;
+      // Also count if content mentions other participants by name
       const mentioned = allP.filter(n => n !== agentName && result.content.includes(n));
-      if (mentioned.length > 0) interactionCount++;
+      if (mentioned.length > 0 && toTargets.length === 0) interactionCount++;
 
       // Update completed rounds
       const minSpeak = Math.min(...allP.map(n => meeting.messages.filter(m => m.agent === n).length));

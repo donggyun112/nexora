@@ -18,6 +18,8 @@ export interface MeetingMessage {
   agent: string;
   content: string;
   timestamp: number;
+  /** Who this message was addressed to */
+  to?: string[];
 }
 
 export interface Meeting {
@@ -79,11 +81,11 @@ export class MeetingManager {
     return this.meetings.get(id);
   }
 
-  speak(id: string, agent: string, content: string): MeetingMessage | null {
+  speak(id: string, agent: string, content: string, to?: string[]): MeetingMessage | null {
     const m = this.meetings.get(id);
     if (!m || m.status !== 'active') return null;
     if (!m.participants.includes(agent)) return null;
-    const msg: MeetingMessage = { agent, content, timestamp: Date.now() };
+    const msg: MeetingMessage = { agent, content, timestamp: Date.now(), to };
     m.messages.push(msg);
     // Notify listeners (for async event-based agents)
     for (const fn of this.speakListeners) { try { fn(id, agent, content); } catch {} }
@@ -124,7 +126,8 @@ export class MeetingManager {
     if (!m) return '';
     const lines = [`📋 Meeting: ${m.topic} (${m.status})`, `Master: ${m.master}`, `Participants: ${m.participants.join(', ')}`, ...(m.invited.length ? [`Invited (not joined): ${m.invited.join(', ')}`] : []), ...(m.handRaised.length ? [`🙋 Hands raised: ${m.handRaised.join(', ')}`] : []), '---'];
     for (const msg of m.messages) {
-      lines.push(`[${msg.agent}]: ${msg.content}`);
+      const toLabel = msg.to?.length ? ` → @${msg.to.join(', @')}` : '';
+      lines.push(`[${msg.agent}${toLabel}]: ${msg.content}`);
     }
     if (m.summary) lines.push('---', `Summary: ${m.summary}`);
     return lines.join('\n');

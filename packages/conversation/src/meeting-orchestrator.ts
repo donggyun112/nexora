@@ -221,7 +221,8 @@ export class MeetingOrchestrator {
       const messages: LLMMessage[] = [];
       for (const msg of meeting.messages) {
         const role: 'user' | 'assistant' = msg.agent === agentName ? 'assistant' : 'user';
-        const text = `[${msg.agent}]: ${msg.content}`;
+        const toLabel = msg.to?.length ? ` → @${msg.to.join(', @')}` : '';
+        const text = `[${msg.agent}${toLabel}]: ${msg.content}`;
         const last = messages[messages.length - 1];
         if (last && last.role === role) {
           last.content = (last.content as string) + '\n' + text;
@@ -262,9 +263,13 @@ export class MeetingOrchestrator {
       const toList = to ?? [];
       let callees: string[];
       if (toList.includes('everyone')) {
-        callees = allP.filter(n => n !== agentName);
+        callees = allP.filter(n => n !== agentName && n !== meeting.master);
       } else {
+        // If a participant tags moderator, strip moderator from callees (don't pull moderator into turn cycle)
         callees = toList.filter(t => allP.includes(t) && t !== agentName);
+        if (agentName !== meeting.master) {
+          callees = callees.filter(t => t !== meeting.master);
+        }
       }
 
       if (callees.length > 1) {
@@ -279,8 +284,13 @@ export class MeetingOrchestrator {
         }
       } else if (callees.length === 1) {
         // Single target: lightweight — just set pendingNext (no ReplyGroup)
-        pending.next = { agent: callees[0], caller: agentName, message: content };
-        log(`  → pendingNext: ${callees[0]} (caller: ${agentName})`);
+        // Skip if target is master — moderator shouldn't be pulled into every exchange
+        if (callees[0] === meeting.master && agentName !== meeting.master) {
+          log(`  → pendingNext skipped (target is moderator, from participant ${agentName})`);
+        } else {
+          pending.next = { agent: callees[0], caller: agentName, message: content };
+          log(`  → pendingNext: ${callees[0]} (caller: ${agentName})`);
+        }
       }
     };
 
@@ -337,8 +347,9 @@ export class MeetingOrchestrator {
         const next = activeGroup.callees.find(c => !activeGroup!.responded.has(c));
         if (next) {
           speaker = next;
-          ctx.calledBy = activeGroup.caller || undefined;
-          reason = `reply-group (${activeGroup.responded.size + 1}/${activeGroup.callees.length}, caller: ${ctx.calledBy})`;
+          // Don't set calledBy if caller is moderator — prevents "report to moderator" pattern
+          ctx.calledBy = (activeGroup.caller && activeGroup.caller !== meeting.master) ? activeGroup.caller : undefined;
+          reason = `reply-group (${activeGroup.responded.size + 1}/${activeGroup.callees.length}, caller: ${ctx.calledBy ?? 'none'})`;
         } else {
           activeGroup = null;
           if (overflowQueue.length > 0) {
@@ -731,7 +742,7 @@ export class MeetingOrchestrator {
             if (mentioned.length > 0) to = [...new Set([...mentioned, ...to])];
           }
           if (message) {
-            this.mgr.speak(meetingId, agentName, message);
+            this.mgr.speak(meetingId, agentName, message, to);
             return { action: 'speak', content: message, to };
           }
         }
@@ -773,7 +784,7 @@ export class MeetingOrchestrator {
       if (resp.content?.trim()) {
         const text = resp.content.trim();
         if (text === 'PASS' || text.includes('pass_turn')) return { action: 'pass' };
-        this.mgr.speak(meetingId, agentName, text);
+        this.mgr.speak(meetingId, agentName, text, ['everyone']);
         return { action: 'speak', content: text, to: ['everyone'] };
       }
 

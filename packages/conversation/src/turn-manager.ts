@@ -97,9 +97,9 @@ export class TurnManager {
   private readonly roomLocks = new Map<string, Promise<void>>();
 
   constructor(options: TurnManagerOptions = {}) {
-    this.minConfidence = options.minConfidence ?? 0.3;
-    this.maxResponders = options.maxResponders ?? 3;
-    this.followUpMinConfidence = options.followUpMinConfidence ?? 0.5;
+    this.minConfidence = options.minConfidence ?? 0.1;
+    this.maxResponders = options.maxResponders ?? 10;
+    this.followUpMinConfidence = options.followUpMinConfidence ?? 0.2;
     this.onNoVolunteer = options.onNoVolunteer ?? (async () => null);
     this.onBeforeRespond = options.onBeforeRespond;
   }

@@ -15,7 +15,7 @@
 import type { AgentCard, LLMProvider, ConversationStore, ChatMessage, AgentRuntime } from '@nexora/contracts';
 
 /** Default max messages before oldest are evicted. */
-const DEFAULT_MAX_HISTORY = 200;
+const DEFAULT_MAX_HISTORY = 1000;
 
 export interface ConversationRoomOptions {
   /** Max messages to keep in history. Oldest evicted first. Default: 200. */

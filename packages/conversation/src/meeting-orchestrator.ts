@@ -54,9 +54,9 @@ export class MeetingOrchestrator {
   constructor(room: ConversationRoom, mgr: MeetingManager, options: MeetingOrchestratorOptions = {}) {
     this.room = room;
     this.mgr = mgr;
-    this.maxRounds = options.maxRounds ?? 100;
-    this.maxTokens = options.maxTokens ?? 2048;
-    this.minInteractions = options.minInteractions ?? 3;
+    this.maxRounds = options.maxRounds ?? 300;
+    this.maxTokens = options.maxTokens ?? 4096;
+    this.minInteractions = options.minInteractions ?? 10;
     this.prompts = { ...DEFAULT_MEETING_PROMPTS, ...options.prompts };
   }
 
@@ -80,7 +80,7 @@ export class MeetingOrchestrator {
     this.room.addAgentMessage(masterName, opening);
     this.emit({ type: 'text', text: opening, agent: masterName });
 
-    const tm = new TurnManager({ maxResponders: 2, minConfidence: 0.3, followUpMinConfidence: 0.4 });
+    const tm = new TurnManager({ maxResponders: 5, minConfidence: 0.1, followUpMinConfidence: 0.2 });
     let silentRounds = 0;
 
     for (let round = 0; round < this.maxRounds; round++) {
@@ -89,7 +89,7 @@ export class MeetingOrchestrator {
       const result = await tm.handleMessage(this.room, lastMsg);
       if (result.responses.length === 0) {
         silentRounds++;
-        if (silentRounds >= 2) return this.conclude(meeting, masterName);
+        if (silentRounds >= 5) return this.conclude(meeting, masterName);
         continue;
       }
       silentRounds = 0;
@@ -97,7 +97,7 @@ export class MeetingOrchestrator {
         this.mgr.speak(meeting.id, r.agentName, r.content);
         this.emit({ type: 'text', text: r.content, agent: r.agentName });
       }
-      if (round > 0 && round % 3 === 0) {
+      if (round > 0 && round % 7 === 0) {
         const shouldEnd = await this.moderatorSay(masterName,
           interpolate(this.prompts.simpleConcludeCheck, { history: this.mgr.formatHistory(meeting.id) }));
         if (shouldEnd.includes(this.prompts.tokenConclude)) {
@@ -117,7 +117,7 @@ export class MeetingOrchestrator {
     this.mgr.join(meeting.id, otherName);
     this.emit({ type: 'tool_call', name: 'join_meeting', input: { meetingId: meeting.id }, agent: otherName });
     const speakers = [openerName, otherName];
-    for (let turn = 0; turn < 20; turn++) {
+    for (let turn = 0; turn < 50; turn++) {
       const speaker = speakers[turn % 2];
       const history = this.mgr.formatHistory(meeting.id);
       const text = await this.say(speaker,
@@ -240,7 +240,7 @@ export class MeetingOrchestrator {
     };
 
     const emitSpeak = async (agentName: string, result: { content: string; to?: string[] }) => {
-      if (totalSpeaks > 0) await sleep(800);
+      if (totalSpeaks > 0) await sleep(1500);
       // calledBy is set explicitly during Phase B speaker selection. Filter self-reply.
       const replyTo = ctx.calledBy && ctx.calledBy !== agentName ? ctx.calledBy : undefined;
       this.emit({ type: 'tool_call', name: 'speak', input: { to: result.to, message: result.content, replyTo }, agent: agentName });
@@ -286,16 +286,19 @@ export class MeetingOrchestrator {
 
     // ── Main loop ──
     let turn = 0;
-    for (; turn < this.maxRounds * 3; turn++) {
+    for (; turn < this.maxRounds * 5; turn++) {
 
       // ═══ Phase A: Master moderation ═══
-      // ONLY when no pending reply obligations
-      if (totalSpeaks > 0
+      // Check every N turns. If queues are backed up too long, force check anyway.
+      const forceModeratorCheck = turn >= allP.length * 3 && turn % 5 === 0;
+      const normalModeratorCheck = totalSpeaks > 0
         && turn >= allP.length
-        && turn % 3 === 0
+        && turn % 5 === 0
         && activeGroup === null
         && overflowQueue.length === 0
-        && attentionRoundRobin.length === 0) {
+        && attentionRoundRobin.length === 0;
+
+      if (normalModeratorCheck || forceModeratorCheck) {
 
         log(`turn ${turn}: moderator check...`);
         const preH = this.mgr.formatHistory(meeting.id);
@@ -340,9 +343,10 @@ export class MeetingOrchestrator {
           activeGroup = null;
           if (overflowQueue.length > 0) {
             activeGroup = overflowQueue.shift()!;
+            activeGroup.caller = '';
             speaker = activeGroup.callees[0];
-            ctx.calledBy = activeGroup.caller || undefined;
-            reason = `overflow-group → ${speaker}`;
+            ctx.calledBy = undefined;
+            reason = `overflow-group → ${speaker} (caller cleared)`;
           }
         }
       }
@@ -354,29 +358,25 @@ export class MeetingOrchestrator {
 
       if (!speaker && !activeGroup && overflowQueue.length > 0) {
         activeGroup = overflowQueue.shift()!;
+        activeGroup.caller = '';
         speaker = activeGroup.callees[0];
-        ctx.calledBy = activeGroup.caller;
+        ctx.calledBy = undefined;
         reason = `overflow → ${speaker}`;
       }
 
       // raise_hand before pending.next
-      // Drain ALL raised hands into a ReplyGroup (they all requested to speak)
+      // Pick first hand only, drop the rest (prevents queue bloat)
       if (!speaker) {
-        const allRaised: string[] = [];
-        let next = this.mgr.nextSpeaker(meeting.id);
-        while (next) { allRaised.push(next); next = this.mgr.nextSpeaker(meeting.id); }
-        if (allRaised.length > 1) {
-          // Multiple hands → ReplyGroup so they all get to speak
-          activeGroup = { caller: '', message: '', callees: allRaised, responded: new Set() };
-          speaker = allRaised[0];
-          reason = `raise-hand group [${allRaised}]`;
-          log(`turn ${turn}: 🙋 ${allRaised.length} hands raised → group: [${allRaised}]`);
-          for (const r of allRaised) this.emit({ type: 'tool_call', name: 'raise_hand', input: {}, agent: r });
-        } else if (allRaised.length === 1) {
-          speaker = allRaised[0];
+        const first = this.mgr.nextSpeaker(meeting.id);
+        if (first) {
+          speaker = first;
           reason = `raise-hand → ${speaker}`;
           log(`turn ${turn}: 🙋 ${speaker} raised hand`);
           this.emit({ type: 'tool_call', name: 'raise_hand', input: {}, agent: speaker });
+          // Flush remaining hands
+          let dropped = 0;
+          while (this.mgr.nextSpeaker(meeting.id)) dropped++;
+          if (dropped > 0) log(`turn ${turn}: 🙋 dropped ${dropped} other raised hands`);
         }
       }
 
@@ -397,12 +397,12 @@ export class MeetingOrchestrator {
         } else {
           silentTurns++;
           log(`turn ${turn}: evaluate → nobody (silent=${silentTurns})`);
-          if (silentTurns >= 2) {
-            if (completedRounds < 2) {
+          if (silentTurns >= 4) {
+            if (completedRounds < 4) {
               // Force stimulation
               log(`turn ${turn}: forcing cross-discussion (rounds=${completedRounds})`);
               const leastActive = allP.filter(n => n !== meeting.master)
-                .sort((a, b) => (lastSpokeTurn[a] ?? -1) - (lastSpokeTurn[b] ?? -1)).slice(0, 2);
+                .sort((a, b) => (lastSpokeTurn[a] ?? -1) - (lastSpokeTurn[b] ?? -1)).slice(0, 3);
               const stimPrompt = interpolate(this.prompts.forceStimulation, { history: mH, leastActive: leastActive.join(', ') });
               const stimResult = await this.singleShotAction(meeting.master, stimPrompt, meeting.id);
               if (stimResult.action === 'speak' && stimResult.content) {
@@ -432,7 +432,7 @@ export class MeetingOrchestrator {
 
       if (result.action === 'attention' && result.content) {
         // Attention: clear everything, force round-robin
-        if (totalSpeaks > 0) await sleep(800);
+        if (totalSpeaks > 0) await sleep(1500);
         activeGroup = null;
         overflowQueue.length = 0;
         this.emit({ type: 'tool_call', name: 'attention', input: { message: result.content }, agent: speaker });
@@ -446,6 +446,18 @@ export class MeetingOrchestrator {
       } else if (result.action === 'speak' && result.content) {
         await emitSpeak(speaker, { content: result.content!, to: result.to });
         handleTags(speaker, result.to ?? [], result.content);
+
+      } else if (result.action === 'propose_vote') {
+        log(`turn ${turn}: ${speaker} proposed vote to conclude`);
+        this.emit({ type: 'tool_call', name: 'propose_vote', input: {}, agent: speaker });
+        // Clear queues so vote can proceed cleanly
+        activeGroup = null;
+        overflowQueue.length = 0;
+        attentionRoundRobin = [];
+        pending.next = null;
+        const concluded = await this.proposeAndConfirm(meeting, allP, turn, lastSpokeTurn);
+        if (concluded) return concluded;
+        log(`turn ${turn}: vote rejected — continuing discussion`);
 
       } else if (result.action === 'pass') {
         log(`turn ${turn}: ${speaker} passed`);
@@ -462,10 +474,11 @@ export class MeetingOrchestrator {
         if (activeGroup.responded.size >= activeGroup.callees.length) {
           log(`turn ${turn}: ReplyGroup drained (all ${activeGroup.callees.length} responded)`);
           activeGroup = null;
-          // Promote overflow
+          // Promote overflow — clear caller so agents address each other, not the original tagger
           if (overflowQueue.length > 0) {
             activeGroup = overflowQueue.shift()!;
-            log(`turn ${turn}: promoted overflow group: [${activeGroup.callees}]`);
+            activeGroup.caller = '';
+            log(`turn ${turn}: promoted overflow group: [${activeGroup.callees}] (caller cleared)`);
           }
         }
       }
@@ -505,8 +518,8 @@ export class MeetingOrchestrator {
       interpolate(this.prompts.moderatorCheck, { history: mHistory, interactionCount, completedRounds, msgCount }));
 
     if (check.includes(this.prompts.tokenConclude)) {
-      if (interactionCount < this.minInteractions || completedRounds < 2) {
-        console.log(`[Moderator] conclude blocked: interactions=${interactionCount}/${this.minInteractions}, rounds=${completedRounds}/2`);
+      if (interactionCount < this.minInteractions || completedRounds < 4) {
+        console.log(`[Moderator] conclude blocked: interactions=${interactionCount}/${this.minInteractions}, rounds=${completedRounds}/4`);
         // Force stimulate instead
         const allNames = [...meeting.participants as string[]].filter(n => n !== meeting.master);
         const prompt = interpolate(this.prompts.insufficientInteraction, { history: mHistory, interactionCount });
@@ -553,7 +566,7 @@ export class MeetingOrchestrator {
       const objResult = await this.singleShotAction(name,
         interpolate(this.prompts.objectionCheck, { agentName: name, history: freshH }), meeting.id);
       if (objResult.action === 'speak' && objResult.content) {
-        await sleep(800);
+        await sleep(1500);
         this.emit({ type: 'tool_call', name: 'speak', input: { to: objResult.to, message: objResult.content }, agent: name });
         this.room.addAgentMessage(name, objResult.content);
         this.emit({ type: 'text', text: objResult.content, agent: name });
@@ -614,7 +627,7 @@ export class MeetingOrchestrator {
     agentName: string,
     promptOrMessages: string | { systemPrompt: string; messages: LLMMessage[] },
     meetingId: string,
-  ): Promise<{ action: 'speak' | 'pass' | 'attention' | 'none'; content?: string; to?: string[] }> {
+  ): Promise<{ action: 'speak' | 'pass' | 'attention' | 'propose_vote' | 'none'; content?: string; to?: string[] }> {
     const p = this.room.getParticipant(agentName);
     if (!p) return { action: 'none' };
 
@@ -628,12 +641,12 @@ export class MeetingOrchestrator {
     const meetingTools = [
       {
         name: 'speak',
-        description: 'Post a message in the meeting. "to" can be a single name or array for multiple targets.',
+        description: 'Post a message in the meeting. Set "to" to the participant whose argument you are responding to, challenging, or building upon — NOT the moderator (unless directly answering their question).',
         parameters: {
           type: 'object' as const,
           properties: {
             to: {
-              description: `Who to address: ${toEnum.map(n => `"${n}"`).join(', ')}`,
+              description: `The participant you are challenging or responding to. Pick who said the thing you are reacting to. Available: ${toEnum.map(n => `"${n}"`).join(', ')}`,
               oneOf: [
                 { type: 'string' as const, enum: toEnum },
                 { type: 'array' as const, items: { type: 'string' as const, enum: toEnum } },
@@ -659,6 +672,15 @@ export class MeetingOrchestrator {
         parameters: { type: 'object' as const, properties: {} },
       },
     ];
+
+    // Master-only tool: propose a vote to conclude the meeting
+    if (meeting && agentName === meeting.master) {
+      meetingTools.push({
+        name: 'propose_vote',
+        description: 'Propose to end the meeting. Triggers a vote where all participants agree or object. Use when discussion has reached sufficient depth.',
+        parameters: { type: 'object' as const, properties: {} },
+      });
+    }
 
     // Agent's own tools (web_search, etc.)
     const agentTools: typeof meetingTools = [];
@@ -724,6 +746,9 @@ export class MeetingOrchestrator {
         if (tc.name === 'pass_turn') {
           return { action: 'pass' };
         }
+        if (tc.name === 'propose_vote') {
+          return { action: 'propose_vote' };
+        }
 
         // Agent tool → execute and re-prompt
         if (agentToolExecutor) {
@@ -788,7 +813,7 @@ export class MeetingOrchestrator {
     );
 
     return evaluations
-      .filter(e => e.want && e.confidence >= 0.3)
+      .filter(e => e.want && e.confidence >= 0.1)
       .sort((a, b) => b.confidence - a.confidence)
       .map(e => e.name);
   }

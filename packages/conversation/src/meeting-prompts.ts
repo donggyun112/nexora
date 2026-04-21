@@ -122,7 +122,7 @@ export const DEFAULT_MEETING_PROMPTS: MeetingPromptTemplates = {
 
   // Speaker
   identity: '[You are "{agentName}". Other participants: {others}.]\n',
-  replyContext: '\n[⚡ {caller} called you. Address their point first.]\n',
+  replyContext: '\n[Context: {caller} tagged you in their last message.]\n',
   topicAnchor: '[Meeting goal: {goalDesc}]\n\n',
   rules: [
     'Rules:',
@@ -131,7 +131,7 @@ export const DEFAULT_MEETING_PROMPTS: MeetingPromptTemplates = {
     '- The "to" field must match the person you are asking/addressing in your message.',
   ].join('\n'),
   firstSpeak: 'Use the speak tool to present your perspective as {agentName}.\nSet "to" to the next speaker ({others}).',
-  continueSpeak: 'Use the speak tool to advance toward an answer.\n- Build on or supplement previous statements.\n- Set "to" to the next speaker ({others}).',
+  continueSpeak: 'Use the speak tool to advance toward an answer.\n- NEVER restate a point already made by another participant above.\n- If you agree and have nothing NEW to add → use pass_turn instead.\n- Only speak if you have a DIFFERENT perspective, CORRECTION, or NEW information.\n- Set "to" to the person you are addressing ({others}).',
 
   // Moderator
   moderatorPersona: [

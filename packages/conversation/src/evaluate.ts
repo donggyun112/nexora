@@ -44,7 +44,7 @@ Output ONLY a JSON object: {"respond": bool, "confidence": 0.0-1.0, "reason": "o
  * Returns quickly (~50 tokens, ~200-500ms).
  */
 /** Default per-agent evaluate timeout (ms). */
-const DEFAULT_EVALUATE_TIMEOUT_MS = 10_000;
+const DEFAULT_EVALUATE_TIMEOUT_MS = 30_000;
 
 export async function evaluateAgent(
   participant: RoomParticipant,

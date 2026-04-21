@@ -259,39 +259,11 @@ export class MeetingOrchestrator {
       completedRounds = Math.max(completedRounds, minSpeak);
     };
 
-    const handleTags = (agentName: string, to: string[], content: string) => {
-      const toList = to ?? [];
-      let callees: string[];
-      if (toList.includes('everyone')) {
-        callees = allP.filter(n => n !== agentName && n !== meeting.master);
-      } else {
-        // If a participant tags moderator, strip moderator from callees (don't pull moderator into turn cycle)
-        callees = toList.filter(t => allP.includes(t) && t !== agentName);
-        if (agentName !== meeting.master) {
-          callees = callees.filter(t => t !== meeting.master);
-        }
-      }
-
-      if (callees.length > 1) {
-        // Multi-target: create ReplyGroup (atomic drain guarantee)
-        const newGroup: ReplyGroup = { caller: agentName, message: content, callees, responded: new Set() };
-        if (activeGroup && activeGroup.responded.size < activeGroup.callees.length) {
-          overflowQueue.push(newGroup);
-          log(`  → overflow queue (active group not drained): [${callees}]`);
-        } else {
-          activeGroup = newGroup;
-          log(`  → new ReplyGroup: [${callees}] (caller: ${agentName})`);
-        }
-      } else if (callees.length === 1) {
-        // Single target: lightweight — just set pendingNext (no ReplyGroup)
-        // Skip if target is master — moderator shouldn't be pulled into every exchange
-        if (callees[0] === meeting.master && agentName !== meeting.master) {
-          log(`  → pendingNext skipped (target is moderator, from participant ${agentName})`);
-        } else {
-          pending.next = { agent: callees[0], caller: agentName, message: content };
-          log(`  → pendingNext: ${callees[0]} (caller: ${agentName})`);
-        }
-      }
+    // handleTags: to is purely metadata (addressee), not scheduling.
+    // Next speaker is determined by evaluate fallback, not by to.
+    const handleTags = (_agentName: string, _to: string[], _content: string) => {
+      // No-op: to is already recorded in meeting.messages via mgr.speak().
+      // Displayed in history as [agent → @target]. No ReplyGroup/pendingNext.
     };
 
     // ── Main loop ──
@@ -665,10 +637,11 @@ export class MeetingOrchestrator {
     const participantNames = meeting
       ? [...new Set([...meeting.participants as string[], meeting.master])].filter(n => n !== agentName)
       : [];
-    // Participants cannot target moderator in to — forces peer-to-peer discussion
+    // Participants: specific names first, everyone last (nudges targeted addressing)
+    // Moderator removed from participant choices (forces peer-to-peer)
     const toEnum = meeting && agentName !== meeting.master
-      ? ['everyone', ...participantNames.filter(n => n !== meeting.master)]
-      : ['everyone', ...participantNames];
+      ? [...participantNames.filter(n => n !== meeting.master), 'everyone']
+      : [...participantNames, 'everyone'];
 
     // Meeting tools
     const meetingTools = [

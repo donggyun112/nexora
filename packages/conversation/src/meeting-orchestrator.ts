@@ -611,6 +611,18 @@ export class MeetingOrchestrator {
         return finalSummary;
       }
 
+      // Tie (50:50) → REOPEN directly, REVISE is futile in deadlock
+      if (agreeCount === objections.length) {
+        const objSummary = objections.map(o => `${o.name}: ${o.content}`).join('\n\n');
+        console.log(`[Meeting:${meeting.id}] Vote round ${voteRound} → TIE (${agreeCount}:${objections.length}): REOPEN`);
+        const reopenSummary = `[Vote round ${voteRound} → TIE ${agreeCount}:${objections.length} — REOPEN] Deadlock. Unresolved:\n${objSummary}\n\nDiscussion resumes on these points.`;
+        this.mgr.speak(meeting.id, meeting.master, reopenSummary, ['everyone']);
+        this.emit({ type: 'tool_call', name: 'speak', input: { to: ['everyone'], message: reopenSummary }, agent: meeting.master });
+        this.room.addAgentMessage(meeting.master, reopenSummary);
+        this.emit({ type: 'text', text: reopenSummary, agent: meeting.master });
+        return null;
+      }
+
       const objSummary = objections.map(o => `${o.name}: ${o.content}`).join('\n\n');
       const recommendation = majorityAgree
         ? `Majority agrees (round ${voteRound}). Choose one:\n- "CLOSE": end with objections noted\n- "REVISE": rewrite proposal to address objections\n- "REOPEN": objections require more discussion, return to debate`

@@ -193,6 +193,8 @@ export class MeetingOrchestrator {
     const pending: { next: { agent: string; caller: string; message: string } | null } = { next: null };
     // Explicit caller tracking — set in Phase B, consumed in buildPrompt/emitSpeak
     const ctx: { calledBy: string | undefined } = { calledBy: undefined };
+    // Moderator-imposed penalties: suppressed agents get -0.5 confidence in evaluate
+    const suppressedAgents = new Set<string>();
 
     log(`Started. master=${meeting.master}, participants=[${allP}]`);
 
@@ -262,11 +264,19 @@ export class MeetingOrchestrator {
       completedRounds = Math.max(completedRounds, minSpeak);
     };
 
-    // handleTags: to is purely metadata (addressee), not scheduling.
-    // Next speaker is determined by evaluate fallback, not by to.
-    const handleTags = (_agentName: string, _to: string[], _content: string) => {
-      // No-op: to is already recorded in meeting.messages via mgr.speak().
-      // Displayed in history as [agent → @target]. No ReplyGroup/pendingNext.
+    // handleTags: specific targets get priority speaking, everyone is no-op.
+    const handleTags = (agentName: string, to: string[], _content: string) => {
+      const targets = (to ?? []).filter(t => t !== 'everyone' && t !== agentName && allP.includes(t));
+      if (targets.length === 0) return; // everyone or no valid target → evaluate decides
+
+      // Queue targets for priority speaking (not forced — they can still pass)
+      for (const target of targets) {
+        if (!pending.next) {
+          pending.next = { agent: target, caller: agentName, message: '' };
+          log(`  → priority: ${target} (called by ${agentName})`);
+        }
+        // Only first target gets pendingNext; rest go through evaluate with tagged boost
+      }
     };
 
     // ── Main loop ──
@@ -311,11 +321,19 @@ export class MeetingOrchestrator {
       let reason = '';
       ctx.calledBy = undefined; // reset each turn
 
-      // Check if initial round-robin is still needed
+      // Priority: someone was directly addressed via to → they go first
+      if (pending.next) {
+        speaker = pending.next.agent;
+        ctx.calledBy = pending.next.caller;
+        reason = `priority → ${speaker} (called by ${ctx.calledBy})`;
+        pending.next = null;
+      }
+
+      // Initial round-robin (after priority)
       const initialRRDone = allP.every(n => lastSpokeTurn[n] >= 0);
       const nextRRAgent = !initialRRDone ? allP.find(n => lastSpokeTurn[n] < 0) : null;
 
-      if (nextRRAgent) {
+      if (!speaker && nextRRAgent) {
         speaker = nextRRAgent;
         reason = `initial-rr → ${speaker} (ensuring voice equity)`;
       } else if (activeGroup) {
@@ -366,38 +384,25 @@ export class MeetingOrchestrator {
         }
       }
 
-      if (!speaker && pending.next) {
-        speaker = pending.next.agent;
-        ctx.calledBy = pending.next.caller;
-        reason = `pending-next → ${speaker} (caller: ${ctx.calledBy})`;
-      }
-
       if (!speaker) {
-        // Evaluate fallback
+        // Evaluate fallback — boost confidence for agents tagged in recent to
         const mH = this.mgr.formatHistory(meeting.id);
-        const willing = await this.evaluateWhoSpeaks(allP, mH, false);
+        const recentTo = new Set<string>();
+        for (let i = meeting.messages.length - 1; i >= Math.max(0, meeting.messages.length - 3); i--) {
+          const msg = meeting.messages[i];
+          if (msg.to) for (const t of msg.to) { if (t !== 'everyone') recentTo.add(t); }
+        }
+        const willing = await this.evaluateWhoSpeaks(allP, mH, false, recentTo, suppressedAgents);
         if (willing.length > 0) {
           speaker = willing[0];
-          reason = `evaluate → ${speaker}`;
+          reason = `evaluate → ${speaker}${recentTo.has(willing[0]) ? ' (tagged)' : ''}`;
           silentTurns = 0;
         } else {
           silentTurns++;
           log(`turn ${turn}: evaluate → nobody (silent=${silentTurns})`);
           if (silentTurns >= 4) {
-            if (completedRounds < 4) {
-              // Force stimulation
-              log(`turn ${turn}: forcing cross-discussion (rounds=${completedRounds})`);
-              const leastActive = allP.filter(n => n !== meeting.master)
-                .sort((a, b) => (lastSpokeTurn[a] ?? -1) - (lastSpokeTurn[b] ?? -1)).slice(0, 3);
-              const stimPrompt = interpolate(this.prompts.forceStimulation, { history: mH, leastActive: leastActive.join(', ') });
-              const stimResult = await this.singleShotAction(meeting.master, stimPrompt, meeting.id);
-              if (stimResult.action === 'speak' && stimResult.content) {
-                await emitSpeak(meeting.master, { content: stimResult.content!, to: stimResult.to });
-                handleTags(meeting.master, stimResult.to ?? [], stimResult.content);
-              }
-              silentTurns = 0;
-            } else {
-              // Allow conclude
+            // Nobody wants to speak — try to conclude
+            {
               const concluded = await this.proposeAndConfirm(meeting, allP, turn, lastSpokeTurn);
               if (concluded) return concluded;
               silentTurns = 0;
@@ -445,14 +450,21 @@ export class MeetingOrchestrator {
         if (concluded) return concluded;
         log(`turn ${turn}: vote rejected — continuing discussion`);
 
+      } else if (result.action === 'suppress' && result.suppressTarget) {
+        suppressedAgents.add(result.suppressTarget);
+        log(`turn ${turn}: 🔇 moderator suppressed ${result.suppressTarget}: ${result.suppressReason ?? ''}`);
+        this.emit({ type: 'tool_call', name: 'suppress', input: { agent: result.suppressTarget, reason: result.suppressReason }, agent: speaker });
+
+      } else if (result.action === 'unsuppress' && result.suppressTarget) {
+        suppressedAgents.delete(result.suppressTarget);
+        log(`turn ${turn}: 🔊 moderator unsuppressed ${result.suppressTarget}`);
+        this.emit({ type: 'tool_call', name: 'unsuppress', input: { agent: result.suppressTarget }, agent: speaker });
+
       } else if (result.action === 'pass') {
         log(`turn ${turn}: ${speaker} passed`);
       }
 
-      // Clear pending.next after speaker has executed (reply context was already consumed)
-      if (pending.next && pending.next.agent === speaker) {
-        pending.next = null;
-      }
+      // pending.next is consumed in Phase B priority check above
 
       // Mark responded in active group
       if (activeGroup && activeGroup.callees.includes(speaker)) {
@@ -504,13 +516,9 @@ export class MeetingOrchestrator {
       interpolate(this.prompts.moderatorCheck, { history: mHistory, interactionCount, completedRounds, msgCount }));
 
     if (check.includes(this.prompts.tokenConclude)) {
-      if (interactionCount < this.minInteractions || completedRounds < 4) {
-        console.log(`[Moderator] conclude blocked: interactions=${interactionCount}/${this.minInteractions}, rounds=${completedRounds}/4`);
-        // Force stimulate instead
-        const allNames = [...meeting.participants as string[]].filter(n => n !== meeting.master);
-        const prompt = interpolate(this.prompts.insufficientInteraction, { history: mHistory, interactionCount });
-        return { action: 'stimulate', prompt };
-      }
+      // No hard gates — moderator LLM already has interaction/round info in the prompt.
+      // Let moderator decide when discussion is sufficient.
+      console.log(`[Moderator] conclude accepted: interactions=${interactionCount}, rounds=${completedRounds}, msgs=${msgCount}`);
       return { action: 'conclude' };
     }
 
@@ -589,8 +597,19 @@ export class MeetingOrchestrator {
       // Master judges: CLOSE (with dissent) or revise?
       const agreeCount = others.length - objections.length;
       const majorityAgree = agreeCount > objections.length;
-      const voteLabel = `[Vote round ${voteRound}: agree ${agreeCount} / object ${objections.length} → ${majorityAgree ? 'majority agree' : 'majority disagree'}]`;
+      const supermajority = agreeCount / others.length >= 0.8;
+      const voteLabel = `[Vote round ${voteRound}: agree ${agreeCount} / object ${objections.length} → ${supermajority ? 'supermajority agree' : majorityAgree ? 'majority agree' : 'majority disagree'}]`;
       this.emit({ type: 'text', text: voteLabel, agent: meeting.master });
+
+      // Supermajority (≥80%) → auto CLOSE, no LLM judgment needed
+      if (supermajority) {
+        const finalSummary = (summary.content ?? '') + `\n\n[남은 이견] ${objections.map(o => `${o.name}: ${o.content.slice(0, 120)}`).join('; ')}`;
+        this.mgr.speak(meeting.id, meeting.master, finalSummary);
+        this.mgr.conclude(meeting.id, meeting.master, finalSummary);
+        this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: meeting.master });
+        this.emit({ type: 'text', text: `[Supermajority (${agreeCount}/${others.length}) — closed after ${voteRound} rounds. Dissent noted: ${objections.map(o => o.name).join(', ')}]`, agent: meeting.master });
+        return finalSummary;
+      }
 
       const objSummary = objections.map(o => `${o.name}: ${o.content}`).join('\n\n');
       const recommendation = majorityAgree
@@ -612,9 +631,13 @@ export class MeetingOrchestrator {
       }
 
       if (masterDecision.includes(this.prompts.tokenReopen)) {
-        // Objections are fundamental — return to main discussion loop
+        // Objections are fundamental — moderator summarizes unresolved issues, then return to debate
         console.log(`[Meeting:${meeting.id}] Vote round ${voteRound} → REOPEN: returning to debate`);
-        this.emit({ type: 'text', text: `[Vote round ${voteRound} → Discussion reopened: objections require further debate]`, agent: meeting.master });
+        const reopenSummary = `[Vote round ${voteRound} → REOPEN] Unresolved objections:\n${objSummary}\n\nDiscussion resumes on these specific points.`;
+        this.mgr.speak(meeting.id, meeting.master, reopenSummary, ['everyone']);
+        this.emit({ type: 'tool_call', name: 'speak', input: { to: ['everyone'], message: reopenSummary }, agent: meeting.master });
+        this.room.addAgentMessage(meeting.master, reopenSummary);
+        this.emit({ type: 'text', text: reopenSummary, agent: meeting.master });
         return null;
       }
 
@@ -632,7 +655,7 @@ export class MeetingOrchestrator {
     agentName: string,
     promptOrMessages: string | { systemPrompt: string; messages: LLMMessage[] },
     meetingId: string,
-  ): Promise<{ action: 'speak' | 'pass' | 'attention' | 'propose_vote' | 'none'; content?: string; to?: string[] }> {
+  ): Promise<{ action: 'speak' | 'pass' | 'attention' | 'propose_vote' | 'suppress' | 'unsuppress' | 'none'; content?: string; to?: string[]; suppressTarget?: string; suppressReason?: string }> {
     const p = this.room.getParticipant(agentName);
     if (!p) return { action: 'none' };
 
@@ -647,7 +670,7 @@ export class MeetingOrchestrator {
       : [...participantNames, 'everyone'];
 
     // Meeting tools
-    const meetingTools = [
+    const meetingTools: { name: string; description: string; parameters: Record<string, unknown> }[] = [
       {
         name: 'speak',
         description: 'Post a message in the meeting. "to" can be a single name or array for multiple targets.',
@@ -682,12 +705,35 @@ export class MeetingOrchestrator {
       },
     ];
 
-    // Master-only tool: propose a vote to conclude the meeting
+    // Master-only tools
     if (meeting && agentName === meeting.master) {
       meetingTools.push({
         name: 'propose_vote',
-        description: 'Propose to end the meeting. Triggers a vote where all participants agree or object. Use when discussion has reached sufficient depth.',
+        description: 'Propose to end the meeting. Triggers a vote where all participants agree or object.',
         parameters: { type: 'object' as const, properties: {} },
+      });
+      meetingTools.push({
+        name: 'suppress',
+        description: 'Reduce a participant\'s speaking priority. Use when someone is dominating the discussion.',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            agent: { type: 'string' as const, description: 'Agent name to suppress' },
+            reason: { type: 'string' as const, description: 'Why' },
+          },
+          required: ['agent'],
+        },
+      });
+      meetingTools.push({
+        name: 'unsuppress',
+        description: 'Remove speaking penalty from a previously suppressed participant.',
+        parameters: {
+          type: 'object' as const,
+          properties: {
+            agent: { type: 'string' as const, description: 'Agent name to unsuppress' },
+          },
+          required: ['agent'],
+        },
       });
     }
 
@@ -762,6 +808,14 @@ export class MeetingOrchestrator {
         if (tc.name === 'propose_vote') {
           return { action: 'propose_vote' };
         }
+        if (tc.name === 'suppress') {
+          const args = tc.arguments as { agent: string; reason?: string };
+          return { action: 'suppress', suppressTarget: args.agent, suppressReason: args.reason };
+        }
+        if (tc.name === 'unsuppress') {
+          const args = tc.arguments as { agent: string };
+          return { action: 'unsuppress', suppressTarget: args.agent };
+        }
 
         // Agent tool → execute and re-prompt
         if (agentToolExecutor) {
@@ -804,6 +858,8 @@ export class MeetingOrchestrator {
     participants: string[],
     meetingHistory: string,
     isFirstRound: boolean,
+    taggedAgents?: Set<string>,
+    suppressed?: Set<string>,
   ): Promise<string[]> {
     if (isFirstRound) return [...participants];
 
@@ -818,7 +874,12 @@ export class MeetingOrchestrator {
           );
           const cleaned = resp.content.trim().replace(/^```(?:json)?\n?|\n?```$/g, '');
           const parsed = JSON.parse(cleaned) as { speak?: boolean; confidence?: number };
-          return { name, want: parsed.speak === true, confidence: parsed.confidence ?? 0 };
+          let confidence = parsed.confidence ?? 0;
+          // Boost agents who were recently tagged in to — they were addressed directly
+          if (taggedAgents?.has(name)) confidence = Math.min(1.0, confidence + 0.3);
+          // Penalty for suppressed agents — moderator deemed them over-represented
+          if (suppressed?.has(name)) confidence = Math.max(0, confidence - 0.5);
+          return { name, want: parsed.speak === true, confidence };
         } catch {
           return { name, want: false, confidence: 0 };
         }

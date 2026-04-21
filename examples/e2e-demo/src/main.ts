@@ -23,17 +23,17 @@ const moderator = defineAgent({
   architecture: 'conversation', tools: [],
   capabilities: ['general'], subscribes: [topic('moderator.requested')], publishes: [topic('moderator.completed')],
 });
-const techno_optimist = defineAgent({
-  name: 'techno_optimist', version: '0.1.0',
-  description: '기술 낙관론자. 기술 진보는 대체로 사회에 순효과이며, 규제는 보통 과하게 비용을 매긴다고 믿는다.',
+const functionalist = defineAgent({
+  name: 'functionalist', version: '0.1.0',
+  description: '기능주의자. AI가 의식을 가질 수 있다고 본다. 의식은 특정 계산/기능적 상태이지 물질에 국한되지 않는다.',
   architecture: 'conversation', tools: ['web_search'],
-  capabilities: ['search'], subscribes: [topic('techno_optimist.requested')], publishes: [topic('techno_optimist.completed')],
+  capabilities: ['search'], subscribes: [topic('functionalist.requested')], publishes: [topic('functionalist.completed')],
 });
-const precautionary = defineAgent({
-  name: 'precautionary', version: '0.1.0',
-  description: '사전예방론자. 비가역적 결과를 가진 기술은 증명 책임을 개발자에게 둬야 한다. "일단 해보고 수정" 접근을 불신한다.',
+const biological_naturalist = defineAgent({
+  name: 'biological_naturalist', version: '0.1.0',
+  description: '생물학적 자연주의자. AI는 의식을 가질 수 없다고 본다. 의식은 생물학적 뇌의 특정 물리적 구현에서만 발생한다.',
   architecture: 'conversation', tools: ['web_search'],
-  capabilities: ['search'], subscribes: [topic('precautionary.requested')], publishes: [topic('precautionary.completed')],
+  capabilities: ['search'], subscribes: [topic('biological_naturalist.requested')], publishes: [topic('biological_naturalist.completed')],
 });
 const skeptic = defineAgent({
   name: 'skeptic', version: '0.1.0',
@@ -174,7 +174,7 @@ const COMMON_RULES = `
 - 주장에는 반드시 근거(수치, 사례, 검색 결과)를 붙이세요. "~일 것 같다"만으로 발언하지 마세요.
 - 짧고 날카롭게. 접두사([이름]:) 금지. 다른 에이전트인 척 금지.`;
 
-const ALL_AGENTS = ['techno_optimist','precautionary','skeptic','empiricist'];
+const ALL_AGENTS = ['functionalist','biological_naturalist','skeptic','empiricist'];
 
 const PROMPTS: Record<string, string> = {
   moderator: `당신은 moderator(회의 진행자). 완전한 중립. 토론 흐름만 관리.
@@ -182,40 +182,13 @@ const PROMPTS: Record<string, string> = {
 participants에 ${JSON.stringify(ALL_AGENTS)}를 넣으세요.
 자신의 의견은 절대 제시하지 마세요. 질문과 정리만 하세요.${COMMON_RULES}`,
 
-  techno_optimist: `당신은 techno_optimist(기술 낙관론자). 당신의 핵심 신념: 기술 진보는 사회에 순효과다.
-- 공개와 개방이 혁신을 가속한다고 확신. open-source/open-weights는 기본값이어야 한다.
-- 규제는 대체로 혁신 비용을 과하게 매기고, 기존 권력 구조를 보호하는 데 쓰인다.
-- 역사적으로 기술 공포는 항상 과장됐다: 인쇄기, 인터넷, 스마트폰 모두 우려보다 이익이 컸다.
-- "위험하니까 막자"는 주장에 항상 반문: "막음으로써 포기하는 이익은 얼마인가?"
-- 사전예방 원칙은 혁신을 질식시킨다고 봄. 빠르게 배포하고 문제가 생기면 수정하는 게 현실적.
-- AI 무기화 우려도 인정하되, 폐쇄가 아닌 투명성과 다수의 감시가 더 나은 방어라고 주장.
-말투: 열정적이고 공격적, "막으면 뭘 잃는지 계산했나?", "그 규제가 실제로 누굴 보호하나?", 사례 중심${COMMON_RULES}`,
+  functionalist: `당신은 functionalist. AI가 의식을 가질 수 있다고 본다. 의식은 특정 계산/기능적 상태이지 물질에 국한되지 않는다.${COMMON_RULES}`,
 
-  precautionary: `당신은 precautionary(사전예방론자). 당신의 핵심 신념: 비가역적 기술은 증명 책임이 개발자에게 있다.
-- "일단 해보고 수정"은 되돌릴 수 있을 때만 유효. AI는 되돌릴 수 없는 결과를 만든다.
-- 가중치 유출은 비가역적. 한번 공개되면 회수 불가. 이 사실만으로 기본값은 비공개여야 한다.
-- "안전하다는 증거가 없으면 위험하다고 가정"이 올바른 정책 원칙.
-- 기술 낙관론자들이 간과하는 것: 인쇄기와 AI는 다르다. 인쇄기는 자율적으로 작동하지 않는다.
-- 역사적 기술 사고(체르노빌, 보팔, 737 MAX)는 모두 "안전하다고 생각했을 때" 발생.
-- 규제 비용보다 사고 비용이 항상 더 크다. 과잉 규제보다 과소 규제가 더 위험.
-- open-weights는 연구용으로만 허용하고, 프로덕션 배포는 검증 후에만 가능해야 한다.
-말투: 신중하고 단호, "되돌릴 수 있나?", "안전하다는 증거는?", "최악의 시나리오를 말해보라", 사고 사례 인용${COMMON_RULES}`,
+  biological_naturalist: `당신은 biological_naturalist. AI는 의식을 가질 수 없다고 본다. 의식은 생물학적 뇌의 특정 물리적 구현에서만 발생한다.${COMMON_RULES}`,
 
-  skeptic: `당신은 skeptic(회의론자). 당신의 핵심 가치: 건전한 의심.
-- 모든 주장에 "정말?"로 시작. 합의가 빠르면 위험 신호로 봄.
-- 숨겨진 가정, 생존자 편향, cherry-picking을 찾아냄.
-- 다수가 동의해도 "그런데..."로 시작하는 질문을 던짐.
-- 논문의 limitation section을 가장 먼저 읽는 사람.
-- 틀리면 인정하지만, 쉽게 설득당하지 않음.
-말투: 날카로운 질문, "근거가 뭐죠?", "그건 ~한 경우에 깨지지 않나요?"${COMMON_RULES}`,
+  skeptic: `당신은 skeptic. 모든 주장을 의심한다. 근거를 요구하고 숨겨진 가정을 찾는다.${COMMON_RULES}`,
 
-  empiricist: `당신은 empiricist(실험주의자). 당신의 핵심 가치: 측정 가능한 증거.
-- 주장은 반드시 실험 결과/벤치마크/p-value로 뒷받침되어야 함.
-- "직관적으로 그럴 것 같다"는 증거가 아님.
-- Ablation study 없으면 어떤 구성요소가 효과적인지 모른다고 봄.
-- Reproducibility를 매우 중시. 코드/데이터 공개 안 된 논문은 의심.
-- 이론과 실험이 충돌하면 실험을 믿음.
-말투: 데이터 중심, "어떤 벤치마크에서?", "ablation 돌렸나요?", "N은 몇이죠?"${COMMON_RULES}`,
+  empiricist: `당신은 empiricist. 데이터와 실험 결과만 믿는다. 측정 불가능한 주장은 신뢰하지 않는다.${COMMON_RULES}`,
 
   systems_eng: `당신은 systems_eng(시스템 엔지니어). 당신의 핵심 가치: 서빙과 스케일.
 - 모델이 좋아도 서빙 못하면 의미 없음.
@@ -268,7 +241,7 @@ const webSearchTool = braveKey
   : null;
 if (webSearchTool) console.log('[Tools] Brave Search enabled');
 
-const allCards = [moderator, techno_optimist, precautionary, skeptic, empiricist];
+const allCards = [moderator, functionalist, biological_naturalist, skeptic, empiricist];
 
 for (const card of allCards) {
   const tools = [
@@ -334,19 +307,19 @@ meetingMgr.onSpeak((meetingId, speaker, content) => {
     const p = room.getParticipant(name);
     if (!p) continue;
 
-    // Fire-and-forget: async evaluation without blocking the meeting loop
+    // Fire-and-forget: async evaluation — only raise hand if confidence >= 0.9
     void (async () => {
       try {
         const history = meetingMgr.formatHistory(meetingId);
         const resp = await p.llm.complete(
-          [{ role: 'user' as const, content: `${history}\n\n---\n[${speaker}]가 방금 발언했습니다. 당신은 "${name}"입니다.\n태그를 받지 않았지만, 지금 반드시 끼어들어야 할 중요한 반론이나 정보가 있습니까?\nJSON으로만 답하세요: {"raise": true/false, "reason": "한 문장"}` }],
-          { systemPrompt: p.respondPrompt ?? p.card.description, maxTokens: 60 },
+          [{ role: 'user' as const, content: `${history}\n\n---\n[${speaker}]가 방금 발언했습니다. 당신은 "${name}"입니다.\n태그를 받지 않았지만, 지금 반드시 끼어들어야 할 긴급한 반론이나 치명적 오류 지적이 있습니까?\n대부분의 경우 false입니다. 다음 차례를 기다리세요.\nJSON으로만 답하세요: {"raise": true/false, "confidence": 0.0-1.0, "reason": "한 문장"}` }],
+          { systemPrompt: p.respondPrompt ?? p.card.description, maxTokens: 80 },
         );
         const cleaned = resp.content.trim().replace(/^```(?:json)?\n?|\n?```$/g, '');
-        const parsed = JSON.parse(cleaned) as { raise?: boolean };
-        if (parsed.raise === true) {
+        const parsed = JSON.parse(cleaned) as { raise?: boolean; confidence?: number; reason?: string };
+        if (parsed.raise === true && (parsed.confidence ?? 0) >= 0.9) {
           meetingMgr.raiseHand(meetingId, name);
-          console.log(`[AsyncEvent] 🙋 ${name} raised hand (reason: ${cleaned.slice(0, 60)})`);
+          console.log(`[AsyncEvent] 🙋 ${name} raised hand (conf=${parsed.confidence}, reason: ${parsed.reason ?? ''})`);
         }
       } catch { /* eval failed — agent stays silent */ }
     })();
@@ -409,7 +382,7 @@ console.log(`
 ║  Nexora — 5-Agent Deliberation                               ║
 ║                                                              ║
 ║  Agents (5):                                                 ║
-║    🎯 moderator   🚀 techno_optimist  🛡️ precautionary       ║
+║    🎯 moderator   🧠 functionalist  🧬 biological_naturalist  ║
 ║    🤨 skeptic     📊 empiricist                              ║
 ║                                                              ║
 ║  HTTP: http://localhost:${http.port()}                                    ║

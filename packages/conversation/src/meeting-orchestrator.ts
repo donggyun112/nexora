@@ -549,8 +549,8 @@ export class MeetingOrchestrator {
   }
 
   /**
-   * Propose conclusion + check objections from all participants.
-   * Returns summary string if concluded, null if objection raised.
+   * Propose conclusion + check objections. If rejected, analyze objections,
+   * revise the proposal, and re-vote. Repeats until consensus or master forces CLOSE.
    */
   private async proposeAndConfirm(
     meeting: Meeting,
@@ -558,76 +558,95 @@ export class MeetingOrchestrator {
     turn: number,
     lastSpokeTurn: Record<string, number>,
   ): Promise<string | null> {
-    const mHistory = this.mgr.formatHistory(meeting.id);
-
-    // Step 1: Master proposes summary
-    const summaryPrompt = interpolate(this.prompts.summaryProposal, { history: mHistory });
-    const summary = await this.singleShotAction(meeting.master, summaryPrompt, meeting.id);
-    if (summary.action === 'speak' && summary.content) {
-      this.emit({ type: 'tool_call', name: 'speak', input: { to: ['everyone'], message: summary.content }, agent: meeting.master });
-      this.room.addAgentMessage(meeting.master, summary.content);
-      this.emit({ type: 'text', text: summary.content, agent: meeting.master });
-    }
-
-    // Step 2: Each participant — object or pass
     const others = allP.filter(n => n !== meeting.master);
-    const objections: { name: string; content: string }[] = [];
-    for (const name of others) {
-      const freshH = this.mgr.formatHistory(meeting.id);
-      const objResult = await this.singleShotAction(name,
-        interpolate(this.prompts.objectionCheck, { agentName: name, history: freshH }), meeting.id);
-      if (objResult.action === 'speak' && objResult.content) {
-        await sleep(1500);
-        this.emit({ type: 'tool_call', name: 'speak', input: { to: objResult.to, message: objResult.content }, agent: name });
-        this.room.addAgentMessage(name, objResult.content);
-        this.emit({ type: 'text', text: objResult.content, agent: name });
-        lastSpokeTurn[name] = turn;
-        objections.push({ name, content: objResult.content });
+    let previousObjections = '';
+    let voteRound = 0;
+
+    for (;;) {
+      voteRound++;
+      const mHistory = this.mgr.formatHistory(meeting.id);
+
+      // Step 1: Master proposes summary (first round) or revised summary (subsequent rounds)
+      const summaryPrompt = previousObjections
+        ? `${mHistory}\n\n---\n[Vote round ${voteRound}] Previous proposal was rejected.\nObjections:\n${previousObjections}\n\nRevise your proposal to address these objections. Use the speak tool (to: "everyone") to present the revised conclusion. You MUST change the substance — do not resubmit the same proposal.`
+        : interpolate(this.prompts.summaryProposal, { history: mHistory });
+
+      const summary = await this.singleShotAction(meeting.master, summaryPrompt, meeting.id);
+      if (summary.action === 'speak' && summary.content) {
+        this.mgr.speak(meeting.id, meeting.master, summary.content, ['everyone']);
+        this.emit({ type: 'tool_call', name: 'speak', input: { to: ['everyone'], message: summary.content }, agent: meeting.master });
+        this.room.addAgentMessage(meeting.master, summary.content);
+        this.emit({ type: 'text', text: summary.content, agent: meeting.master });
       }
-    }
 
-    // Show vote result
-    const agreeNames = others.filter(n => !objections.some(o => o.name === n));
-    const voteResult = `[Vote: ${agreeNames.map(n => `${n} ✅`).join(', ')}${objections.length ? ', ' + objections.map(o => `${o.name} ❌`).join(', ') : ''} → ${objections.length === 0 ? 'unanimous' : `agree ${agreeNames.length} / object ${objections.length}`}]`;
-    this.emit({ type: 'text', text: voteResult, agent: meeting.master });
-    console.log(`[Meeting:${meeting.id}] ${voteResult}`);
+      // Step 2: Each participant — object or pass
+      const objections: { name: string; content: string }[] = [];
+      for (const name of others) {
+        const freshH = this.mgr.formatHistory(meeting.id);
+        const objResult = await this.singleShotAction(name,
+          interpolate(this.prompts.objectionCheck, { agentName: name, history: freshH }), meeting.id);
+        if (objResult.action === 'speak' && objResult.content) {
+          await sleep(1500);
+          this.mgr.speak(meeting.id, name, objResult.content, objResult.to);
+          this.emit({ type: 'tool_call', name: 'speak', input: { to: objResult.to, message: objResult.content }, agent: name });
+          this.room.addAgentMessage(name, objResult.content);
+          this.emit({ type: 'text', text: objResult.content, agent: name });
+          lastSpokeTurn[name] = turn;
+          objections.push({ name, content: objResult.content });
+        }
+      }
 
-    if (objections.length === 0) {
+      // Show vote result
+      const agreeNames = others.filter(n => !objections.some(o => o.name === n));
+      const voteResult = `[Vote round ${voteRound}: ${agreeNames.map(n => `${n} ✅`).join(', ')}${objections.length ? ', ' + objections.map(o => `${o.name} ❌`).join(', ') : ''} → ${objections.length === 0 ? 'unanimous' : `agree ${agreeNames.length} / object ${objections.length}`}]`;
+      this.emit({ type: 'text', text: voteResult, agent: meeting.master });
+      console.log(`[Meeting:${meeting.id}] ${voteResult}`);
+
       // Unanimous — close
-      const finalSummary = summary.content ?? await this.say(meeting.master, interpolate(this.prompts.concludeSummary, { history: this.mgr.formatHistory(meeting.id) }));
-      this.mgr.speak(meeting.id, meeting.master, finalSummary);
-      this.mgr.conclude(meeting.id, meeting.master, finalSummary);
-      this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: meeting.master });
-      return finalSummary;
+      if (objections.length === 0) {
+        const finalSummary = summary.content ?? await this.say(meeting.master, interpolate(this.prompts.concludeSummary, { history: this.mgr.formatHistory(meeting.id) }));
+        this.mgr.speak(meeting.id, meeting.master, finalSummary);
+        this.mgr.conclude(meeting.id, meeting.master, finalSummary);
+        this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: meeting.master });
+        return finalSummary;
+      }
+
+      // Master judges: CLOSE (with dissent) or revise?
+      const agreeCount = others.length - objections.length;
+      const majorityAgree = agreeCount > objections.length;
+      const voteLabel = `[Vote round ${voteRound}: agree ${agreeCount} / object ${objections.length} → ${majorityAgree ? 'majority agree' : 'majority disagree'}]`;
+      this.emit({ type: 'text', text: voteLabel, agent: meeting.master });
+
+      const objSummary = objections.map(o => `${o.name}: ${o.content}`).join('\n\n');
+      const recommendation = majorityAgree
+        ? `Majority agrees (round ${voteRound}). Choose one:\n- "CLOSE": end with objections noted\n- "REVISE": rewrite proposal to address objections\n- "REOPEN": objections require more discussion, return to debate`
+        : `Majority disagrees (round ${voteRound}). Choose one:\n- "REVISE": rewrite proposal to address objections\n- "REOPEN": objections are fundamental, return to debate\n- "CLOSE": end anyway with dissent noted`;
+      const masterDecision = await this.moderatorSay(meeting.master,
+        interpolate(this.prompts.masterDecision, {
+          history: this.mgr.formatHistory(meeting.id),
+          voteLabel, objSummary, recommendation,
+        }));
+
+      if (masterDecision.includes(this.prompts.tokenClose)) {
+        const finalSummary = (summary.content ?? '') + `\n\n[남은 이견] ${objections.map(o => `${o.name}: ${o.content.slice(0, 120)}`).join('; ')}`;
+        this.mgr.speak(meeting.id, meeting.master, finalSummary);
+        this.mgr.conclude(meeting.id, meeting.master, finalSummary);
+        this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: meeting.master });
+        this.emit({ type: 'text', text: `[Closed with dissent noted after ${voteRound} rounds] ${objections.map(o => o.name).join(', ')}`, agent: meeting.master });
+        return finalSummary;
+      }
+
+      if (masterDecision.includes(this.prompts.tokenReopen)) {
+        // Objections are fundamental — return to main discussion loop
+        console.log(`[Meeting:${meeting.id}] Vote round ${voteRound} → REOPEN: returning to debate`);
+        this.emit({ type: 'text', text: `[Vote round ${voteRound} → Discussion reopened: objections require further debate]`, agent: meeting.master });
+        return null;
+      }
+
+      // REVISE — feed objections back to moderator for next round
+      previousObjections = objSummary;
+      console.log(`[Meeting:${meeting.id}] Vote round ${voteRound} → REVISE: incorporating ${objections.length} objections`);
     }
-
-    // Majority vote + master judgment
-    const agreeCount = others.length - objections.length;
-    const majorityAgree = agreeCount > objections.length;
-    const voteLabel = `[Vote: agree ${agreeCount} / object ${objections.length} → ${majorityAgree ? 'majority agree' : 'majority disagree'}]`;
-    this.emit({ type: 'text', text: voteLabel, agent: meeting.master });
-
-    const objSummary = objections.map(o => `${o.name}: ${o.content.slice(0, 100)}`).join('\n');
-    const recommendation = majorityAgree
-      ? 'Majority agrees. Recommend closing with objections noted. "CLOSE" or "REOPEN" if objections are critical.'
-      : 'Majority disagrees. Recommend reopening discussion. "REOPEN" or "CLOSE" if objections are minor.';
-    const masterDecision = await this.moderatorSay(meeting.master,
-      interpolate(this.prompts.masterDecision, {
-        history: this.mgr.formatHistory(meeting.id),
-        voteLabel, objSummary, recommendation,
-      }));
-
-    if (masterDecision.includes(this.prompts.tokenClose)) {
-      const finalSummary = (summary.content ?? '') + `\n\n[남은 이견] ${objections.map(o => `${o.name}: ${o.content.slice(0, 80)}`).join('; ')}`;
-      this.mgr.speak(meeting.id, meeting.master, finalSummary);
-      this.mgr.conclude(meeting.id, meeting.master, finalSummary);
-      this.emit({ type: 'tool_call', name: 'conclude_meeting', input: { meetingId: meeting.id }, agent: meeting.master });
-      this.emit({ type: 'text', text: `[Closed with dissent noted] ${objections.map(o => o.name).join(', ')}`, agent: meeting.master });
-      return finalSummary;
-    }
-
-    // REOPEN — continue discussion
-    return null;
   }
 
   // =====================================================================
@@ -646,18 +665,21 @@ export class MeetingOrchestrator {
     const participantNames = meeting
       ? [...new Set([...meeting.participants as string[], meeting.master])].filter(n => n !== agentName)
       : [];
-    const toEnum = ['everyone', ...participantNames];
+    // Participants cannot target moderator in to — forces peer-to-peer discussion
+    const toEnum = meeting && agentName !== meeting.master
+      ? ['everyone', ...participantNames.filter(n => n !== meeting.master)]
+      : ['everyone', ...participantNames];
 
     // Meeting tools
     const meetingTools = [
       {
         name: 'speak',
-        description: 'Post a message in the meeting. Set "to" to the participant whose argument you are responding to, challenging, or building upon — NOT the moderator (unless directly answering their question).',
+        description: 'Post a message in the meeting. "to" can be a single name or array for multiple targets.',
         parameters: {
           type: 'object' as const,
           properties: {
             to: {
-              description: `The participant you are challenging or responding to. Pick who said the thing you are reacting to. Available: ${toEnum.map(n => `"${n}"`).join(', ')}`,
+              description: `Who to address: ${toEnum.map(n => `"${n}"`).join(', ')}`,
               oneOf: [
                 { type: 'string' as const, enum: toEnum },
                 { type: 'array' as const, items: { type: 'string' as const, enum: toEnum } },
@@ -728,6 +750,10 @@ export class MeetingOrchestrator {
           const message = args.message?.trim() || resp.content?.trim() || '';
           const rawTo = Array.isArray(args.to) ? args.to : [args.to || 'everyone'];
           let to = rawTo.filter(t => t !== agentName).map(t => t || 'everyone');
+          // Participants cannot target moderator — strip and fallback to content-mentioned or everyone
+          if (meeting && agentName !== meeting.master) {
+            to = to.filter(t => t !== meeting.master);
+          }
           if (to.length === 0) to.push('everyone');
           // Fix to-content mismatch
           if (!to.includes('everyone') && message) {

@@ -131,7 +131,7 @@ export const DEFAULT_MEETING_PROMPTS: MeetingPromptTemplates = {
     '- The "to" field must match the person you are asking/addressing in your message.',
   ].join('\n'),
   firstSpeak: 'Use the speak tool to present your perspective as {agentName}.\nSet "to" to the next speaker ({others}).',
-  continueSpeak: 'Use the speak tool to advance toward an answer.\n- NEVER restate a point already made by another participant above.\n- If you agree and have nothing NEW to add → use pass_turn instead.\n- Only speak if you have a DIFFERENT perspective, CORRECTION, or NEW information.\n- Set "to" to the person you are addressing ({others}).',
+  continueSpeak: 'Use the speak tool to advance toward an answer.\n- Build on or supplement previous statements.\n- Set "to" to the next speaker ({others}).',
 
   // Moderator
   moderatorPersona: [
@@ -168,7 +168,7 @@ export const DEFAULT_MEETING_PROMPTS: MeetingPromptTemplates = {
     'End with: "Any objections?"',
   ].join('\n'),
   objectionCheck: '[You are "{agentName}".]\n\n{history}\n\n---\nThe moderator proposed a conclusion. If you object, use speak to challenge. If you agree, use pass_turn.',
-  masterDecision: '{history}\n\n---\n{voteLabel}\nObjections:\n{objSummary}\n\n{recommendation}\nOne word only.',
+  masterDecision: '{history}\n\n---\n{voteLabel}\nObjections:\n{objSummary}\n\n{recommendation}\nOne word: "CLOSE" (end with dissent noted) or "REVISE" (incorporate objections into new proposal).',
 
   // Stimulation
   forceStimulation: '{history}\n\n---\nThe discussion has been one-sided presentations. Use speak to ask specific questions to {leastActive}. Set "to" to them.',

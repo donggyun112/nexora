@@ -39,6 +39,11 @@ import {
   type ChatType,
   type SessionKeyOptions,
 } from './session-key.js';
+import {
+  createStatusReactionController,
+  type StatusReactionController,
+  type StatusReactionOptions,
+} from './discord-reactions.js';
 
 // ─── Minimal discord.js interface (SDK-independent) ────────────────────────
 
@@ -64,6 +69,20 @@ export interface DiscordMessageLike {
    * should flatten that to a string array before passing it in.
    */
   member?: { roleIds: ReadonlyArray<string> } | null;
+  /**
+   * Add an emoji reaction to this message. Optional — when present, the
+   * adapter drives a per-turn `StatusReactionController` so users see
+   * thinking/tool/done/error emojis. discord.js exposes `Message#react`
+   * directly; just forward to it.
+   */
+  react?: (emoji: string) => Promise<unknown>;
+  /**
+   * Remove THIS bot's own reaction for the given emoji. Optional. In
+   * discord.js this is `message.reactions.cache.get(emoji)?.users.remove(botId)`.
+   * Without this, the controller will leave older emojis in place when
+   * transitioning between phases.
+   */
+  removeOwnReaction?: (emoji: string) => Promise<unknown>;
 }
 
 export interface DiscordClientLike {
@@ -125,6 +144,15 @@ export interface DiscordAdapterOptions extends SessionKeyOptions {
    * Receives the rejected message and a short reason string.
    */
   onUnauthorized?: (message: DiscordMessageLike, reason: string) => void;
+
+  /**
+   * Status reaction config. When the inbound `DiscordMessageLike` exposes a
+   * `react` method, the adapter attaches a per-turn reaction controller that
+   * shows 🧠 thinking → 🛠️ tool → ✅ done / ❌ error on the user's message.
+   * Pass `false` to disable, or an options object to customize emoji and
+   * stall thresholds. Defaults: enabled.
+   */
+  statusReactions?: boolean | StatusReactionOptions;
 }
 
 const DEFAULT_MAX_MESSAGE_LENGTH = 1900;
@@ -144,6 +172,7 @@ export class DiscordAdapter implements Adapter {
   private readonly allowDmForRoles: boolean;
   private readonly freeResponseChannels: ReadonlySet<string>;
   private readonly onUnauthorized: NonNullable<DiscordAdapterOptions['onUnauthorized']> | null;
+  private readonly statusReactionOptions: StatusReactionOptions | null;
   private handler: ((msg: DiscordMessageLike) => void) | null = null;
 
   constructor(options: DiscordAdapterOptions) {
@@ -166,6 +195,15 @@ export class DiscordAdapter implements Adapter {
     this.allowDmForRoles = options.allowDmForRoles ?? false;
     this.freeResponseChannels = new Set(options.freeResponseChannels ?? []);
     this.onUnauthorized = options.onUnauthorized ?? null;
+
+    const sr = options.statusReactions;
+    if (sr === false) {
+      this.statusReactionOptions = null;
+    } else if (sr === true || sr === undefined) {
+      this.statusReactionOptions = {};
+    } else {
+      this.statusReactionOptions = sr;
+    }
   }
 
   async start(router: MessageRouter): Promise<void> {
@@ -310,6 +348,10 @@ export class DiscordAdapter implements Adapter {
       // Some channels don't allow typing — ignore.
     }
 
+    const status = this.createStatusController(discordMsg);
+    status?.setThinking();
+
+    let sawError = false;
     try {
       // Use streaming if the router supports it, so we can send incremental
       // messages. If the response is short enough, routeStream will call
@@ -322,21 +364,27 @@ export class DiscordAdapter implements Adapter {
         } else if (chunk.type === 'tool_call') {
           // Optionally show tool usage as a subtle indicator
           chunks.push(`_Using ${chunk.name}..._`);
+          status?.setTool(chunk.name);
+        } else if (chunk.type === 'thinking') {
+          status?.setThinking();
         } else if (chunk.type === 'error') {
           chunks.push(`**Error:** ${chunk.message}`);
+          sawError = true;
         }
-        // 'done', 'thinking', 'tool_result' are silent in Discord output.
+        // 'done', 'tool_result' are silent in Discord output.
       });
 
       const fullResponse = chunks.join('');
 
       if (!fullResponse.trim()) {
         await discordMsg.reply('_(no response)_');
+        await (sawError ? status?.setError() : status?.setDone());
         return;
       }
 
       // Split long responses to respect Discord's 2000 char limit.
       await this.sendChunked(discordMsg, fullResponse);
+      await (sawError ? status?.setError() : status?.setDone());
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       try {
@@ -344,7 +392,22 @@ export class DiscordAdapter implements Adapter {
       } catch {
         // Can't even reply — give up silently.
       }
+      await status?.setError();
     }
+  }
+
+  private createStatusController(
+    discordMsg: DiscordMessageLike,
+  ): StatusReactionController | null {
+    if (!this.statusReactionOptions || typeof discordMsg.react !== 'function') {
+      return null;
+    }
+    const react = discordMsg.react.bind(discordMsg);
+    const removeOwnReaction = discordMsg.removeOwnReaction?.bind(discordMsg);
+    return createStatusReactionController(
+      { react, removeOwnReaction },
+      this.statusReactionOptions,
+    );
   }
 
   private async sendChunked(

@@ -15,6 +15,16 @@ export type {
   DiscordMessageLike,
 } from './discord.js';
 
+export {
+  createStatusReactionController,
+  DEFAULT_EMOJI_MAP,
+} from './discord-reactions.js';
+export type {
+  ReactableMessage,
+  StatusReactionController,
+  StatusReactionOptions,
+} from './discord-reactions.js';
+
 export { buildSessionKey, isSharedSession } from './session-key.js';
 export type {
   ChatType,

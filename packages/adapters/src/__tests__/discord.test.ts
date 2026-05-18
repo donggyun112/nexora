@@ -356,4 +356,104 @@ describe('DiscordAdapter', () => {
     expect(captured[0].conversationId).toBe('agent:main:discord:dm:dm-1');
     await adapter.stop();
   });
+
+  it('drives status reactions: thinking → tool → done on success', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({
+      client,
+      statusReactions: { debounceMs: 5, botEmoji: null },
+    });
+
+    const router: MessageRouter = {
+      async route() { return { content: 'ok' }; },
+      async routeStream(_msg, onChunk) {
+        // Let setThinking debounce fire before tool_call.
+        await new Promise((r) => setTimeout(r, 20));
+        onChunk({ type: 'tool_call', name: 'exec' });
+        await new Promise((r) => setTimeout(r, 20));
+        onChunk({ type: 'text', text: 'done' });
+        onChunk({ type: 'done', content: 'done' });
+      },
+    };
+
+    await adapter.start(router);
+
+    const react = vi.fn(async () => {});
+    const removeOwnReaction = vi.fn(async () => {});
+    const fakeMsg = makeFakeMessage('hello', { react, removeOwnReaction });
+
+    client.fire(fakeMsg);
+    await new Promise((r) => setTimeout(r, 100));
+
+    const reacted = react.mock.calls.map((c) => c[0]);
+    expect(reacted).toContain('\u{1F9E0}'); // 🧠 thinking
+    expect(reacted).toContain('\u{1F4BB}'); // 💻 exec tool emoji
+    expect(reacted[reacted.length - 1]).toBe('✅'); // done
+    await adapter.stop();
+  });
+
+  it('drives status reactions: ❌ on router error', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({
+      client,
+      statusReactions: { debounceMs: 0, botEmoji: null },
+    });
+
+    const router: MessageRouter = {
+      async route() { throw new Error('boom'); },
+      async routeStream() { throw new Error('boom'); },
+    };
+
+    await adapter.start(router);
+
+    const react = vi.fn(async () => {});
+    const fakeMsg = makeFakeMessage('hello', { react });
+
+    client.fire(fakeMsg);
+    await new Promise((r) => setTimeout(r, 50));
+
+    const reacted = react.mock.calls.map((c) => c[0]);
+    expect(reacted[reacted.length - 1]).toBe('❌');
+    await adapter.stop();
+  });
+
+  it('skips status reactions when statusReactions=false', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({
+      client,
+      statusReactions: false,
+    });
+
+    await adapter.start(makeRouter(async () => ({ content: 'ok' })));
+
+    const react = vi.fn(async () => {});
+    const fakeMsg = makeFakeMessage('hello', { react });
+
+    client.fire(fakeMsg);
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(react).not.toHaveBeenCalled();
+    await adapter.stop();
+  });
+
+  it('skips status reactions when message has no react method', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({
+      client,
+      statusReactions: { debounceMs: 0 },
+    });
+
+    await adapter.start(makeRouter(async () => ({ content: 'ok' })));
+
+    // makeFakeMessage by default has no `react` method.
+    const fakeMsg = makeFakeMessage('hello');
+    expect(fakeMsg.react).toBeUndefined();
+    client.fire(fakeMsg);
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Without react support the controller is never created; no assertions
+    // to make other than: it shouldn't throw and message routing still works.
+    expect(fakeMsg.reply).toHaveBeenCalled();
+    await adapter.stop();
+  });
 });

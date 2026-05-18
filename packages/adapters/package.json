@@ -16,7 +16,8 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@nexora/contracts": "workspace:*"
+    "@nexora/contracts": "workspace:*",
+    "@nexora/tools": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

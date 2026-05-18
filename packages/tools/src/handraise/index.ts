@@ -15,3 +15,23 @@ export type {
   HandraiseInboxOptions,
   PendingHandraise,
 } from './inbox.js';
+
+export { isApprovalRequest } from './approval.js';
+export type {
+  ApprovalChoice,
+  ApprovalRequest,
+  ApprovalReply,
+} from './approval.js';
+
+export { InMemoryApprovalPolicyStore } from './approval-store.js';
+export type {
+  ApprovalPolicyStore,
+  ApprovalDecision,
+  ApprovalRecord,
+} from './approval-store.js';
+
+export { createApprovalGateMiddleware } from './approval-middleware.js';
+export type {
+  ApprovalGateOptions,
+  ApprovalGatePredicate,
+} from './approval-middleware.js';

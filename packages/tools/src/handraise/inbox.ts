@@ -38,6 +38,12 @@ export interface HandraiseInboxOptions {
    * `handraise.human.<channel>`. Default: `['default']`.
    */
   channels?: string[];
+  /**
+   * Fired when a new pending handraise arrives. Adapters (Discord, Slack,
+   * web UI) use this to render an outbound prompt the moment the request
+   * lands, instead of polling `list()`.
+   */
+  onPending?: (entry: PendingHandraise) => void | Promise<void>;
 }
 
 export class HandraiseInbox {
@@ -45,12 +51,23 @@ export class HandraiseInbox {
   private readonly channels: string[];
   private readonly pending = new Map<string, PendingHandraise>();
   private readonly subscriptions: Subscription[] = [];
+  private onPending: HandraiseInboxOptions['onPending'];
   private nextId = 1;
   private started = false;
 
   constructor(options: HandraiseInboxOptions) {
     this.transport = options.transport;
     this.channels = options.channels ?? ['default'];
+    this.onPending = options.onPending;
+  }
+
+  /**
+   * Replace the `onPending` callback at runtime. Useful when the inbox is
+   * created before the outbound bridge (Discord, Slack, etc.) is ready, so
+   * the bridge can attach itself once both ends exist.
+   */
+  setOnPending(handler: HandraiseInboxOptions['onPending']): void {
+    this.onPending = handler;
   }
 
   /** Begin subscribing to the configured channels. Idempotent. */
@@ -61,12 +78,20 @@ export class HandraiseInbox {
       const topic = `handraise.human.${channel}`;
       const sub = this.transport.subscribe(topic, async (envelope) => {
         const id = `hr-${this.nextId++}`;
-        this.pending.set(id, {
+        const entry: PendingHandraise = {
           id,
           envelope,
           channel,
           receivedAt: Date.now(),
-        });
+        };
+        this.pending.set(id, entry);
+        if (this.onPending) {
+          try {
+            await this.onPending(entry);
+          } catch {
+            // Outbound adapter errors must not break the inbox.
+          }
+        }
       });
       this.subscriptions.push(sub);
     }

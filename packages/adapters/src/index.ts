@@ -15,6 +15,23 @@ export type {
   DiscordMessageLike,
 } from './discord.js';
 
+export { buildSessionKey, isSharedSession } from './session-key.js';
+export type {
+  ChatType,
+  SessionSource,
+  SessionKeyOptions,
+} from './session-key.js';
+
+export { bridgeDiscordApprovals } from './discord-approvals.js';
+export type {
+  ApprovalsBridge,
+  BridgeDiscordApprovalsOptions,
+  DiscordApprovalChannel,
+  DiscordApprovalMessage,
+  DiscordApprovalsClient,
+  DiscordButtonInteraction,
+} from './discord-approvals.js';
+
 export { startDiscordBot } from './discord-bot.js';
 export type { DiscordAgentBotOptions, RunningDiscordBot } from './discord-bot.js';
 

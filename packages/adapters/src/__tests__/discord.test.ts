@@ -162,4 +162,198 @@ describe('DiscordAdapter', () => {
     expect(fakeMsg.reply).toHaveBeenCalledWith(expect.stringContaining('Error'));
     await adapter.stop();
   });
+
+  it('builds a hermes-style session key as conversationId', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({ client });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('hi', {
+      guildId: 'guild-1',
+      channelId: 'ch-1',
+      author: { id: 'user-7', username: 'u', bot: false },
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured[0].conversationId).toBe('agent:main:discord:channel:ch-1:user-7');
+    await adapter.stop();
+  });
+
+  it('shares thread sessions across users by default', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({ client });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const baseChannel = {
+      sendTyping: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+      isThread: () => true,
+      parentId: 'parent-ch',
+    };
+
+    client.fire(makeFakeMessage('a', {
+      guildId: 'g', channelId: 'thread-1',
+      author: { id: 'user-A', username: 'a', bot: false },
+      channel: baseChannel,
+    }));
+    client.fire(makeFakeMessage('b', {
+      guildId: 'g', channelId: 'thread-1',
+      author: { id: 'user-B', username: 'b', bot: false },
+      channel: baseChannel,
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured[0].conversationId).toBe('agent:main:discord:channel:parent-ch:thread-1');
+    expect(captured[1].conversationId).toBe(captured[0].conversationId);
+    expect(captured[0].metadata?.threadId).toBe('thread-1');
+    expect(captured[0].metadata?.parentChannelId).toBe('parent-ch');
+    await adapter.stop();
+  });
+
+  it('isolates threads per user when threadSessionsPerUser=true', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({ client, threadSessionsPerUser: true });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const baseChannel = {
+      sendTyping: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+      isThread: () => true,
+      parentId: 'parent-ch',
+    };
+
+    client.fire(makeFakeMessage('a', {
+      guildId: 'g', channelId: 'th',
+      author: { id: 'user-A', username: 'a', bot: false },
+      channel: baseChannel,
+    }));
+    client.fire(makeFakeMessage('b', {
+      guildId: 'g', channelId: 'th',
+      author: { id: 'user-B', username: 'b', bot: false },
+      channel: baseChannel,
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured[0].conversationId).not.toBe(captured[1].conversationId);
+    await adapter.stop();
+  });
+
+  it('drops messages from channels not in the allowlist', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({
+      client,
+      allowedChannels: ['ch-allowed'],
+    });
+
+    const captured: InboundMessage[] = [];
+    const rejected: string[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+    // Re-create adapter with onUnauthorized hook
+    await adapter.stop();
+    const adapter2 = new DiscordAdapter({
+      client,
+      allowedChannels: ['ch-allowed'],
+      onUnauthorized: (_m, reason) => rejected.push(reason),
+    });
+    await adapter2.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('hi', { channelId: 'ch-other' }));
+    client.fire(makeFakeMessage('hi', { channelId: 'ch-allowed' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].channelId).toBe('ch-allowed');
+    expect(rejected).toContain('channel not in allowlist');
+    await adapter2.stop();
+  });
+
+  it('drops messages from ignored channels', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({
+      client,
+      ignoredChannels: ['ch-spam'],
+    });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('hi', { channelId: 'ch-spam' }));
+    client.fire(makeFakeMessage('hi', { channelId: 'ch-ok' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].channelId).toBe('ch-ok');
+    await adapter.stop();
+  });
+
+  it('requires allowed role when allowedRoles is set', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({
+      client,
+      allowedRoles: ['role-mod'],
+    });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    // No member info → reject
+    client.fire(makeFakeMessage('hi'));
+    // Member without the role → reject
+    client.fire(makeFakeMessage('hi', { member: { roleIds: ['role-other'] } }));
+    // Member with the role → accept
+    client.fire(makeFakeMessage('hi', { member: { roleIds: ['role-other', 'role-mod'] } }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured).toHaveLength(1);
+    await adapter.stop();
+  });
+
+  it('treats DMs as guildId=null and builds a DM session key', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({ client });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('hi', {
+      guildId: null,
+      channelId: 'dm-1',
+      author: { id: 'user-9', username: 'u', bot: false },
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured[0].tenantId).toBe('dm');
+    expect(captured[0].conversationId).toBe('agent:main:discord:dm:dm-1');
+    await adapter.stop();
+  });
 });

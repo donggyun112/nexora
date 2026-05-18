@@ -18,6 +18,9 @@ export type { SearchBackend, SearchResult } from './web-search.js';
 export { createBraveBackend } from './brave-search.js';
 export type { BraveSearchOptions } from './brave-search.js';
 
+export { createWebFetchTool } from './web-fetch.js';
+export type { WebFetchToolOptions, WebFetchSummarizer } from './web-fetch.js';
+
 export { createHandraiseTool } from './handraise.js';
 export type {
   HandraiseToolOptions,

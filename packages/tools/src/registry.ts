@@ -119,7 +119,7 @@ export class ToolRegistry {
 export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   'group:fs': ['read', 'write', 'edit', 'grep'],
   'group:runtime': ['exec'],
-  'group:web': ['web-search'],
+  'group:web': ['web-search', 'web-fetch'],
   'group:memory': ['knowledge'],
   'group:agent': ['delegate', 'handraise'],
   'group:skills': ['skill-manage'],

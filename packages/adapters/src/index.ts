@@ -32,6 +32,16 @@ export type {
   DiscordButtonInteraction,
 } from './discord-approvals.js';
 
+export { bridgeDiscordReports } from './discord-reports.js';
+export type {
+  ReportsBridge,
+  BridgeDiscordReportsOptions,
+  DiscordReportChannel,
+  DiscordReportMessage,
+  DiscordReportRenderers,
+  ReportRenderer,
+} from './discord-reports.js';
+
 export { startDiscordBot } from './discord-bot.js';
 export type { DiscordAgentBotOptions, RunningDiscordBot } from './discord-bot.js';
 

@@ -40,6 +40,21 @@ export interface ToolDefinition {
    * Use for env-var gating, API key checks, platform checks, etc.
    */
   checkAvailability?: () => boolean;
+
+  /**
+   * Platform-neutral hint about whether this tool's activity should surface
+   * in user-facing chat (Discord embeds, web panels, etc.). Consumers — the
+   * reporter middleware and outbound adapters — decide how to honor it:
+   *
+   *   - 'public' — show as inline progress (default for tools that are part
+   *                 of the user-facing flow, e.g. "I'm running this command")
+   *   - 'detail' — show in detail panels but not the main chat
+   *   - 'silent' — never surface
+   *
+   * Fail-closed: undefined is treated as 'silent' by the default reporter
+   * predicate. Tool authors who want their work visible must opt in.
+   */
+  visibility?: 'public' | 'detail' | 'silent';
 }
 
 export interface ToolContext {

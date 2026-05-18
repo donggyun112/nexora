@@ -26,4 +26,5 @@ export type {
 
 export * from './builtin/index.js';
 export * from './handraise/index.js';
+export * from './reporter/index.js';
 export * from './mcp/index.js';

@@ -11,6 +11,13 @@ export interface AgentContext {
   /** 테넌트 ID */
   tenantId: string;
 
+  /**
+   * Tenant + agent scope resolved by the context loader.
+   * New framework paths should pass this through to tools and stores so
+   * namespace decisions are made consistently.
+   */
+  scope?: TenantAgentScope;
+
   /** 조합된 시스템 프롬프트 */
   systemPrompt: string;
 
@@ -59,6 +66,35 @@ export interface RuntimeContext {
 
   /** 요청자 이름 */
   requester?: string;
+}
+
+export interface TenantAgentScope {
+  /** Tenant boundary for isolation and policy lookup. */
+  tenantId: string;
+  /** Agent name inside the tenant boundary. */
+  agentName: string;
+  /** Stable namespace for tenant-agent scoped stores and audit records. */
+  namespace: string;
+}
+
+export function createTenantAgentScope(
+  tenantId: string,
+  agentName: string,
+): TenantAgentScope {
+  return {
+    tenantId,
+    agentName,
+    namespace: tenantAgentScopeKey({ tenantId, agentName }),
+  };
+}
+
+export function tenantAgentScopeKey(scope: Pick<TenantAgentScope, 'tenantId' | 'agentName'>): string {
+  return `${sanitizeScopePart(scope.tenantId)}:${sanitizeScopePart(scope.agentName)}`;
+}
+
+function sanitizeScopePart(value: string): string {
+  const trimmed = value.trim();
+  return (trimmed.length > 0 ? trimmed : 'unknown').replace(/[^A-Za-z0-9._-]/g, '_');
 }
 
 /**

@@ -1,3 +1,5 @@
+import type { TenantAgentScope } from './context.js';
+
 /**
  * ToolDefinition — 도구 계약.
  *
@@ -60,6 +62,9 @@ export interface ToolDefinition {
 export interface ToolContext {
   /** 현재 테넌트 ID */
   tenantId: string;
+
+  /** Shared tenant-agent scope for policy, audit, and store namespaces. */
+  scope?: TenantAgentScope;
 
   /** 작업 디렉토리 */
   workdir: string;

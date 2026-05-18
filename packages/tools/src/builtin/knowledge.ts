@@ -2,7 +2,8 @@
  * knowledge — 지식 베이스 도구.
  *
  * KnowledgeStore에 위임 — list/read/write/append/delete.
- * 네임스페이스는 ToolContext.tenantId.
+ * 네임스페이스는 ToolContext.scope.namespace가 있으면 이를 우선 사용하고,
+ * 구버전 호출자는 ToolContext.tenantId로 폴백한다.
  *
  * 참고: knowledge.tool.ts (auto-work-flow)
  */
@@ -37,7 +38,7 @@ export function createKnowledgeTool(store: KnowledgeStore): ToolDefinition {
         content?: string;
       };
 
-      const namespace = ctx.tenantId;
+      const namespace = ctx.scope?.namespace ?? ctx.tenantId;
 
       try {
         switch (action) {

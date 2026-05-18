@@ -148,6 +148,11 @@ describe('CoreContextLoader', () => {
     const ctx = await loader.load('tenant-A', 'dev');
 
     expect(ctx.tenantId).toBe('tenant-A');
+    expect(ctx.scope).toEqual({
+      tenantId: 'tenant-A',
+      agentName: 'dev',
+      namespace: 'tenant-A:dev',
+    });
     expect(ctx.systemPrompt).toContain('# Common');
     expect(ctx.systemPrompt).toContain('You are dev.');
     expect(ctx.systemPrompt).toContain('Tenant-A specific notes.');

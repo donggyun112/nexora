@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ToolRegistry } from '../registry.js';
+import { assembleToolsWithPolicy, resolveToolPolicy, ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolResult } from '@nexora/contracts';
 
 function makeTool(name: string): ToolDefinition {
@@ -75,5 +75,49 @@ describe('ToolRegistry', () => {
       allowed: ['a', 'b', 'c'],
     });
     expect(result.map(t => t.name).sort()).toEqual(['a', 'c']);
+  });
+
+  it('resolves layered policy through context, card, and adapter restrictions', () => {
+    const policy = resolveToolPolicy({
+      availableToolNames: ['write', 'read', 'exec', 'grep'],
+      layers: [{ label: 'global', allow: ['group:fs', 'group:runtime'] }],
+      contextTools: ['read', 'exec'],
+      cardTools: ['read', 'grep'],
+      adapter: { deny: ['grep'], label: 'http' },
+    });
+
+    expect(policy.allowedToolNames).toEqual(['read']);
+    expect(policy.layers.map(layer => layer.label)).toEqual([
+      'global',
+      'context',
+      'agent.card',
+      'http',
+    ]);
+  });
+
+  it('assembles tools with the shared policy path', () => {
+    const reg = new ToolRegistry();
+    reg.registerAll([makeTool('read'), makeTool('grep'), makeTool('exec')]);
+
+    const result = assembleToolsWithPolicy(reg, {
+      contextTools: ['read', 'exec'],
+      cardTools: ['read', 'grep'],
+    });
+
+    expect(result.allowedToolNames).toEqual(['read']);
+    expect(result.tools.map(tool => tool.name)).toEqual(['read']);
+  });
+
+  it('fails closed when policy layers resolve to no tools', () => {
+    const reg = new ToolRegistry();
+    reg.registerAll([makeTool('read'), makeTool('exec')]);
+
+    const result = assembleToolsWithPolicy(reg, {
+      contextTools: ['read'],
+      cardTools: ['exec'],
+    });
+
+    expect(result.allowedToolNames).toEqual([]);
+    expect(result.tools).toEqual([]);
   });
 });

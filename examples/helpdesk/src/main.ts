@@ -33,7 +33,12 @@ import {
   AnthropicProvider,
 } from '@nexora/core';
 import { createReactArchitecture } from '@nexora/architectures';
-import { createReadTool, createGrepTool } from '@nexora/tools';
+import {
+  createReadTool,
+  createGrepTool,
+  ToolRegistry,
+  assembleToolsWithPolicy,
+} from '@nexora/tools';
 import { HttpAdapter } from '@nexora/adapters';
 import { GatewayRouter } from '@nexora/gateway';
 import { defineAgent, topic } from '@nexora/contracts';
@@ -82,14 +87,18 @@ const grepTool = createGrepTool();
 grepTool.isConcurrencySafe = true;
 
 const tools = [readTool, grepTool];
+const toolRegistry = new ToolRegistry();
+toolRegistry.registerAll(tools);
 
 const running = await bootstrapAgent({
   card: helpdeskCard,
   contextLoader,
   transport,
   createRuntime: ({ context }) => {
-    const allowed = context.tools.length > 0 ? new Set(context.tools) : null;
-    const filtered = allowed ? tools.filter(t => allowed.has(t.name)) : tools;
+    const { tools: filtered } = assembleToolsWithPolicy(toolRegistry, {
+      contextTools: context.tools,
+      cardTools: helpdeskCard.tools,
+    });
 
     return new AgentRunner({
       architecture: createReactArchitecture({
@@ -102,6 +111,7 @@ const running = await bootstrapAgent({
         tools: filtered,
         context: {
           tenantId: context.tenantId,
+          scope: context.scope,
           workdir: context.runtime.workdir,
           // TODO: wire real secrets provider (e.g. AWS SSM, Vault) for production
           secrets: { get: async () => undefined },

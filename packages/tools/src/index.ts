@@ -16,12 +16,16 @@ export {
   resolveToolNames,
   resolveProfile,
   applyToolPolicyPipeline,
+  resolveToolPolicy,
+  assembleToolsWithPolicy,
 } from './registry.js';
 export type {
   ToolFilter,
   ToolsetDefinition,
   ToolProfileId,
   ToolPolicyLayer,
+  ResolveToolPolicyOptions,
+  ResolvedToolPolicy,
 } from './registry.js';
 
 export * from './builtin/index.js';

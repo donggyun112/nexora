@@ -19,6 +19,7 @@ import type {
   ResourceLimits,
   RuntimeContext,
 } from '@nexora/contracts';
+import { createTenantAgentScope } from '@nexora/contracts';
 import { PersonaLoader } from './persona.js';
 import { SkillLoader } from './skills.js';
 import { TenantConfigStore, DEFAULT_LIMITS } from './tenant.js';
@@ -59,6 +60,7 @@ export class CoreContextLoader implements IContextLoader {
     agentName: string,
     overrides?: Partial<AgentContext>,
   ): Promise<AgentContext> {
+    const scope = overrides?.scope ?? createTenantAgentScope(tenantId, agentName);
     const persona = this.personas.load(agentName, tenantId);
     const tenantConfig = this.tenants.load(tenantId);
     const skillsMenu = this.skills.buildMenu(tenantId);
@@ -89,6 +91,7 @@ export class CoreContextLoader implements IContextLoader {
 
     return {
       tenantId,
+      scope,
       systemPrompt,
       persona,
       tools,

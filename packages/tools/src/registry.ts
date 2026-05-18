@@ -212,6 +212,84 @@ export function applyToolPolicyPipeline(
   return [...current];
 }
 
+export interface ResolveToolPolicyOptions {
+  /** Tool names currently available in the registry/runtime. */
+  availableToolNames: readonly string[];
+  /** Prebuilt layers. Apply these in the given order. */
+  layers?: readonly ToolPolicyLayer[];
+  /** AgentCard-declared tools. Empty/undefined means no card restriction. */
+  cardTools?: readonly string[];
+  /** ContextLoader-resolved tools. Empty/undefined means no context restriction. */
+  contextTools?: readonly string[];
+  /** Adapter-facing final restriction, applied last. */
+  adapter?: {
+    allow?: readonly string[];
+    deny?: readonly string[];
+    label?: string;
+  };
+}
+
+export interface ResolvedToolPolicy {
+  /** Final allowed tool names after all layers are applied. */
+  allowedToolNames: string[];
+  /** Effective layer list, useful for logging and audit records. */
+  layers: ToolPolicyLayer[];
+}
+
+/**
+ * Resolve the final tool list through the shared policy path.
+ *
+ * Layer order is:
+ *   explicit layers (global/tenant/agent/etc.) → context → card → adapter
+ *
+ * Empty allow lists are treated as "no restriction" to preserve the existing
+ * convention where `context.tools = []` means the tenant did not set a policy.
+ */
+export function resolveToolPolicy(options: ResolveToolPolicyOptions): ResolvedToolPolicy {
+  const layers: ToolPolicyLayer[] = [...(options.layers ?? [])];
+
+  if (options.contextTools && options.contextTools.length > 0) {
+    layers.push({ label: 'context', allow: options.contextTools });
+  }
+  if (options.cardTools && options.cardTools.length > 0) {
+    layers.push({ label: 'agent.card', allow: options.cardTools });
+  }
+  if (
+    options.adapter &&
+    ((options.adapter.allow && options.adapter.allow.length > 0) ||
+      (options.adapter.deny && options.adapter.deny.length > 0))
+  ) {
+    layers.push({
+      label: options.adapter.label ?? 'adapter',
+      allow: options.adapter.allow,
+      deny: options.adapter.deny,
+    });
+  }
+
+  const base = [...new Set(options.availableToolNames)].sort((a, b) => a.localeCompare(b));
+  return {
+    allowedToolNames: applyToolPolicyPipeline(base, layers),
+    layers,
+  };
+}
+
+export function assembleToolsWithPolicy(
+  registry: ToolRegistry,
+  options: Omit<ResolveToolPolicyOptions, 'availableToolNames'>,
+): ResolvedToolPolicy & { tools: ToolDefinition[] } {
+  const policy = resolveToolPolicy({
+    ...options,
+    availableToolNames: registry.names(),
+  });
+
+  return {
+    ...policy,
+    tools: policy.allowedToolNames.length === 0
+      ? []
+      : registry.assemble({ allowed: policy.allowedToolNames }),
+  };
+}
+
 // ─── Toolset Grouping ────────────────────────────────────────────────────
 
 export interface ToolsetDefinition {

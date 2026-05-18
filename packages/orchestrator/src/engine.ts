@@ -17,16 +17,26 @@ import type {
   WorkflowStepInput,
   StepTransition,
   EventTransport,
+  DurableTransport,
   MessageEnvelope,
   TopicString,
   AgentLogger,
   WorkflowStateStore,
   WorkflowCheckpoint,
 } from '@nexora/contracts';
-import { traceId as newTraceId, conversationId as newConversationId } from '@nexora/contracts';
+import {
+  assertDurable,
+  traceId as newTraceId,
+  conversationId as newConversationId,
+} from '@nexora/contracts';
 
 export interface WorkflowEngineOptions {
   transport: EventTransport;
+  /**
+   * When true, constructor fails unless `transport` is durable. Use this for
+   * production workflow runners where losing a step message is a correctness bug.
+   */
+  requireDurableTransport?: boolean;
   /** Default per-step timeout (ms). Default: 60000. */
   defaultStepTimeoutMs?: number;
   /**
@@ -37,6 +47,13 @@ export interface WorkflowEngineOptions {
    */
   stateStore?: WorkflowStateStore;
   logger?: AgentLogger;
+}
+
+export interface ProductionWorkflowEngineOptions extends Omit<
+  WorkflowEngineOptions,
+  'transport' | 'requireDurableTransport'
+> {
+  transport: DurableTransport;
 }
 
 export interface WorkflowExecutionInput {
@@ -88,6 +105,10 @@ export class WorkflowEngine {
     this.stateStore = options.stateStore;
     this.logger = options.logger ?? NOOP_LOGGER;
 
+    if (options.requireDurableTransport) {
+      assertDurable(this.transport);
+    }
+
     // If the transport is at-most-once, a workflow engine that promises
     // durability via stateStore is only half-durable — step delivery itself
     // can still be lost. Warn loudly so operators know to upgrade to a
@@ -108,6 +129,17 @@ export class WorkflowEngine {
         // Transport doesn't implement describe() — skip warning for legacy stubs.
       }
     }
+  }
+
+  /**
+   * Production preset: requires a DurableTransport at the type boundary and
+   * rechecks it at runtime via transport.describe().
+   */
+  static production(options: ProductionWorkflowEngineOptions): WorkflowEngine {
+    return new WorkflowEngine({
+      ...options,
+      requireDurableTransport: true,
+    });
   }
 
   /**

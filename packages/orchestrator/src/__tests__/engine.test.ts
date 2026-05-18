@@ -7,6 +7,7 @@ import type {
   TopicString,
   MessageEnvelope,
   WorkflowContract,
+  TransportDescription,
 } from '@nexora/contracts';
 import { messageId } from '@nexora/contracts';
 
@@ -17,6 +18,15 @@ class StubTransport implements Transport {
   ) {}
 
   public callLog: { topic: string; payload: unknown }[] = [];
+
+  describe(): TransportDescription {
+    return {
+      kind: 'stub',
+      deliveryGuarantee: 'at-most-once',
+      durable: false,
+      supportsConsumerGroups: false,
+    };
+  }
 
   async publish(): Promise<void> {}
 
@@ -52,6 +62,14 @@ class StubTransport implements Transport {
 }
 
 describe('WorkflowEngine', () => {
+  it('rejects at-most-once transport when durable transport is required', () => {
+    const transport = new StubTransport(new Map());
+    expect(() => new WorkflowEngine({
+      transport,
+      requireDurableTransport: true,
+    })).toThrow(/requires a DurableTransport|requires.*DurableTransport/i);
+  });
+
   it('runs sequential steps and passes initial input via template', async () => {
     const handlers = new Map<string, (p: unknown) => unknown>([
       ['fetch.repo', (p) => ({ repo: (p as { name: string }).name, files: 12 })],

@@ -19,6 +19,9 @@ import type {
   ContextLoader,
   AgentRegistry,
   AgentLogger,
+  AgentContext,
+  MessageEnvelope,
+  ToolDefinition,
 } from '@nexora/contracts';
 import { bootstrapAgent, type RunningAgent } from './bootstrap.js';
 import { AgentRunner } from './runner.js';
@@ -36,8 +39,16 @@ export interface AgentTeamOptions {
   contextDir?: string;
   /** Agent registry (auto-created InMemoryAgentRegistry if not set). */
   registry?: AgentRegistry;
-  /** Per-agent runtime factory override. If not set, uses default ReAct + card.tools. */
-  createRuntime?: (card: AgentCard) => AgentRunner | Promise<AgentRunner>;
+  /**
+   * Per-agent runtime factory override. If not set, uses default ReAct +
+   * context/card-resolved tools. Extra args are passed for callers that need
+   * tenant-aware setup; existing one-arg callbacks keep working.
+   */
+  createRuntime?: (
+    card: AgentCard,
+    context: AgentContext,
+    envelope: MessageEnvelope,
+  ) => AgentRunner | Promise<AgentRunner>;
   /** Logger */
   logger?: AgentLogger;
 }
@@ -111,7 +122,7 @@ export async function createAgentTeam(options: AgentTeamOptions): Promise<AgentT
       logger,
       createRuntime: async ({ context, envelope }) => {
         if (options.createRuntime) {
-          return options.createRuntime(card);
+          return options.createRuntime(card, context, envelope);
         }
         return autoCreateRuntime(card, options.llm, context);
       },
@@ -178,18 +189,29 @@ async function autoCreateContextLoader(contextDir: string): Promise<ContextLoade
 async function autoCreateRuntime(
   card: AgentCard,
   llm: LLMProvider,
-  context: { systemPrompt?: string; limits?: { model?: string } },
+  context: AgentContext,
 ): Promise<AgentRunner> {
   const archMod = await import('@nexora/architectures' as string) as {
     createReactArchitecture: (opts: { systemPrompt?: string; model?: string }) => import('@nexora/contracts').AgentArchitecture;
   };
   const toolsMod = await import('@nexora/tools' as string) as {
-    createReadTool: () => import('@nexora/contracts').ToolDefinition;
-    createGrepTool: () => import('@nexora/contracts').ToolDefinition;
-    createExecTool: (opts: { allowList: string[] }) => import('@nexora/contracts').ToolDefinition;
-    createWriteTool: () => import('@nexora/contracts').ToolDefinition;
-    createEditTool: () => import('@nexora/contracts').ToolDefinition;
-    createKnowledgeTool: (store: unknown) => import('@nexora/contracts').ToolDefinition;
+    ToolRegistry: new () => {
+      registerAll(tools: ToolDefinition[]): void;
+      names(): string[];
+      assemble(filter?: { allowed?: string[]; blocked?: string[] }): ToolDefinition[];
+    };
+    assembleToolsWithPolicy: (
+      registry: {
+        names(): string[];
+        assemble(filter?: { allowed?: string[]; blocked?: string[] }): ToolDefinition[];
+      },
+      options: { contextTools?: readonly string[]; cardTools?: readonly string[] },
+    ) => { tools: ToolDefinition[]; allowedToolNames: string[] };
+    createReadTool: () => ToolDefinition;
+    createGrepTool: () => ToolDefinition;
+    createExecTool: (opts: { allowList: string[] }) => ToolDefinition;
+    createWriteTool: () => ToolDefinition;
+    createEditTool: () => ToolDefinition;
   };
 
   const architecture = archMod.createReactArchitecture({
@@ -197,32 +219,27 @@ async function autoCreateRuntime(
     model: context.limits?.model,
   });
 
-  // Build tool list based on card.tools declaration
-  const toolMap: Record<string, () => import('@nexora/contracts').ToolDefinition> = {
-    read: () => toolsMod.createReadTool(),
-    grep: () => toolsMod.createGrepTool(),
-    exec: () => toolsMod.createExecTool({ allowList: ['git', 'npm', 'pnpm', 'node'] }),
-    write: () => toolsMod.createWriteTool(),
-    edit: () => toolsMod.createEditTool(),
-  };
+  const registry = new toolsMod.ToolRegistry();
+  registry.registerAll([
+    toolsMod.createReadTool(),
+    toolsMod.createGrepTool(),
+    toolsMod.createExecTool({ allowList: ['git', 'npm', 'pnpm', 'node'] }),
+    toolsMod.createWriteTool(),
+    toolsMod.createEditTool(),
+  ]);
 
-  const resolvedTools: import('@nexora/contracts').ToolDefinition[] = [];
-  for (const toolName of card.tools) {
-    const factory = toolMap[toolName];
-    if (factory) resolvedTools.push(factory());
-  }
-
-  // Fallback: if card declares no tools or none matched, give read + grep
-  if (resolvedTools.length === 0) {
-    resolvedTools.push(toolsMod.createReadTool(), toolsMod.createGrepTool());
-  }
+  const { tools: resolvedTools } = toolsMod.assembleToolsWithPolicy(registry, {
+    contextTools: context.tools,
+    cardTools: card.tools.length > 0 ? card.tools : ['read', 'grep'],
+  });
 
   const { CoreToolExecutor: Executor } = await import('./tool-executor.js');
   const tools = new Executor({
     tools: resolvedTools,
     context: {
-      tenantId: 'default',
-      workdir: process.cwd(),
+      tenantId: context.tenantId,
+      scope: context.scope,
+      workdir: context.runtime.workdir,
       secrets: { get: async () => undefined },
       logger: { info: () => {}, warn: () => {}, error: () => {} },
       signal: new AbortController().signal,

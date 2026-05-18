@@ -8,6 +8,7 @@
 export { WorkflowEngine } from './engine.js';
 export type {
   WorkflowEngineOptions,
+  ProductionWorkflowEngineOptions,
   WorkflowExecutionInput,
   WorkflowExecutionResult,
   WorkflowStepResult,

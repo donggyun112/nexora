@@ -97,7 +97,9 @@ export type {
   ResourceLimits,
   RuntimeContext,
   ContextLoader,
+  TenantAgentScope,
 } from './context.js';
+export { createTenantAgentScope, tenantAgentScopeKey } from './context.js';
 
 export type {
   Adapter,

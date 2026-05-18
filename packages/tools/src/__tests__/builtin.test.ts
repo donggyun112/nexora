@@ -532,6 +532,35 @@ describe('knowledge tool', () => {
     const listResult = await tool.execute('3', { action: 'list' }, ctx);
     if (listResult.type === 'text') expect(listResult.text).toContain('rules');
   });
+
+  it('uses tenant-agent scope namespace when provided', async () => {
+    const namespaces: string[] = [];
+    const store: KnowledgeStore = {
+      list: async () => [],
+      read: async () => null,
+      write: async (ns) => { namespaces.push(ns); },
+      append: async () => {},
+      delete: async () => {},
+    };
+
+    const tool = createKnowledgeTool(store);
+    const ctx: ToolContext = {
+      ...makeContext(tmpDir),
+      scope: {
+        tenantId: 'tenant-1',
+        agentName: 'helpdesk-agent',
+        namespace: 'tenant-1:helpdesk-agent',
+      },
+    };
+
+    await tool.execute('1', {
+      action: 'write',
+      topic: 'rules',
+      content: 'scoped',
+    }, ctx);
+
+    expect(namespaces).toEqual(['tenant-1:helpdesk-agent']);
+  });
 });
 
 describe('web_search tool', () => {

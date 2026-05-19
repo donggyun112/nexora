@@ -54,6 +54,7 @@ export interface DiscordMessageLike {
   channelId: string;
   guildId: string | null;
   mentions: { users: Map<string, { id: string; username: string }> };
+  attachments?: { size: number; keys?: () => Iterable<string> };
   reply: (content: string) => Promise<unknown>;
   channel: {
     sendTyping: () => Promise<unknown>;
@@ -153,9 +154,27 @@ export interface DiscordAdapterOptions extends SessionKeyOptions {
    * stall thresholds. Defaults: enabled.
    */
   statusReactions?: boolean | StatusReactionOptions;
+  /**
+   * Debounce rapid same channel/user messages into one router turn.
+   * Defaults to 1500ms. Set to 0 to disable.
+   */
+  messageDebounceMs?: number;
 }
 
 const DEFAULT_MAX_MESSAGE_LENGTH = 1900;
+const DEFAULT_MESSAGE_DEBOUNCE_MS = 1500;
+const MESSAGE_DEDUP_TTL_MS = 10 * 60 * 1000;
+const MESSAGE_DEDUP_MAX_ENTRIES = 5000;
+
+interface PendingDiscordTurn {
+  message: DiscordMessageLike;
+  inbound: InboundMessage;
+}
+
+interface DebounceBuffer {
+  items: PendingDiscordTurn[];
+  timeout: ReturnType<typeof setTimeout> | null;
+}
 
 export class DiscordAdapter implements Adapter {
   readonly name = 'discord';
@@ -173,7 +192,11 @@ export class DiscordAdapter implements Adapter {
   private readonly freeResponseChannels: ReadonlySet<string>;
   private readonly onUnauthorized: NonNullable<DiscordAdapterOptions['onUnauthorized']> | null;
   private readonly statusReactionOptions: StatusReactionOptions | null;
+  private readonly messageDebounceMs: number;
   private handler: ((msg: DiscordMessageLike) => void) | null = null;
+  private readonly seenMessages = new Map<string, { fingerprint: string; seenAt: number }>();
+  private readonly debounceBuffers = new Map<string, DebounceBuffer>();
+  private readonly channelRuns = new Map<string, Promise<void>>();
 
   constructor(options: DiscordAdapterOptions) {
     this.client = options.client;
@@ -204,6 +227,10 @@ export class DiscordAdapter implements Adapter {
     } else {
       this.statusReactionOptions = sr;
     }
+    this.messageDebounceMs = Math.max(
+      0,
+      Math.trunc(options.messageDebounceMs ?? DEFAULT_MESSAGE_DEBOUNCE_MS),
+    );
   }
 
   async start(router: MessageRouter): Promise<void> {
@@ -212,6 +239,7 @@ export class DiscordAdapter implements Adapter {
     this.handler = (message: DiscordMessageLike) => {
       // Ignore bot messages (prevents infinite loops).
       if (message.author.bot) return;
+      if (this.isDuplicateMessageEvent(message)) return;
       // Ignore empty messages.
       if (!message.content.trim()) return;
 
@@ -287,7 +315,7 @@ export class DiscordAdapter implements Adapter {
       };
 
       // Fire and forget — we don't want to block the Discord event loop.
-      void this.processMessage(router, inbound, message);
+      void this.enqueueMessage(router, { message, inbound });
     };
 
     this.client.on('messageCreate', this.handler);
@@ -298,6 +326,9 @@ export class DiscordAdapter implements Adapter {
       this.client.off('messageCreate', this.handler);
       this.handler = null;
     }
+    this.clearDebounceBuffers();
+    this.channelRuns.clear();
+    this.seenMessages.clear();
   }
 
   /**
@@ -334,6 +365,123 @@ export class DiscordAdapter implements Adapter {
     }
 
     return null;
+  }
+
+  private isDuplicateMessageEvent(message: DiscordMessageLike): boolean {
+    const now = Date.now();
+
+    for (const [id, entry] of this.seenMessages) {
+      if (now - entry.seenAt > MESSAGE_DEDUP_TTL_MS) {
+        this.seenMessages.delete(id);
+      }
+    }
+
+    const fingerprint = buildMessageFingerprint(message);
+    const prev = this.seenMessages.get(message.id);
+    if (prev && prev.fingerprint === fingerprint) {
+      prev.seenAt = now;
+      return true;
+    }
+
+    this.seenMessages.set(message.id, { fingerprint, seenAt: now });
+
+    if (this.seenMessages.size > MESSAGE_DEDUP_MAX_ENTRIES) {
+      let oldestId: string | null = null;
+      let oldestAt = Number.POSITIVE_INFINITY;
+      for (const [id, entry] of this.seenMessages) {
+        if (entry.seenAt < oldestAt) {
+          oldestAt = entry.seenAt;
+          oldestId = id;
+        }
+      }
+      if (oldestId) this.seenMessages.delete(oldestId);
+    }
+
+    return false;
+  }
+
+  private enqueueMessage(router: MessageRouter, turn: PendingDiscordTurn): Promise<void> {
+    const key = this.debounceKey(turn.message);
+    const canDebounce = this.messageDebounceMs > 0 && !hasAttachments(turn.message);
+
+    if (!canDebounce) {
+      return this.flushDebounceBuffer(router, key).then(() =>
+        this.enqueueChannelRun(turn.message.channelId, () =>
+          this.processMessage(router, turn.inbound, turn.message),
+        ),
+      );
+    }
+
+    const existing = this.debounceBuffers.get(key);
+    if (existing) {
+      existing.items.push(turn);
+      this.scheduleDebounceFlush(router, key, existing);
+      return Promise.resolve();
+    }
+
+    const buffer: DebounceBuffer = { items: [turn], timeout: null };
+    this.debounceBuffers.set(key, buffer);
+    this.scheduleDebounceFlush(router, key, buffer);
+    return Promise.resolve();
+  }
+
+  private debounceKey(message: DiscordMessageLike): string {
+    return `${message.channelId}:${message.author.id}`;
+  }
+
+  private scheduleDebounceFlush(
+    router: MessageRouter,
+    key: string,
+    buffer: DebounceBuffer,
+  ): void {
+    if (buffer.timeout) clearTimeout(buffer.timeout);
+    buffer.timeout = setTimeout(() => {
+      void this.flushDebounceBuffer(router, key);
+    }, this.messageDebounceMs);
+    buffer.timeout.unref?.();
+  }
+
+  private async flushDebounceBuffer(router: MessageRouter, key: string): Promise<void> {
+    const buffer = this.debounceBuffers.get(key);
+    if (!buffer) return;
+    this.debounceBuffers.delete(key);
+    if (buffer.timeout) {
+      clearTimeout(buffer.timeout);
+      buffer.timeout = null;
+    }
+    if (buffer.items.length === 0) return;
+
+    const anchor = buffer.items[buffer.items.length - 1];
+    const content = buffer.items
+      .map((item) => item.inbound.content.trim())
+      .filter(Boolean)
+      .join('\n');
+    if (!content) return;
+
+    await this.enqueueChannelRun(anchor.message.channelId, () =>
+      this.processMessage(router, { ...anchor.inbound, content }, anchor.message),
+    );
+  }
+
+  private enqueueChannelRun(channelId: string, task: () => Promise<void>): Promise<void> {
+    const previous = this.channelRuns.get(channelId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => {})
+      .then(task)
+      .finally(() => {
+        if (this.channelRuns.get(channelId) === next) {
+          this.channelRuns.delete(channelId);
+        }
+      });
+    this.channelRuns.set(channelId, next);
+    return next;
+  }
+
+  private clearDebounceBuffers(): void {
+    for (const buffer of this.debounceBuffers.values()) {
+      if (buffer.timeout) clearTimeout(buffer.timeout);
+    }
+    this.debounceBuffers.clear();
   }
 
   private async processMessage(
@@ -426,6 +574,23 @@ export class DiscordAdapter implements Adapter {
       }
     }
   }
+}
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function attachmentSignature(message: DiscordMessageLike): string {
+  if (!message.attachments?.keys) return '';
+  return [...message.attachments.keys()].sort().join(',');
+}
+
+function buildMessageFingerprint(message: DiscordMessageLike): string {
+  return `${normalizeWhitespace(message.content)}|${attachmentSignature(message)}`;
+}
+
+function hasAttachments(message: DiscordMessageLike): boolean {
+  return (message.attachments?.size ?? 0) > 0;
 }
 
 /**

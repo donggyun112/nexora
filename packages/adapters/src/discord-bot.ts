@@ -51,6 +51,8 @@ export interface DiscordAgentBotOptions {
   groupTopic?: string;
   /** Tenant resolver. Default: guildId as tenantId. */
   resolveTenant?: (guildId: string | null) => string | null;
+  /** Debounce rapid same channel/user Discord messages. Default: adapter default. */
+  messageDebounceMs?: number;
 }
 
 export interface RunningDiscordBot {
@@ -124,6 +126,7 @@ export async function startDiscordBot(options: DiscordAgentBotOptions): Promise<
     resolveTenant: options.resolveTenant ?? ((guildId) => guildId ?? 'default'),
     agentBotMap,
     agentDescriptions,
+    messageDebounceMs: options.messageDebounceMs,
   });
 
   await adapter.start(router);

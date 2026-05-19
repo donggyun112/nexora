@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DiscordAdapter } from '../discord.js';
-import type { DiscordClientLike, DiscordMessageLike } from '../discord.js';
+import type { DiscordAdapterOptions, DiscordClientLike, DiscordMessageLike } from '../discord.js';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
 
 function makeFakeClient(): DiscordClientLike & { fire: (msg: DiscordMessageLike) => void } {
@@ -16,9 +16,11 @@ function makeFakeClient(): DiscordClientLike & { fire: (msg: DiscordMessageLike)
   };
 }
 
+let fakeMessageSeq = 0;
+
 function makeFakeMessage(content: string, overrides: Partial<DiscordMessageLike> = {}): DiscordMessageLike {
   return {
-    id: 'msg-1',
+    id: `msg-${++fakeMessageSeq}`,
     content,
     author: { id: 'user-1', username: 'testuser', bot: false },
     channelId: 'ch-1',
@@ -44,10 +46,14 @@ function makeRouter(handler: (msg: InboundMessage) => Promise<OutboundMessage>):
   };
 }
 
+function makeAdapter(options: DiscordAdapterOptions): DiscordAdapter {
+  return new DiscordAdapter({ messageDebounceMs: 0, ...options });
+}
+
 describe('DiscordAdapter', () => {
   it('routes Discord messages to the MessageRouter', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client });
+    const adapter = makeAdapter({ client });
 
     const captured: InboundMessage[] = [];
     await adapter.start(makeRouter(async (msg) => {
@@ -72,7 +78,7 @@ describe('DiscordAdapter', () => {
 
   it('ignores bot messages to prevent loops', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client });
+    const adapter = makeAdapter({ client });
 
     let called = false;
     await adapter.start(makeRouter(async () => {
@@ -92,7 +98,7 @@ describe('DiscordAdapter', () => {
 
   it('uses resolveTenant to map guildId → tenantId', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       resolveTenant: (guildId) => guildId === 'guild-A' ? 'tenant-A' : null,
     });
@@ -116,7 +122,7 @@ describe('DiscordAdapter', () => {
 
   it('splits long responses to respect Discord char limit', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client, maxMessageLength: 50 });
+    const adapter = makeAdapter({ client, maxMessageLength: 50 });
 
     await adapter.start(makeRouter(async () => ({
       content: 'A'.repeat(120), // > 50, needs splitting
@@ -134,7 +140,7 @@ describe('DiscordAdapter', () => {
 
   it('shows typing indicator while processing', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client });
+    const adapter = makeAdapter({ client });
 
     await adapter.start(makeRouter(async () => ({ content: 'done' })));
 
@@ -148,7 +154,7 @@ describe('DiscordAdapter', () => {
 
   it('handles router errors gracefully', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client });
+    const adapter = makeAdapter({ client });
 
     await adapter.start({
       async route() { throw new Error('router exploded'); },
@@ -165,7 +171,7 @@ describe('DiscordAdapter', () => {
 
   it('builds a hermes-style session key as conversationId', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client });
+    const adapter = makeAdapter({ client });
 
     const captured: InboundMessage[] = [];
     await adapter.start(makeRouter(async (msg) => {
@@ -186,7 +192,7 @@ describe('DiscordAdapter', () => {
 
   it('shares thread sessions across users by default', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client });
+    const adapter = makeAdapter({ client });
 
     const captured: InboundMessage[] = [];
     await adapter.start(makeRouter(async (msg) => {
@@ -222,7 +228,7 @@ describe('DiscordAdapter', () => {
 
   it('isolates threads per user when threadSessionsPerUser=true', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client, threadSessionsPerUser: true });
+    const adapter = makeAdapter({ client, threadSessionsPerUser: true });
 
     const captured: InboundMessage[] = [];
     await adapter.start(makeRouter(async (msg) => {
@@ -255,7 +261,7 @@ describe('DiscordAdapter', () => {
 
   it('drops messages from channels not in the allowlist', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       allowedChannels: ['ch-allowed'],
     });
@@ -268,7 +274,7 @@ describe('DiscordAdapter', () => {
     }));
     // Re-create adapter with onUnauthorized hook
     await adapter.stop();
-    const adapter2 = new DiscordAdapter({
+    const adapter2 = makeAdapter({
       client,
       allowedChannels: ['ch-allowed'],
       onUnauthorized: (_m, reason) => rejected.push(reason),
@@ -290,7 +296,7 @@ describe('DiscordAdapter', () => {
 
   it('drops messages from ignored channels', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       ignoredChannels: ['ch-spam'],
     });
@@ -312,7 +318,7 @@ describe('DiscordAdapter', () => {
 
   it('requires allowed role when allowedRoles is set', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       allowedRoles: ['role-mod'],
     });
@@ -337,7 +343,7 @@ describe('DiscordAdapter', () => {
 
   it('treats DMs as guildId=null and builds a DM session key', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({ client });
+    const adapter = makeAdapter({ client });
 
     const captured: InboundMessage[] = [];
     await adapter.start(makeRouter(async (msg) => {
@@ -359,7 +365,7 @@ describe('DiscordAdapter', () => {
 
   it('drives status reactions: thinking → tool → done on success', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       statusReactions: { debounceMs: 5, botEmoji: null },
     });
@@ -394,7 +400,7 @@ describe('DiscordAdapter', () => {
 
   it('drives status reactions: ❌ on router error', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       statusReactions: { debounceMs: 0, botEmoji: null },
     });
@@ -419,7 +425,7 @@ describe('DiscordAdapter', () => {
 
   it('skips status reactions when statusReactions=false', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       statusReactions: false,
     });
@@ -438,7 +444,7 @@ describe('DiscordAdapter', () => {
 
   it('skips status reactions when message has no react method', async () => {
     const client = makeFakeClient();
-    const adapter = new DiscordAdapter({
+    const adapter = makeAdapter({
       client,
       statusReactions: { debounceMs: 0 },
     });
@@ -454,6 +460,97 @@ describe('DiscordAdapter', () => {
     // Without react support the controller is never created; no assertions
     // to make other than: it shouldn't throw and message routing still works.
     expect(fakeMsg.reply).toHaveBeenCalled();
+    await adapter.stop();
+  });
+
+  it('debounces rapid messages from the same channel and user into one turn', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({ client, messageDebounceMs: 20 });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const first = makeFakeMessage('first', { id: 'msg-1' });
+    const second = makeFakeMessage('second', { id: 'msg-2' });
+    client.fire(first);
+    client.fire(second);
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].content).toBe('first\nsecond');
+    expect(first.reply).not.toHaveBeenCalled();
+    expect(second.reply).toHaveBeenCalledWith('ok');
+    await adapter.stop();
+  });
+
+  it('skips debounce for attachment messages after flushing pending text', async () => {
+    const client = makeFakeClient();
+    const adapter = new DiscordAdapter({ client, messageDebounceMs: 50 });
+
+    const captured: string[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg.content);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('pending text', { id: 'msg-1' }));
+    client.fire(makeFakeMessage('with file', {
+      id: 'msg-2',
+      attachments: { size: 1, keys: () => ['file-1'] },
+    }));
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(captured).toEqual(['pending text', 'with file']);
+    await adapter.stop();
+  });
+
+  it('serializes runs per Discord channel', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({ client });
+    let releaseFirst!: () => void;
+    const firstDone = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const order: string[] = [];
+
+    await adapter.start(makeRouter(async (msg) => {
+      order.push(`start:${msg.content}`);
+      if (msg.content === 'first') await firstDone;
+      order.push(`end:${msg.content}`);
+      return { content: msg.content };
+    }));
+
+    client.fire(makeFakeMessage('first', { id: 'msg-1' }));
+    client.fire(makeFakeMessage('second', { id: 'msg-2' }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(order).toEqual(['start:first']);
+
+    releaseFirst();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(order).toEqual(['start:first', 'end:first', 'start:second', 'end:second']);
+    await adapter.stop();
+  });
+
+  it('drops duplicate Discord message events with the same id and content', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({ client });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const duplicate = makeFakeMessage('same event', { id: 'msg-dupe' });
+    client.fire(duplicate);
+    client.fire(duplicate);
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(captured).toHaveLength(1);
+    expect(duplicate.reply).toHaveBeenCalledTimes(1);
     await adapter.stop();
   });
 });

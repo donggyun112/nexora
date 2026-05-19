@@ -165,3 +165,24 @@ export type {
   TreeConversationStore,
   AppendEntryInput,
 } from './session-tree.js';
+
+export type {
+  TranscriptEntry,
+  TranscriptEntryBase,
+  UserTranscriptEntry,
+  AssistantTranscriptEntry,
+  SystemTranscriptEntry,
+  AttachmentTranscriptEntry,
+  SummaryTranscriptEntry,
+  TranscriptUsage,
+  ContentBlock,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  ImageBlock,
+  AttachmentRefSource,
+  Base64ImageSource,
+  UrlImageSource,
+  TranscriptStore,
+  AttachmentRef,
+} from './transcript.js';

@@ -3,6 +3,7 @@
  */
 
 export { ConversationStoreJson } from './conversation.js';
+export { TranscriptStoreJson } from './transcript.js';
 export { KnowledgeStoreJson } from './knowledge.js';
 export { ScheduleStoreJson } from './schedule.js';
 export { ContextStoreJson } from './context-store.js';

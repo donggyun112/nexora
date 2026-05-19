@@ -54,6 +54,34 @@ describe('ReactArchitecture', () => {
     }
   });
 
+  it('passes image tool results back as multimodal context', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 't1', name: 'recall_image', arguments: { image_id: 'img_1_0.png' } }] },
+      { text: 'I can see the image' },
+    ]);
+    const tools = new Map([
+      ['recall_image', async () => ({
+        type: 'image' as const,
+        data: 'abc123',
+        mimeType: 'image/png',
+      })],
+    ]);
+    const services = makeServices(llm, tools);
+
+    const arch = createReactArchitecture();
+    await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'load it' }));
+
+    const secondCall = llm.callLog[1];
+    expect(secondCall).toBeDefined();
+    const imageMessage = secondCall.messages.find(
+      (msg) => Array.isArray(msg.content) && msg.content.some((block) => block.type === 'image'),
+    );
+    expect(imageMessage).toBeDefined();
+    if (imageMessage && Array.isArray(imageMessage.content)) {
+      expect(imageMessage.content).toContainEqual({ type: 'image', data: 'abc123', mimeType: 'image/png' });
+    }
+  });
+
   it('runs multiple parallel tool calls in one round', async () => {
     const llm = new MockLLMProvider([
       {

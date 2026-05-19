@@ -141,6 +141,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 
         // tool_result emit + history에 추가할 블록 생성
         const toolResultBlocks: { type: 'tool_result'; id: string; content: string; isError: boolean }[] = [];
+        const toolImageMessages: LLMMessage[] = [];
         for (const { tc, result } of toolResults) {
           const isError = isErrorResult(result);
           yield { type: 'tool_result', id: tc.id, name: tc.name, result, isError };
@@ -151,6 +152,19 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
             content: formatResultForLLM(result),
             isError,
           });
+          const image = imageResultForLLM(result);
+          if (image) {
+            toolImageMessages.push({
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `Tool ${tc.name} returned an image for call ${tc.id}. Use this image as visual context for the current task.`,
+                },
+                image,
+              ],
+            });
+          }
         }
 
         // tool_result 메시지 history에 추가
@@ -158,6 +172,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
           role: 'tool_result',
           content: toolResultBlocks,
         });
+        history.push(...toolImageMessages);
 
         // 컴팩션 시도 + tool pair sanitization
         await services.memory.compact();
@@ -265,4 +280,11 @@ function formatResultForLLM(result: unknown): string {
   if (r.type === 'error' && typeof r.message === 'string') return `[ERROR] ${r.message}`;
   if (r.type === 'image') return '[image]';
   return JSON.stringify(result);
+}
+
+function imageResultForLLM(result: unknown): Extract<LLMContentBlock, { type: 'image' }> | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as { type?: string; data?: string; mimeType?: string };
+  if (r.type !== 'image' || typeof r.data !== 'string' || typeof r.mimeType !== 'string') return null;
+  return { type: 'image', data: r.data, mimeType: r.mimeType };
 }

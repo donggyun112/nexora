@@ -33,6 +33,7 @@ import type {
   MessageRouter,
   InboundMessage,
   OutboundChunk,
+  OutboundArtifact,
 } from '@nexora/contracts';
 import {
   buildSessionKey,
@@ -55,10 +56,10 @@ export interface DiscordMessageLike {
   guildId: string | null;
   mentions: { users: Map<string, { id: string; username: string }> };
   attachments?: { size: number; keys?: () => Iterable<string> };
-  reply: (content: string) => Promise<unknown>;
+  reply: (content: DiscordSendPayload) => Promise<unknown>;
   channel: {
     sendTyping: () => Promise<unknown>;
-    send: (content: string) => Promise<unknown>;
+    send: (content: DiscordSendPayload) => Promise<unknown>;
     /** discord.js exposes channel.isThread() — we treat it as optional/dynamic. */
     isThread?: () => boolean;
     /** For thread channels, the parent channel id (the "real" room). */
@@ -84,6 +85,20 @@ export interface DiscordMessageLike {
    * transitioning between phases.
    */
   removeOwnReaction?: (emoji: string) => Promise<unknown>;
+}
+
+export type DiscordSendPayload = string | DiscordMessagePayload;
+
+export interface DiscordMessagePayload {
+  content?: string;
+  files?: Array<{ attachment: Buffer; name: string }>;
+  embeds?: Array<{
+    title?: string;
+    description?: string;
+    color?: number;
+    image?: { url: string };
+  }>;
+  allowedMentions?: { parse: string[] };
 }
 
 export interface DiscordClientLike {
@@ -504,11 +519,13 @@ export class DiscordAdapter implements Adapter {
       // Use streaming if the router supports it, so we can send incremental
       // messages. If the response is short enough, routeStream will call
       // onChunk with type='done' immediately.
-      const chunks: string[] = [];
+      const chunks: Array<string | DiscordMessagePayload> = [];
 
       await router.routeStream(inbound, (chunk: OutboundChunk) => {
         if (chunk.type === 'text') {
           chunks.push(chunk.text);
+        } else if (chunk.type === 'artifact') {
+          chunks.push(...renderDiscordArtifactMessages(chunk.artifact));
         } else if (chunk.type === 'tool_call') {
           // Optionally show tool usage as a subtle indicator
           chunks.push(`_Using ${chunk.name}..._`);
@@ -522,16 +539,14 @@ export class DiscordAdapter implements Adapter {
         // 'done', 'tool_result' are silent in Discord output.
       });
 
-      const fullResponse = chunks.join('');
-
-      if (!fullResponse.trim()) {
+      if (!hasResponseContent(chunks)) {
         await discordMsg.reply('_(no response)_');
         await (sawError ? status?.setError() : status?.setDone());
         return;
       }
 
       // Split long responses to respect Discord's 2000 char limit.
-      await this.sendChunked(discordMsg, fullResponse);
+      await this.sendResponseParts(discordMsg, chunks);
       await (sawError ? status?.setError() : status?.setDone());
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -558,22 +573,117 @@ export class DiscordAdapter implements Adapter {
     );
   }
 
-  private async sendChunked(
+  private async sendResponseParts(
     discordMsg: DiscordMessageLike,
-    text: string,
+    parts: Array<string | DiscordMessagePayload>,
   ): Promise<void> {
-    // First chunk → reply (creates a thread-like visual). Rest → channel.send.
-    const parts = splitMessage(text, this.maxLen);
     let first = true;
-    for (const part of parts) {
+    let pendingText = '';
+    const send = async (part: DiscordSendPayload): Promise<void> => {
       if (first) {
         await discordMsg.reply(part);
         first = false;
       } else {
         await discordMsg.channel.send(part);
       }
+    };
+    const flushText = async (): Promise<void> => {
+      if (!pendingText.trim()) {
+        pendingText = '';
+        return;
+      }
+      for (const chunk of splitMessage(pendingText, this.maxLen)) {
+        await send(chunk);
+      }
+      pendingText = '';
+    };
+
+    for (const part of parts) {
+      if (typeof part === 'string') {
+        pendingText += part;
+      } else {
+        await flushText();
+        await send(part);
+      }
     }
+    await flushText();
   }
+}
+
+export function renderDiscordArtifactMessages(artifact: OutboundArtifact): DiscordMessagePayload[] {
+  if (artifact.kind === 'artifact-set') {
+    const own = renderSingleArtifactMessage(artifact, false);
+    const children = artifact.children?.flatMap(renderDiscordArtifactMessages) ?? [];
+    return own ? [own, ...children] : children;
+  }
+  const message = renderSingleArtifactMessage(artifact, true);
+  return message ? [message] : [];
+}
+
+function renderSingleArtifactMessage(
+  artifact: OutboundArtifact,
+  includeFiles: boolean,
+): DiscordMessagePayload | null {
+  const files = includeFiles
+    ? (artifact.attachments ?? []).flatMap((attachment) => {
+        const buffer = decodeAttachment(attachment.data);
+        return buffer ? [{ attachment: buffer, name: safeFilename(attachment.name, attachment.mimeType) }] : [];
+      })
+    : [];
+  const embeds = artifact.url && artifact.kind === 'image'
+    ? [{
+        title: artifact.title ? truncate(artifact.title, 256) : undefined,
+        description: artifact.text ? truncate(artifact.text, 4096) : undefined,
+        color: 0x2ecc71,
+        image: { url: artifact.url },
+      }]
+    : [];
+  const content = [artifact.title ? `**${truncate(artifact.title, 300)}**` : '', artifact.text ?? '']
+    .filter(Boolean)
+    .join('\n');
+  if (!content && files.length === 0 && embeds.length === 0) return null;
+  return {
+    ...(content ? { content } : {}),
+    ...(files.length > 0 ? { files } : {}),
+    ...(embeds.length > 0 ? { embeds } : {}),
+    allowedMentions: { parse: [] },
+  };
+}
+
+function decodeAttachment(data: string): Buffer | null {
+  const raw = data.trim();
+  const match = /^data:[^;]+;base64,(.+)$/i.exec(raw);
+  const b64 = (match?.[1] ?? raw).replace(/\s+/g, '');
+  if (!b64) return null;
+  const buffer = Buffer.from(b64, 'base64');
+  return buffer.length > 0 ? buffer : null;
+}
+
+function safeFilename(name: string, mimeType: string): string {
+  const fallback = `attachment.${extensionForMime(mimeType)}`;
+  const cleaned = (name || fallback).replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-');
+  const finalName = cleaned.replace(/^-+|-+$/g, '') || fallback;
+  return /\.[a-z0-9]+$/i.test(finalName) ? finalName : `${finalName}.${extensionForMime(mimeType)}`;
+}
+
+function extensionForMime(mimeType: string): string {
+  if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'image/gif') return 'gif';
+  if (mimeType === 'image/webp') return 'webp';
+  return 'bin';
+}
+
+function hasResponseContent(parts: Array<string | DiscordMessagePayload>): boolean {
+  return parts.some((part) => {
+    if (typeof part === 'string') return part.trim().length > 0;
+    return Boolean(part.content?.trim() || part.files?.length || part.embeds?.length);
+  });
+}
+
+function truncate(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return value.slice(0, Math.max(0, max - 1)) + '…';
 }
 
 function normalizeWhitespace(text: string): string {

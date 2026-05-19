@@ -8,11 +8,13 @@
 export { HttpAdapter } from './http.js';
 export type { HttpAdapterOptions } from './http.js';
 
-export { DiscordAdapter } from './discord.js';
+export { DiscordAdapter, renderDiscordArtifactMessages } from './discord.js';
 export type {
   DiscordAdapterOptions,
   DiscordClientLike,
   DiscordMessageLike,
+  DiscordMessagePayload,
+  DiscordSendPayload,
 } from './discord.js';
 
 export {

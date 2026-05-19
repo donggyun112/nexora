@@ -106,6 +106,8 @@ export type {
   MessageRouter,
   InboundMessage,
   OutboundMessage,
+  OutboundArtifact,
+  OutboundAttachment,
   OutboundChunk,
 } from './adapter.js';
 

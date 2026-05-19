@@ -76,6 +76,46 @@ describe('DiscordAdapter', () => {
     await adapter.stop();
   });
 
+  it('renders outbound artifacts as Discord attachments', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({ client });
+    await adapter.start({
+      async route() {
+        return { content: '' };
+      },
+      async routeStream(_msg, onChunk) {
+        onChunk({
+          type: 'artifact',
+          artifact: {
+            kind: 'image',
+            title: 'Candidate 1',
+            attachments: [
+              {
+                name: 'candidate-1.png',
+                mimeType: 'image/png',
+                data: 'iVBORw0KGgo=',
+              },
+            ],
+          },
+        });
+      },
+    });
+
+    const fakeMsg = makeFakeMessage('show image');
+    client.fire(fakeMsg);
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(fakeMsg.reply).toHaveBeenCalledOnce();
+    const payload = vi.mocked(fakeMsg.reply).mock.calls[0][0];
+    expect(typeof payload).toBe('object');
+    if (typeof payload === 'object') {
+      expect(payload.content).toContain('Candidate 1');
+      expect(payload.files?.[0].name).toBe('candidate-1.png');
+      expect(Buffer.isBuffer(payload.files?.[0].attachment)).toBe(true);
+    }
+    await adapter.stop();
+  });
+
   it('ignores bot messages to prevent loops', async () => {
     const client = makeFakeClient();
     const adapter = makeAdapter({ client });

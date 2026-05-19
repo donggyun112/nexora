@@ -149,6 +149,45 @@ describe('AgentRunner', () => {
     expect(calls).toContain('agent.end');
   });
 
+  it('applies beforeExecution tool mutations to the executor used by the architecture', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'tc-1', name: 'echo', arguments: { msg: 'hi' } }] },
+      { text: 'done' },
+    ]);
+    const tools = new CoreToolExecutor({ tools: [makeEcho()], context: mockContext });
+    const runner = new AgentRunner({
+      architecture: simpleReact,
+      llm,
+      tools,
+      middlewares: [
+        {
+          name: 'wrap-echo',
+          beforeExecution(ctx) {
+            ctx.tools = ctx.tools.map((tool) =>
+              tool.name === 'echo'
+                ? {
+                    ...tool,
+                    execute: async () => ({ type: 'text', text: 'wrapped' }),
+                  }
+                : tool,
+            );
+          },
+        },
+      ],
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runner.execute({ prompt: 'echo hi' })) {
+      events.push(ev);
+    }
+
+    const result = events.find(e => e.type === 'tool_result');
+    expect(result).toBeDefined();
+    if (result?.type === 'tool_result') {
+      expect(result.result).toEqual({ type: 'text', text: 'wrapped' });
+    }
+  });
+
   it('emits error event on architecture throw', async () => {
     const llm = new MockLLMProvider([{ text: '', throwError: 'llm exploded' }]);
     const tools = new CoreToolExecutor({ tools: [], context: mockContext });

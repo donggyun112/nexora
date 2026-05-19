@@ -17,6 +17,7 @@ import type {
   MemoryProvider,
   ToolExecutor,
   AgentLogger,
+  ToolDefinition,
 } from '@nexora/contracts';
 import {
   MiddlewarePipeline,
@@ -106,17 +107,20 @@ export class AgentRunner implements AgentRuntime {
     let loopGen: AsyncGenerator<AgentEvent> | null = null;
 
     try {
-      // Pass the actual tool list + system prompt to beforeExecution
-      // so middleware like toolFilterMiddleware can mutate them. The mutations
-      // are read back and the service-level tool executor is NOT rebuilt here
-      // (that's the caller's job at createRuntime time), but the tool list
-      // is available for logging/auditing middleware.
+      // Pass actual ToolDefinition objects to beforeExecution when the executor
+      // can expose them. Middleware such as approval gates can then wrap
+      // execute(), and filters can remove tools before the architecture sees
+      // them. Legacy executors that only expose summaries still get an audit
+      // view, but cannot apply executable mutations.
       const beforeCtx = {
         input,
-        tools: services.tools.list() as unknown as import('@nexora/contracts').ToolDefinition[],
+        tools: listExecutableTools(services.tools),
         systemPrompt: '',
       };
       await this.pipeline.runBeforeExecution(beforeCtx);
+      if (services.tools.withTools) {
+        services.tools = services.tools.withTools(beforeCtx.tools);
+      }
 
       loopGen = this.architecture.loop(services, input);
       const events = raceAgainstAbort(loopGen, controller.signal);
@@ -252,11 +256,25 @@ function wrapToolExecutorWithSignal(inner: ToolExecutor, signal: AbortSignal): T
     (wrapped as ToolExecutor & { get: (name: string) => unknown }).get =
       innerWithExtras.get.bind(innerWithExtras);
   }
+  if (innerWithExtras.withTools) {
+    (wrapped as ToolExecutor & { withTools: (tools: ToolDefinition[]) => ToolExecutor }).withTools =
+      (tools) => wrapToolExecutorWithSignal(innerWithExtras.withTools?.(tools) ?? inner, signal);
+  }
   if (innerWithExtras.has) {
     (wrapped as ToolExecutor & { has: (name: string) => boolean }).has =
       innerWithExtras.has.bind(innerWithExtras);
   }
   return wrapped;
+}
+
+function listExecutableTools(executor: ToolExecutor): ToolDefinition[] {
+  if (executor.get) {
+    return executor
+      .list()
+      .map((summary) => executor.get?.(summary.name))
+      .filter((tool): tool is ToolDefinition => Boolean(tool));
+  }
+  return executor.list() as unknown as ToolDefinition[];
 }
 
 /**

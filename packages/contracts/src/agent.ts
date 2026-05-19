@@ -1,3 +1,6 @@
+import type { ToolDefinition } from './tool.js';
+import type { OutboundArtifact } from './adapter.js';
+
 /**
  * Agent 런타임 계약.
  *
@@ -38,6 +41,7 @@ export type AgentEvent =
   | { type: 'tool_call'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; id: string; name: string; result: unknown; isError: boolean }
   | { type: 'text'; text: string }
+  | { type: 'artifact'; artifact: OutboundArtifact }
   | { type: 'thinking'; content: string }
   | { type: 'progress'; message: string; agent?: string }
   | { type: 'done'; content: string; toolCalls: ToolCallSummary[] }
@@ -162,6 +166,12 @@ export interface ToolExecutor {
 
   /** 사용 가능한 도구 목록 */
   list(): ToolDefinitionSummary[];
+
+  /** 실제 도구 정의 조회. Middleware/decorators that need execute() can use this. */
+  get?(name: string): ToolDefinition | undefined;
+
+  /** 같은 실행 컨텍스트로 도구 목록을 교체한 executor 반환. */
+  withTools?(tools: ToolDefinition[]): ToolExecutor;
 }
 
 export interface ToolDefinitionSummary {

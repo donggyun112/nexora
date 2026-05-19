@@ -57,6 +57,20 @@ export class CoreToolExecutor implements ToolExecutor {
       }));
   }
 
+  get(name: string): ToolDefinition | undefined {
+    const tool = this.tools.get(name);
+    if (!tool || (tool.checkAvailability && !tool.checkAvailability())) return undefined;
+    return tool;
+  }
+
+  withTools(tools: ToolDefinition[]): CoreToolExecutor {
+    return new CoreToolExecutor({
+      tools,
+      context: this.context,
+      logger: this.logger,
+    });
+  }
+
   /**
    * 단일 도구 실행 (ToolExecutor 인터페이스).
    * 결과는 unknown 반환 — 호출자가 해석.

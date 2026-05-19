@@ -197,6 +197,7 @@ export class LocalRuntimeRouter implements MessageRouter {
 function mapEventToChunk(event: AgentEvent): OutboundChunk | null {
   switch (event.type) {
     case 'text': return { type: 'text', text: event.text };
+    case 'artifact': return { type: 'artifact', artifact: event.artifact };
     case 'tool_call': return { type: 'tool_call', name: event.name, input: event.input };
     case 'tool_result': return { type: 'tool_result', name: event.name, isError: event.isError };
     case 'thinking': return { type: 'thinking', content: event.content };

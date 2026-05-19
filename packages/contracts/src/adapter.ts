@@ -58,11 +58,38 @@ export interface InboundMessage {
 
 export interface OutboundMessage {
   content: string;
+  artifacts?: OutboundArtifact[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface OutboundAttachment {
+  /** Filename shown by the destination platform. */
+  name: string;
+  /** Base64-encoded bytes. */
+  data: string;
+  /** MIME type, e.g. image/png. */
+  mimeType: string;
+}
+
+export interface OutboundArtifact {
+  /** Platform-neutral artifact category. */
+  kind: 'image' | 'file' | 'artifact-set';
+  /** Short title or label to show near the artifact. */
+  title?: string;
+  /** Optional explanatory text. */
+  text?: string;
+  /** Direct image/file URL when available. */
+  url?: string;
+  /** Inline files to upload as native attachments. */
+  attachments?: OutboundAttachment[];
+  /** Nested artifacts for grouped results. */
+  children?: OutboundArtifact[];
   metadata?: Record<string, unknown>;
 }
 
 export type OutboundChunk =
   | { type: 'text'; text: string; agent?: string }
+  | { type: 'artifact'; artifact: OutboundArtifact; agent?: string }
   | { type: 'tool_call'; name: string; input?: unknown; agent?: string }
   | { type: 'tool_result'; name: string; isError: boolean; agent?: string }
   | { type: 'thinking'; content: string; agent?: string }

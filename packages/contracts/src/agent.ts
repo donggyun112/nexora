@@ -200,7 +200,3 @@ export interface AgentLogger {
   error(message: string, data?: unknown): void;
   debug(message: string, data?: unknown): void;
 }
-
-/** ToolDefinition 요약 (LLM에 제공할 도구 스펙) */
-import type { ToolDefinition } from './tool.js';
-export type { ToolDefinition };

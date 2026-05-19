@@ -57,12 +57,6 @@ export class CoreToolExecutor implements ToolExecutor {
       }));
   }
 
-  get(name: string): ToolDefinition | undefined {
-    const tool = this.tools.get(name);
-    if (!tool || (tool.checkAvailability && !tool.checkAvailability())) return undefined;
-    return tool;
-  }
-
   withTools(tools: ToolDefinition[]): CoreToolExecutor {
     return new CoreToolExecutor({
       tools,
@@ -170,7 +164,9 @@ export class CoreToolExecutor implements ToolExecutor {
 
   /** 도구 가져오기 */
   get(name: string): ToolDefinition | undefined {
-    return this.tools.get(name);
+    const tool = this.tools.get(name);
+    if (!tool || (tool.checkAvailability && !tool.checkAvailability())) return undefined;
+    return tool;
   }
 }
 

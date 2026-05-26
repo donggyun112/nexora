@@ -33,6 +33,7 @@ export interface OpenAIProviderOptions {
 const DEFAULT_MODEL = 'gpt-4o';
 const DEFAULT_MAX_TOKENS = 4096;
 
+/** @deprecated Stage-2 진입 시 제거 예정. 신규 코드는 `PiAiProvider`를 사용한다. */
 export class OpenAIProvider implements LLMProvider {
   private readonly client: OpenAI;
   private readonly defaultModel: string;

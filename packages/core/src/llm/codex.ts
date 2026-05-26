@@ -36,6 +36,7 @@ function extractAccountId(token: string): string {
   return accountId;
 }
 
+/** @deprecated Stage-2 진입 시 제거 예정. 신규 코드는 `PiAiProvider({ provider: 'openai-codex', ... })`를 사용한다. */
 export class CodexProvider implements LLMProvider {
   private readonly token: string;
   private readonly accountId: string;

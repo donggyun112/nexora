@@ -130,6 +130,53 @@ describe('toPiContext', () => {
     expect(asst.usage).toBeDefined();
     expect(asst.model).toBe('replay');
   });
+
+  it('reconstructs toolName on tool_result from preceding assistant tool_call', () => {
+    const result = toPiContext([
+      { role: 'user', content: 'search please' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_call', id: 'call_42', name: 'web_search', arguments: { q: 'x' } },
+        ],
+      },
+      {
+        role: 'tool_result',
+        content: [
+          { type: 'tool_result', id: 'call_42', content: 'hits', isError: false },
+        ],
+      },
+    ]);
+    const toolResult = result.messages.find(m => m.role === 'toolResult') as { toolName: string };
+    expect(toolResult.toolName).toBe('web_search');
+  });
+
+  it('falls back to empty toolName when no matching tool_call precedes', () => {
+    const result = toPiContext([
+      {
+        role: 'tool_result',
+        content: [
+          { type: 'tool_result', id: 'orphan', content: 'x', isError: false },
+        ],
+      },
+    ]);
+    const toolResult = result.messages[0] as { toolName: string };
+    expect(toolResult.toolName).toBe('');
+  });
+
+  it('uses caller-provided api/provider for assistant replay shape', () => {
+    const result = toPiContext(
+      [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'reply' },
+      ],
+      undefined,
+      { api: 'anthropic-messages', provider: 'anthropic' },
+    );
+    const asst = result.messages[1] as { api: string; provider: string };
+    expect(asst.api).toBe('anthropic-messages');
+    expect(asst.provider).toBe('anthropic');
+  });
 });
 
 describe('toPiOptions', () => {
@@ -145,11 +192,6 @@ describe('toPiOptions', () => {
     expect(r.signal).toBe(ac.signal);
     expect(r.maxTokens).toBe(100);
     expect(r.temperature).toBe(0.4);
-  });
-
-  it('forwards tool definitions verbatim', () => {
-    const tools = [{ name: 'x', description: 'd', parameters: { type: 'object' } }];
-    expect(toPiOptions({ tools }).tools).toEqual(tools);
   });
 
   it('returns empty object for undefined input', () => {

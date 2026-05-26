@@ -52,7 +52,10 @@ export class PiAiProvider implements LLMProvider {
   }
 
   private buildContext(messages: LLMMessage[], options?: LLMOptions): Record<string, unknown> {
-    const mapped = toPiContext(messages, options);
+    const mapped = toPiContext(messages, options, {
+      api: this.model.api as string,
+      provider: this.model.provider as string,
+    });
     const ctx: Record<string, unknown> = {
       systemPrompt: mapped.systemPrompt,
       messages: mapped.messages,

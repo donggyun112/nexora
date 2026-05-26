@@ -37,9 +37,17 @@ export interface MappedContext {
 type UserContent = string | (TextContent | ImageContent)[];
 type AssistantContent = (TextContent | ThinkingContent | ToolCall)[];
 
-export function toPiContext(messages: LLMMessage[], options?: LLMOptions): MappedContext {
+export function toPiContext(
+  messages: LLMMessage[],
+  options?: LLMOptions,
+  replayShape?: { api: string; provider: string },
+): MappedContext {
   let systemPrompt = options?.systemPrompt;
   const piMessages: Message[] = [];
+  const toolNames = new Map<string, string>(); // toolCallId → toolName
+
+  const replayApi = replayShape?.api ?? 'openai-completions';
+  const replayProvider = replayShape?.provider ?? 'openai';
 
   for (const msg of messages) {
     if (msg.role === 'system') {
@@ -59,13 +67,21 @@ export function toPiContext(messages: LLMMessage[], options?: LLMOptions): Mappe
     }
 
     if (msg.role === 'assistant') {
+      // Record any tool calls so we can resolve toolName on subsequent tool_result.
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_call') {
+            toolNames.set(block.id, block.name);
+          }
+        }
+      }
       // History replay: AssistantMessage requires api/provider/model/usage/stopReason/timestamp.
       // pi-ai stores these for round-tripping; for replayed history we provide sentinels.
       piMessages.push({
         role: 'assistant',
         content: toPiAssistantContent(msg.content),
-        api: 'openai-completions',
-        provider: 'openai',
+        api: replayApi,
+        provider: replayProvider,
         model: 'replay',
         stopReason: 'stop',
         usage: {
@@ -88,7 +104,7 @@ export function toPiContext(messages: LLMMessage[], options?: LLMOptions): Mappe
         piMessages.push({
           role: 'toolResult',
           toolCallId: block.id,
-          toolName: '',
+          toolName: toolNames.get(block.id) ?? '',
           content: [{ type: 'text', text: block.content }],
           isError: block.isError ?? false,
           timestamp: Date.now(),
@@ -139,14 +155,12 @@ export function toPiOptions(options: LLMOptions | undefined): {
   reasoning?: 'minimal' | 'low' | 'medium' | 'high';
   maxTokens?: number;
   temperature?: number;
-  tools?: { name: string; description: string; parameters: unknown }[];
 } {
   if (!options) return {};
   const out: ReturnType<typeof toPiOptions> = {};
   if (options.signal) out.signal = options.signal;
   if (options.maxTokens !== undefined) out.maxTokens = options.maxTokens;
   if (options.temperature !== undefined) out.temperature = options.temperature;
-  if (options.tools) out.tools = options.tools;
   if (options.thinkingLevel && options.thinkingLevel !== 'off') {
     out.reasoning = options.thinkingLevel as 'minimal' | 'low' | 'medium' | 'high';
   }

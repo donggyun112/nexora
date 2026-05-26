@@ -157,7 +157,34 @@ export function fromPiChunk(
   event: AssistantMessageEvent,
   state: { toolNames: Map<string, string> },
 ): LLMChunk | undefined {
-  throw new Error('not implemented');
+  switch (event.type) {
+    case 'text_delta':
+      return { type: 'text_delta', delta: event.delta };
+    case 'thinking_delta':
+      return { type: 'thinking_delta', delta: event.delta };
+    case 'toolcall_start': {
+      const block = event.partial.content[event.contentIndex];
+      if (!block || block.type !== 'toolCall') return undefined;
+      state.toolNames.set(String(event.contentIndex), block.id);
+      return { type: 'tool_call_start', id: block.id, name: block.name };
+    }
+    case 'toolcall_delta': {
+      const idFromState = state.toolNames.get(String(event.contentIndex));
+      const block = event.partial.content[event.contentIndex];
+      const id = idFromState
+        ?? (block && block.type === 'toolCall' ? block.id : '');
+      return { type: 'tool_call_delta', id, delta: event.delta };
+    }
+    case 'done': {
+      const text = event.message.content
+        .filter(b => b.type === 'text')
+        .map(b => (b as { type: 'text'; text: string }).text)
+        .join('');
+      return { type: 'done', content: text, stopReason: piToStopReason(event.message.stopReason) };
+    }
+    default:
+      return undefined;
+  }
 }
 
 function piToStopReason(reason: string): string {

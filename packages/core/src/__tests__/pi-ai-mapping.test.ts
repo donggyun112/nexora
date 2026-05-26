@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { toPiContext, toPiOptions, fromPiAssistantMessage } from '../llm/pi-ai/mapping.js';
-import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { toPiContext, toPiOptions, fromPiAssistantMessage, fromPiChunk } from '../llm/pi-ai/mapping.js';
+import type { AssistantMessage, AssistantMessageEvent } from '@earendil-works/pi-ai';
 
 describe('toPiContext', () => {
   it('extracts system message from messages array into systemPrompt', () => {
@@ -223,5 +223,87 @@ describe('fromPiAssistantMessage', () => {
       stopReason: 'aborted',
     }));
     expect(r.stopReason).toBe('aborted');
+  });
+});
+
+describe('fromPiChunk', () => {
+  const newState = () => ({ toolNames: new Map<string, string>() });
+  const stubPartial = (over: Partial<AssistantMessage> = {}): AssistantMessage => ({
+    role: 'assistant',
+    content: [],
+    api: 'openai-completions',
+    provider: 'openai',
+    model: 'm',
+    stopReason: 'stop',
+    usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+    timestamp: 0,
+    ...over,
+  } as never);
+
+  it('maps text_delta to text_delta', () => {
+    const r = fromPiChunk(
+      { type: 'text_delta', delta: 'hi', contentIndex: 0, partial: stubPartial() } as AssistantMessageEvent,
+      newState(),
+    );
+    expect(r).toEqual({ type: 'text_delta', delta: 'hi' });
+  });
+
+  it('maps thinking_delta to thinking_delta', () => {
+    const r = fromPiChunk(
+      { type: 'thinking_delta', delta: '...', contentIndex: 0, partial: stubPartial() } as AssistantMessageEvent,
+      newState(),
+    );
+    expect(r).toEqual({ type: 'thinking_delta', delta: '...' });
+  });
+
+  it('maps toolcall_start by reading id+name from partial.content[contentIndex] and remembers id', () => {
+    const state = newState();
+    const partial = stubPartial({
+      content: [{ type: 'toolCall', id: 't1', name: 'search', arguments: {} }],
+    });
+    const r = fromPiChunk(
+      { type: 'toolcall_start', contentIndex: 0, partial } as AssistantMessageEvent,
+      state,
+    );
+    expect(r).toEqual({ type: 'tool_call_start', id: 't1', name: 'search' });
+    expect(state.toolNames.get('0')).toBe('t1');
+  });
+
+  it('maps toolcall_delta to tool_call_delta resolving id from state by contentIndex', () => {
+    const state = newState();
+    state.toolNames.set('0', 't1');
+    const partial = stubPartial({
+      content: [{ type: 'toolCall', id: 't1', name: 'search', arguments: {} }],
+    });
+    const r = fromPiChunk(
+      { type: 'toolcall_delta', delta: '{"q":', contentIndex: 0, partial } as AssistantMessageEvent,
+      state,
+    );
+    expect(r).toEqual({ type: 'tool_call_delta', id: 't1', delta: '{"q":' });
+  });
+
+  it('maps done event to done chunk with text-joined content and remapped stopReason', () => {
+    const r = fromPiChunk(
+      {
+        type: 'done',
+        reason: 'stop',
+        message: stubPartial({
+          content: [{ type: 'text', text: 'final' }],
+          stopReason: 'stop',
+        }),
+      } as AssistantMessageEvent,
+      newState(),
+    );
+    expect(r).toEqual({ type: 'done', content: 'final', stopReason: 'end_turn' });
+  });
+
+  it('returns undefined for events that have no Nexora equivalent', () => {
+    const p = stubPartial();
+    expect(fromPiChunk({ type: 'start', partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
+    expect(fromPiChunk({ type: 'text_start', contentIndex: 0, partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
+    expect(fromPiChunk({ type: 'text_end', contentIndex: 0, content: 'x', partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
+    expect(fromPiChunk({ type: 'thinking_start', contentIndex: 0, partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
+    expect(fromPiChunk({ type: 'thinking_end', contentIndex: 0, content: 'x', partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
+    expect(fromPiChunk({ type: 'toolcall_end', contentIndex: 0, toolCall: { type: 'toolCall', id: 't1', name: 's', arguments: {} }, partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
   });
 });

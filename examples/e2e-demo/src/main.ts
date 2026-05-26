@@ -8,7 +8,7 @@
 
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider } from '@nexora/contracts';
-import { AnthropicProvider, OpenAIProvider, CodexProvider, FallbackLLMProvider, createProvider, AgentRunner, CoreToolExecutor } from '@nexora/core';
+import { AnthropicProvider, OpenAIProvider, CodexProvider, FallbackLLMProvider, createProvider, PiAiProvider, AgentRunner, CoreToolExecutor } from '@nexora/core';
 import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@nexora/conversation';
 import { MeetingManager, createMeetingTools, createReadTool, createGrepTool, createWebSearchTool, createBraveBackend } from '@nexora/tools';
 import { createReactArchitecture } from '@nexora/architectures';
@@ -170,6 +170,12 @@ function readCodexToken(): string | undefined {
 }
 
 function createLLM(): LLMProvider {
+  if (process.env.LLM_BACKEND === 'pi-ai') {
+    const provider = process.env.PI_PROVIDER ?? 'anthropic';
+    const model = process.env.PI_MODEL ?? 'claude-haiku-4-5-20251001';
+    console.log(`[LLM] pi-ai → ${provider}/${model}`);
+    return new PiAiProvider({ provider, model });
+  }
   // Priority: Codex (OpenAI) OAuth → Anthropic OAuth → API keys → mock
   const codexToken = readCodexToken();
   if (codexToken) {

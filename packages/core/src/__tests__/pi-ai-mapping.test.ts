@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { toPiContext } from '../llm/pi-ai/mapping.js';
+import { toPiContext, toPiOptions, fromPiAssistantMessage } from '../llm/pi-ai/mapping.js';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
 
 describe('toPiContext', () => {
   it('extracts system message from messages array into systemPrompt', () => {
@@ -128,5 +129,99 @@ describe('toPiContext', () => {
     expect(asst.stopReason).toBe('stop');
     expect(asst.usage).toBeDefined();
     expect(asst.model).toBe('replay');
+  });
+});
+
+describe('toPiOptions', () => {
+  it('maps thinkingLevel to reasoning, dropping "off"', () => {
+    expect(toPiOptions({ thinkingLevel: 'high' }).reasoning).toBe('high');
+    expect(toPiOptions({ thinkingLevel: 'off' }).reasoning).toBeUndefined();
+    expect(toPiOptions(undefined).reasoning).toBeUndefined();
+  });
+
+  it('forwards signal, maxTokens, temperature', () => {
+    const ac = new AbortController();
+    const r = toPiOptions({ signal: ac.signal, maxTokens: 100, temperature: 0.4 });
+    expect(r.signal).toBe(ac.signal);
+    expect(r.maxTokens).toBe(100);
+    expect(r.temperature).toBe(0.4);
+  });
+
+  it('forwards tool definitions verbatim', () => {
+    const tools = [{ name: 'x', description: 'd', parameters: { type: 'object' } }];
+    expect(toPiOptions({ tools }).tools).toEqual(tools);
+  });
+
+  it('returns empty object for undefined input', () => {
+    expect(toPiOptions(undefined)).toEqual({});
+  });
+});
+
+describe('fromPiAssistantMessage', () => {
+  // Helper that constructs the bare minimum AssistantMessage shape pi-ai requires.
+  // The Usage type may have additional cost fields — we use `as never` casts to
+  // sidestep strict typing for test fixtures.
+  const makeMsg = (over: {
+    content?: AssistantMessage['content'];
+    stopReason?: AssistantMessage['stopReason'];
+    usage?: Partial<AssistantMessage['usage']>;
+  }): AssistantMessage => ({
+    role: 'assistant',
+    content: over.content ?? [],
+    stopReason: over.stopReason ?? 'stop',
+    usage: {
+      input: 10, output: 5,
+      cost: { input: 0, output: 0, total: 0 },
+      ...over.usage,
+    },
+    api: 'openai-completions',
+    provider: 'openai',
+    model: 'test-model',
+    timestamp: 0,
+  } as never);
+
+  it('extracts text content', () => {
+    const r = fromPiAssistantMessage(makeMsg({
+      content: [{ type: 'text', text: 'hello' }],
+    }));
+    expect(r.content).toBe('hello');
+    expect(r.stopReason).toBe('end_turn');
+    expect(r.usage).toEqual({ promptTokens: 10, completionTokens: 5, cachedTokens: 0 });
+  });
+
+  it('extracts tool calls and maps stopReason toolUse to tool_use', () => {
+    const r = fromPiAssistantMessage(makeMsg({
+      content: [
+        { type: 'text', text: 'using tool' },
+        { type: 'toolCall', id: 'c1', name: 'search', arguments: { q: 'x' } },
+      ],
+      stopReason: 'toolUse',
+    }));
+    expect(r.toolCalls).toEqual([{ id: 'c1', name: 'search', arguments: { q: 'x' } }]);
+    expect(r.stopReason).toBe('tool_use');
+  });
+
+  it('reports cacheRead usage when available', () => {
+    const r = fromPiAssistantMessage(makeMsg({
+      usage: {
+        input: 10, output: 5,
+        cost: { input: 0, output: 0, total: 0, cacheRead: 100 },
+      } as never,
+    }));
+    expect(r.usage?.cachedTokens).toBe(100);
+  });
+
+  it('omits toolCalls when none present', () => {
+    const r = fromPiAssistantMessage(makeMsg({
+      content: [{ type: 'text', text: 'just text' }],
+    }));
+    expect(r.toolCalls).toBeUndefined();
+  });
+
+  it('preserves "aborted" stopReason verbatim', () => {
+    const r = fromPiAssistantMessage(makeMsg({
+      stopReason: 'aborted',
+    }));
+    expect(r.stopReason).toBe('aborted');
   });
 });

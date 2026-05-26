@@ -141,7 +141,16 @@ export function toPiOptions(options: LLMOptions | undefined): {
   temperature?: number;
   tools?: { name: string; description: string; parameters: unknown }[];
 } {
-  throw new Error('not implemented');
+  if (!options) return {};
+  const out: ReturnType<typeof toPiOptions> = {};
+  if (options.signal) out.signal = options.signal;
+  if (options.maxTokens !== undefined) out.maxTokens = options.maxTokens;
+  if (options.temperature !== undefined) out.temperature = options.temperature;
+  if (options.tools) out.tools = options.tools;
+  if (options.thinkingLevel && options.thinkingLevel !== 'off') {
+    out.reasoning = options.thinkingLevel as 'minimal' | 'low' | 'medium' | 'high';
+  }
+  return out;
 }
 
 export function fromPiChunk(
@@ -151,6 +160,36 @@ export function fromPiChunk(
   throw new Error('not implemented');
 }
 
+function piToStopReason(reason: string): string {
+  if (reason === 'toolUse') return 'tool_use';
+  if (reason === 'stop') return 'end_turn';
+  if (reason === 'aborted') return 'aborted';
+  return reason;
+}
+
 export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
-  throw new Error('not implemented');
+  const textParts: string[] = [];
+  const toolCalls: { id: string; name: string; arguments: unknown }[] = [];
+
+  for (const block of msg.content) {
+    if (block.type === 'text') textParts.push(block.text);
+    else if (block.type === 'toolCall') {
+      toolCalls.push({ id: block.id, name: block.name, arguments: block.arguments });
+    }
+  }
+
+  const cost = (msg.usage as { cost?: { cacheRead?: number } }).cost;
+  const usage = {
+    promptTokens: msg.usage.input,
+    completionTokens: msg.usage.output,
+    cachedTokens: cost?.cacheRead ?? 0,
+  };
+
+  return {
+    content: textParts.join(''),
+    model: '',
+    stopReason: piToStopReason(msg.stopReason),
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    usage,
+  };
 }

@@ -11,6 +11,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "^0.75.5",
     "@nexora/adapters": "workspace:*",
     "@nexora/architectures": "workspace:*",
     "@nexora/context": "workspace:*",

@@ -54,6 +54,9 @@ importers:
 
   examples/e2e-demo:
     dependencies:
+      '@earendil-works/pi-ai':
+        specifier: ^0.75.5
+        version: 0.75.5(ws@8.21.0)(zod@4.4.3)
       '@nexora/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters

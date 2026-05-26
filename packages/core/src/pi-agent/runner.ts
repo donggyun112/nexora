@@ -68,7 +68,9 @@ export class PiAgentRunner implements AgentRuntime {
       if (r) { waitResolve = null; r(); }
     };
 
-    const unsubscribe = agent.subscribe(async (piEvent: never) => {
+    // pi-agent-core's subscribe signature uses its own event union that doesn't
+    // overlap with @nexora/contracts AgentEvent. Cast through unknown to bridge.
+    const unsubscribe = (agent.subscribe as unknown as (cb: (piEvent: never) => Promise<void>) => () => void)(async (piEvent: never) => {
       for (const nexEvent of fromPiEvent(piEvent)) {
         queue.push(nexEvent);
       }

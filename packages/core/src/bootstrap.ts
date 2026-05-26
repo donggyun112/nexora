@@ -49,8 +49,31 @@ export interface AgentBootstrapOptions {
    * context so it can build a ToolContext from `context.runtime.workdir`,
    * apply `context.limits` to the runner, and filter tools against
    * `context.tools`.
+   *
+   * Either `createRuntime` or `runtimeFactory` must be provided.
+   * `runtimeFactory` takes precedence when both are present.
    */
-  createRuntime: (args: {
+  createRuntime?: (args: {
+    context: AgentContext;
+    envelope: MessageEnvelope;
+  }) => AgentRuntime | Promise<AgentRuntime>;
+
+  /**
+   * Feature-flag alternative to `createRuntime`. When set, this factory is
+   * called instead of `createRuntime`, enabling callers to swap in a
+   * `PiAgentRunner` (or any other `AgentRuntime`) without touching the
+   * bootstrap wiring.
+   *
+   * ```ts
+   * // Use PiAgentRunner when NEXORA_PI_AGENT=1
+   * runtimeFactory: ({ context }) =>
+   *   new PiAgentRunner({ model, systemPrompt: context.systemPrompt, ... })
+   * ```
+   *
+   * The `context` and `envelope` values are identical to those provided by
+   * `createRuntime`, so migration is a one-line swap.
+   */
+  runtimeFactory?: (args: {
     context: AgentContext;
     envelope: MessageEnvelope;
   }) => AgentRuntime | Promise<AgentRuntime>;
@@ -123,7 +146,6 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
     contextLoader,
     transport,
     registry,
-    createRuntime,
     toAgentInput,
     resultTopicFor,
     buildResultPayload,
@@ -131,6 +153,14 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
     tenantId: scopedTenantId,
   } = options;
   const logger = options.logger ?? NOOP_LOGGER;
+
+  // runtimeFactory takes precedence; fall back to createRuntime (legacy).
+  const createRuntime = options.runtimeFactory ?? options.createRuntime;
+  if (!createRuntime) {
+    throw new Error(
+      'bootstrapAgent: either `createRuntime` or `runtimeFactory` must be provided.',
+    );
+  }
 
   // #6 PHILOSOPHY AS CONSTRAINTS: lint the AgentCard on every bootstrap.
   // This catches misconfigured agents (bad topic names, missing schemas,
@@ -224,7 +254,7 @@ async function handleMessage(args: {
   card: AgentCard;
   contextLoader: ContextLoader;
   transport: EventTransport;
-  createRuntime: AgentBootstrapOptions['createRuntime'];
+  createRuntime: NonNullable<AgentBootstrapOptions['createRuntime']>;
   toAgentInput: AgentBootstrapOptions['toAgentInput'];
   resultTopicFor?: AgentBootstrapOptions['resultTopicFor'];
   buildResultPayload?: AgentBootstrapOptions['buildResultPayload'];

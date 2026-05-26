@@ -18,7 +18,7 @@ export interface ScaffoldOptions {
   /** 출력 디렉토리 (기본 cwd/agents/{name}) */
   outDir?: string;
   /** 사용할 아키텍처 (기본 react) */
-  architecture?: 'react' | 'deep-research' | 'plan-execute' | 'loop';
+  architecture?: 'react';
   /** 사용할 도구 목록 (기본 ['read', 'grep']) */
   tools?: string[];
   /** 강제 덮어쓰기 (기본 false) */

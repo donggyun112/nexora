@@ -90,7 +90,7 @@ function reply(content: string): LLMResponse {
 
 // ─── 3. Infrastructure ──────────────────────────────────────────────────
 
-import { AnthropicProvider, FallbackLLMProvider, createProvider } from '@nexora/core';
+import { PiAiProvider, FallbackLLMProvider } from '@nexora/core';
 
 function createLLM(): LLMProvider {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -100,7 +100,7 @@ function createLLM(): LLMProvider {
     console.log('[LLM] Using Anthropic (claude-haiku-4-5)');
     return new FallbackLLMProvider({
       providers: [
-        { name: 'anthropic', provider: new AnthropicProvider({ apiKey: anthropicKey, defaultModel: 'claude-haiku-4-5-20251001' }) },
+        { name: 'anthropic', provider: new PiAiProvider({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001', apiKey: anthropicKey }) },
         { name: 'mock', provider: new SmartMockLLM() },
       ],
       onFallback: (from, to, reason) => console.log(`[LLM] ${from} → ${to}: ${reason}`),
@@ -108,7 +108,7 @@ function createLLM(): LLMProvider {
   }
   if (openrouterKey) {
     console.log('[LLM] Using OpenRouter');
-    return createProvider('openrouter', { apiKey: openrouterKey });
+    return new PiAiProvider({ provider: 'openrouter', model: 'anthropic/claude-sonnet-4', apiKey: openrouterKey });
   }
   console.log('[LLM] No API key — using mock LLM');
   return new SmartMockLLM();

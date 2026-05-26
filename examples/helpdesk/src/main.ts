@@ -30,7 +30,7 @@ import {
   AgentRunner,
   CoreToolExecutor,
   bootstrapAgent,
-  AnthropicProvider,
+  PiAiProvider,
 } from '@nexora/core';
 import { createReactArchitecture } from '@nexora/architectures';
 import {
@@ -71,9 +71,10 @@ const contextLoader = new CoreContextLoader({
   workdirBase: process.cwd(),
 });
 
-const llm = new AnthropicProvider({
+const llm = new PiAiProvider({
+  provider: 'anthropic',
+  model: 'claude-haiku-4-5-20251001',
   apiKey: process.env.ANTHROPIC_API_KEY,
-  defaultModel: 'claude-sonnet-4-5',
 });
 
 // ── 3. Bootstrap the agent ─────────────────────────────────────────────────

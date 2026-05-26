@@ -8,7 +8,7 @@
 
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider } from '@nexora/contracts';
-import { AnthropicProvider, OpenAIProvider, CodexProvider, FallbackLLMProvider, createProvider, PiAiProvider, PiAgentRunner, AgentRunner, CoreToolExecutor } from '@nexora/core';
+import { FallbackLLMProvider, PiAiProvider, PiAgentRunner, AgentRunner, CoreToolExecutor } from '@nexora/core';
 import { getModel } from '@earendil-works/pi-ai';
 import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@nexora/conversation';
 import { MeetingManager, createMeetingTools, createReadTool, createGrepTool, createWebSearchTool, createBraveBackend } from '@nexora/tools';
@@ -184,7 +184,7 @@ function createLLM(): LLMProvider {
     console.log(`[LLM] Codex (ChatGPT OAuth) → ${model}`);
     return new FallbackLLMProvider({
       providers: [
-        { name: 'codex', provider: new CodexProvider({ accessToken: codexToken, defaultModel: model }) },
+        { name: 'codex', provider: new PiAiProvider({ provider: 'openai-codex', model, apiKey: codexToken }) },
         { name: 'mock', provider: new SmartMockLLM() },
       ],
       onFallback: (f, t, r) => console.log(`[LLM] ${f} → ${t}: ${r}`),
@@ -197,7 +197,7 @@ function createLLM(): LLMProvider {
     console.log('[LLM] Anthropic', auth ? '(OAuth)' : '(API key)');
     return new FallbackLLMProvider({
       providers: [
-        { name: 'anthropic', provider: new AnthropicProvider({ apiKey: key, authToken: auth, defaultModel: 'claude-haiku-4-5-20251001' }) },
+        { name: 'anthropic', provider: new PiAiProvider({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001', apiKey: auth ?? key }) },
         { name: 'mock', provider: new SmartMockLLM() },
       ],
       onFallback: (f, t, r) => console.log(`[LLM] ${f} → ${t}: ${r}`),

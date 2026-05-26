@@ -12,7 +12,7 @@
  */
 
 import { ConversationRoom, TurnManager } from '@nexora/conversation';
-import { AnthropicProvider, CoreToolExecutor, InMemoryBudgetTracker } from '@nexora/core';
+import { PiAiProvider, CoreToolExecutor, InMemoryBudgetTracker } from '@nexora/core';
 import { createReadTool, createGrepTool } from '@nexora/tools';
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
@@ -32,9 +32,10 @@ const assistantCard = defineAgent({
 
 // ── Infrastructure ─────────────────────────────────────────────────────────
 
-const llm = new AnthropicProvider({
+const llm = new PiAiProvider({
+  provider: 'anthropic',
+  model: 'claude-haiku-4-5-20251001',
   apiKey: process.env.ANTHROPIC_API_KEY,
-  defaultModel: 'claude-sonnet-4-5',
 });
 
 // Budget: $5/day per assistant (tracks cost but isn't wired to LLM calls in this example)

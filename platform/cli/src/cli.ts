@@ -67,8 +67,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const arch = (typeof args.flags.arch === 'string' ? args.flags.arch : 'react') as
-      'react' | 'deep-research' | 'plan-execute' | 'loop';
+    const arch = (typeof args.flags.arch === 'string' ? args.flags.arch : 'react') as 'react';
 
     const toolsStr = typeof args.flags.tools === 'string' ? args.flags.tools : 'read,grep';
     const tools = toolsStr.split(',').map(s => s.trim()).filter(Boolean);

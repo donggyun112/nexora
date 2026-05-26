@@ -2,14 +2,12 @@
  * Nexora AgentMiddleware[] → pi-agent-core AgentLoopConfig hooks.
  *
  * 매핑:
- *   beforeToolCall  → AgentLoopConfig.beforeToolCall (1:1)
- *   afterToolCall   → AgentLoopConfig.afterToolCall  (1:1)
- *   beforeExecution → PiAgentRunner.execute() 진입 시 manual
- *   afterExecution  → PiAgentRunner.execute() finally에서 manual
- *   onSessionStart/End → PiAgentRunner 진입/종료에서 manual
- *   beforeLLMCall   → 누락 (pi에 직접 대응 훅 없음)
- *   beforePromptBuild → transformContext로 흡수 (단, systemPrompt는 변경 불가)
- *   onCompact/onBudgetExceeded → 미구현 (Stage 3에서)
+ *   beforeToolCall / afterToolCall — 1:1 to pi hooks
+ *   beforeExecution / onSessionStart — manual at execute() entry
+ *   afterExecution / onSessionEnd — manual at execute() finally
+ *   beforeLLMCall / afterLLMCall / beforePromptBuild / onCompact / onBudgetExceeded — dropped
+ *
+ * 실행 순서: 일반 미들웨어 후크는 등록 순. after* 후크는 역순 (스택 패턴).
  */
 
 import type { AgentInput, AgentEvent } from '@nexora/contracts';
@@ -31,5 +29,75 @@ export interface BridgedConfig {
 export function middlewaresToAgentLoopConfig(
   middlewares: AgentMiddleware[],
 ): BridgedConfig {
-  throw new Error('not implemented');
+  const hasBeforeToolCall = middlewares.some(m => m.beforeToolCall);
+  const hasAfterToolCall = middlewares.some(m => m.afterToolCall);
+
+  const hooks: BridgedConfig['hooks'] = {};
+
+  if (hasBeforeToolCall) {
+    hooks.beforeToolCall = async (ctx) => {
+      for (const m of middlewares) {
+        if (m.beforeToolCall) {
+          await m.beforeToolCall({
+            toolName: ctx.toolCall.name,
+            callId: ctx.toolCall.id,
+            input: ctx.args,
+            tool: undefined as never,
+          });
+        }
+      }
+      return undefined;
+    };
+  }
+
+  if (hasAfterToolCall) {
+    hooks.afterToolCall = async (ctx) => {
+      for (let i = middlewares.length - 1; i >= 0; i--) {
+        const m = middlewares[i];
+        if (m.afterToolCall) {
+          const firstText = ctx.result.content.find(c => c.type === 'text');
+          await m.afterToolCall({
+            toolName: ctx.toolCall.name,
+            callId: ctx.toolCall.id,
+            input: ctx.args,
+            result: firstText
+              ? { type: 'text', text: (firstText as { text: string }).text }
+              : { type: 'text', text: '' },
+            isError: ctx.isError,
+          });
+        }
+      }
+      return undefined;
+    };
+  }
+
+  return {
+    hooks,
+    async runBeforeExecution(input) {
+      for (const m of middlewares) {
+        if (m.beforeExecution) {
+          await m.beforeExecution({ input, tools: [], systemPrompt: '' });
+        }
+      }
+      for (const m of middlewares) {
+        if (m.onSessionStart) {
+          await m.onSessionStart({ sessionId: (input as { requesterId?: string }).requesterId ?? 'session' });
+        }
+      }
+    },
+    async runAfterExecution(input, events, finalContent, error) {
+      for (let i = middlewares.length - 1; i >= 0; i--) {
+        const m = middlewares[i];
+        if (m.afterExecution) {
+          await m.afterExecution({ input, events, finalContent, error });
+        }
+      }
+      for (let i = middlewares.length - 1; i >= 0; i--) {
+        const m = middlewares[i];
+        if (m.onSessionEnd) {
+          await m.onSessionEnd({ sessionId: (input as { requesterId?: string }).requesterId ?? 'session' });
+        }
+      }
+    },
+  };
 }

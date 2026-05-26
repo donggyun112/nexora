@@ -155,6 +155,11 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
   const logger = options.logger ?? NOOP_LOGGER;
 
   // runtimeFactory takes precedence; fall back to createRuntime (legacy).
+  if (options.runtimeFactory && options.createRuntime) {
+    logger.warn(
+      '[bootstrap] Both runtimeFactory and createRuntime provided — createRuntime is ignored.',
+    );
+  }
   const createRuntime = options.runtimeFactory ?? options.createRuntime;
   if (!createRuntime) {
     throw new Error(

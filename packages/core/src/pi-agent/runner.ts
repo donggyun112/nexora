@@ -32,9 +32,17 @@ export interface PiAgentRunnerOptions {
   getApiKey?: (provider: string) => string | undefined | Promise<string | undefined>;
 }
 
+/** Per-execute context shared between execute() and abort(). */
+interface ExecCtx {
+  setDone: () => void;
+  wake: () => void;
+  aborted: boolean;
+}
+
 export class PiAgentRunner implements AgentRuntime {
   private readonly options: PiAgentRunnerOptions;
   private currentAgent?: { abort: () => void };
+  private currentExec?: ExecCtx;
 
   constructor(options: PiAgentRunnerOptions) {
     this.options = options;
@@ -42,7 +50,8 @@ export class PiAgentRunner implements AgentRuntime {
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
     const middlewares = this.options.middlewares ?? [];
-    const bridge = middlewaresToAgentLoopConfig(middlewares);
+    const toolsByName = new Map(this.options.tools.map(t => [t.name, t]));
+    const bridge = middlewaresToAgentLoopConfig(middlewares, name => toolsByName.get(name));
 
     const agent = new Agent({
       initialState: {
@@ -67,24 +76,30 @@ export class PiAgentRunner implements AgentRuntime {
       const r = waitResolve;
       if (r) { waitResolve = null; r(); }
     };
+    const setDone = () => { done = true; wake(); };
+
+    const execCtx: ExecCtx = { setDone, wake, aborted: false };
+    this.currentExec = execCtx;
 
     // pi-agent-core's subscribe signature uses its own event union that doesn't
     // overlap with @nexora/contracts AgentEvent. Cast through unknown to bridge.
     const unsubscribe = (agent.subscribe as unknown as (cb: (piEvent: never) => Promise<void>) => () => void)(async (piEvent: never) => {
+      // Drop events that arrive after abort to avoid polluting the queue.
+      if (execCtx.aborted) return;
       for (const nexEvent of fromPiEvent(piEvent)) {
         queue.push(nexEvent);
       }
       wake();
       const pe = piEvent as { type: string };
       if (pe.type === 'agent_end') {
-        done = true;
-        wake();
+        setDone();
       }
     });
 
     const collectedEvents: AgentEvent[] = [];
     let finalContent = '';
     let executionError: Error | undefined;
+    let doneEmitted = false;
 
     try {
       await bridge.runBeforeExecution(input);
@@ -95,8 +110,7 @@ export class PiAgentRunner implements AgentRuntime {
       // Fire-and-forget — events arrive via subscribe.
       agent.prompt(messages as never).catch((err: unknown) => {
         executionError = err instanceof Error ? err : new Error(String(err));
-        done = true;
-        wake();
+        setDone();
       });
 
       while (!done || queue.length > 0) {
@@ -106,11 +120,20 @@ export class PiAgentRunner implements AgentRuntime {
         }
         const ev = queue.shift()!;
         collectedEvents.push(ev);
-        if (ev.type === 'done') finalContent = (ev as { type: 'done'; content: string }).content;
+        if (ev.type === 'done') {
+          finalContent = (ev as { type: 'done'; content: string }).content;
+          doneEmitted = true;
+        }
         yield ev;
       }
 
-      if (executionError) {
+      // Yield abort error if abort() was called before a normal done was emitted.
+      if (execCtx.aborted && !doneEmitted) {
+        const abortEvent: AgentEvent = { type: 'error', message: 'aborted' };
+        collectedEvents.push(abortEvent);
+        yield abortEvent;
+      } else if (executionError && !doneEmitted) {
+        // Only emit error if we haven't already successfully completed.
         const errEvent: AgentEvent = { type: 'error', message: executionError.message };
         collectedEvents.push(errEvent);
         yield errEvent;
@@ -118,6 +141,7 @@ export class PiAgentRunner implements AgentRuntime {
     } finally {
       unsubscribe();
       this.currentAgent = undefined;
+      this.currentExec = undefined;
       try {
         await bridge.runAfterExecution(input, collectedEvents, finalContent, executionError);
       } catch {
@@ -127,6 +151,11 @@ export class PiAgentRunner implements AgentRuntime {
   }
 
   abort(): void {
+    const exec = this.currentExec;
+    if (exec) {
+      exec.aborted = true;
+      exec.setDone();
+    }
     this.currentAgent?.abort();
   }
 }

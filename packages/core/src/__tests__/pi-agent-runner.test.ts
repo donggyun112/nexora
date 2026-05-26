@@ -165,4 +165,69 @@ describe('PiAgentRunner', () => {
     // Restore.
     (Agent as never as { prototype: { prompt: unknown } }).prototype.prompt = originalPrompt;
   });
+
+  it('abort() unblocks waiting consumer and yields error event', { timeout: 2000 }, async () => {
+    // Script only agent_start — simulates a runaway LLM call that never ends.
+    (Agent as never as { scripted: ScriptedEvent[] }).scripted = [
+      { type: 'agent_start' },
+    ];
+
+    const runner = new PiAgentRunner({
+      model: fakeModel, tools: [], toolExecutor: fakeExecutor, systemPrompt: 'sys',
+    });
+    const gen = runner.execute({ prompt: 'q' });
+
+    // Pull first event to start execution — drains agent_start which yields nothing.
+    // The consumer will then block waiting for more events.
+    const firstPull = gen.next();
+    // Abort after a short delay to unblock the waiting consumer.
+    setTimeout(() => runner.abort(), 50);
+
+    const events: import('@nexora/contracts').AgentEvent[] = [];
+    // Collect the first pulled result if it has a value.
+    const first = await firstPull;
+    if (!first.done && first.value) events.push(first.value);
+
+    for await (const e of gen) events.push(e);
+    expect(events).toContainEqual({ type: 'error', message: 'aborted' });
+  });
+
+  it('does not yield error event after done when prompt rejects late', async () => {
+    // Simulate agent_end firing before prompt() promise rejects.
+    (Agent as never as { scripted: ScriptedEvent[] }).scripted = [
+      {
+        type: 'agent_end',
+        messages: [
+          { role: 'user', content: 'q', timestamp: 0 },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'answer' }],
+            stopReason: 'stop',
+            api: 'openai-completions', provider: 'openai', model: 'm',
+            usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+            timestamp: 0,
+          },
+        ],
+      },
+    ];
+
+    // Override prompt to also reject after emitting events.
+    const originalPrompt = (Agent as never as { prototype: { prompt: unknown } }).prototype.prompt;
+    (Agent as never as { prototype: { prompt: unknown } }).prototype.prompt = async function (this: any, input: any) {
+      await originalPrompt.call(this, input);
+      throw new Error('late rejection');
+    };
+
+    const runner = new PiAgentRunner({
+      model: fakeModel, tools: [], toolExecutor: fakeExecutor, systemPrompt: 'sys',
+    });
+    const events: import('@nexora/contracts').AgentEvent[] = [];
+    for await (const e of runner.execute({ prompt: 'q' })) events.push(e);
+
+    expect(events).toContainEqual(expect.objectContaining({ type: 'done', content: 'answer' }));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'error' }));
+
+    // Restore.
+    (Agent as never as { prototype: { prompt: unknown } }).prototype.prompt = originalPrompt;
+  });
 });

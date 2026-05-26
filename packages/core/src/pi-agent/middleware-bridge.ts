@@ -10,7 +10,7 @@
  * 실행 순서: 일반 미들웨어 후크는 등록 순. after* 후크는 역순 (스택 패턴).
  */
 
-import type { AgentInput, AgentEvent } from '@nexora/contracts';
+import type { AgentInput, AgentEvent, ToolDefinition } from '@nexora/contracts';
 import type { AgentMiddleware } from '../middleware.js';
 import type { AgentLoopConfig } from '@earendil-works/pi-agent-core';
 
@@ -28,6 +28,7 @@ export interface BridgedConfig {
 
 export function middlewaresToAgentLoopConfig(
   middlewares: AgentMiddleware[],
+  toolsLookup?: (name: string) => ToolDefinition | undefined,
 ): BridgedConfig {
   const hasBeforeToolCall = middlewares.some(m => m.beforeToolCall);
   const hasAfterToolCall = middlewares.some(m => m.afterToolCall);
@@ -36,13 +37,19 @@ export function middlewaresToAgentLoopConfig(
 
   if (hasBeforeToolCall) {
     hooks.beforeToolCall = async (ctx) => {
+      const tool: ToolDefinition = toolsLookup?.(ctx.toolCall.name) ?? {
+        name: ctx.toolCall.name,
+        description: '',
+        parameters: {},
+        execute: async () => ({ type: 'text' as const, text: '' }),
+      };
       for (const m of middlewares) {
         if (m.beforeToolCall) {
           await m.beforeToolCall({
             toolName: ctx.toolCall.name,
             callId: ctx.toolCall.id,
             input: ctx.args,
-            tool: undefined as never,
+            tool: tool as never,
           });
         }
       }

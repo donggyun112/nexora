@@ -1,12 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import { middlewaresToAgentLoopConfig } from '../pi-agent/middleware-bridge.js';
 import type { AgentMiddleware } from '../middleware.js';
+import type { ToolDefinition } from '@nexora/contracts';
+
+const fakeTool: ToolDefinition = {
+  name: 'search',
+  description: 'searches things',
+  parameters: { q: { type: 'string' } },
+  execute: async () => 'result',
+};
 
 describe('middlewaresToAgentLoopConfig', () => {
   it('forwards beforeToolCall to pi hook with translated context', async () => {
     const beforeToolCall = vi.fn();
     const mw: AgentMiddleware = { name: 't', beforeToolCall };
-    const out = middlewaresToAgentLoopConfig([mw]);
+    const out = middlewaresToAgentLoopConfig([mw], () => fakeTool);
 
     expect(out.hooks.beforeToolCall).toBeDefined();
     await out.hooks.beforeToolCall!({
@@ -20,6 +28,45 @@ describe('middlewaresToAgentLoopConfig', () => {
       toolName: 'search',
       callId: 'c1',
       input: { q: 'x' },
+      tool: fakeTool,
+    }));
+  });
+
+  it('populates ctx.tool from toolsLookup when provided', async () => {
+    const beforeToolCall = vi.fn();
+    const mw: AgentMiddleware = { name: 't', beforeToolCall };
+    const lookup = vi.fn((_name: string) => fakeTool);
+    const out = middlewaresToAgentLoopConfig([mw], lookup);
+
+    await out.hooks.beforeToolCall!({
+      assistantMessage: {} as never,
+      toolCall: { type: 'toolCall', id: 'c2', name: 'search', arguments: {} } as never,
+      args: {},
+      context: {} as never,
+    });
+
+    expect(lookup).toHaveBeenCalledWith('search');
+    expect(beforeToolCall).toHaveBeenCalledWith(expect.objectContaining({
+      tool: fakeTool,
+    }));
+  });
+
+  it('falls back to a minimal stub when no toolsLookup is provided', async () => {
+    const beforeToolCall = vi.fn();
+    const mw: AgentMiddleware = { name: 't', beforeToolCall };
+    // No toolsLookup — should not crash; stub is provided.
+    const out = middlewaresToAgentLoopConfig([mw]);
+
+    await out.hooks.beforeToolCall!({
+      assistantMessage: {} as never,
+      toolCall: { type: 'toolCall', id: 'c3', name: 'unknown-tool', arguments: {} } as never,
+      args: {},
+      context: {} as never,
+    });
+
+    expect(beforeToolCall).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'unknown-tool',
+      tool: expect.objectContaining({ name: 'unknown-tool', description: '' }),
     }));
   });
 

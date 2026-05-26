@@ -32,6 +32,7 @@ function readEnvKey(key: string): string | undefined {
   return typeof process !== 'undefined' ? process.env[key] : undefined;
 }
 
+/** @deprecated Stage-2 진입 시 제거 예정. 신규 코드는 `PiAiProvider`를 사용한다. */
 export class AnthropicProvider implements LLMProvider {
   private readonly client: Anthropic;
   private readonly defaultModel: string;

@@ -17,3 +17,6 @@ export type { FallbackLLMProviderOptions, FallbackProviderEntry, ErrorClass } fr
 
 export { CodexProvider } from './codex.js';
 export type { CodexProviderOptions } from './codex.js';
+
+export { PiAiProvider } from './pi-ai/index.js';
+export type { PiAiProviderOptions } from './pi-ai/index.js';

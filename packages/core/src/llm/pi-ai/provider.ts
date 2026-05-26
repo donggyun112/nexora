@@ -7,6 +7,7 @@
  */
 
 import { stream as piStream, complete as piComplete, getModel } from '@earendil-works/pi-ai';
+import type { KnownProvider } from '@earendil-works/pi-ai';
 import type {
   LLMProvider, LLMMessage, LLMOptions, LLMChunk, LLMResponse,
 } from '@nexora/contracts';
@@ -35,7 +36,7 @@ export class PiAiProvider implements LLMProvider {
   private readonly cacheRetention?: 'short' | 'long' | 'none';
 
   constructor(options: PiAiProviderOptions) {
-    this.model = getModel(options.provider, options.model);
+    this.model = getModel(options.provider as KnownProvider, options.model as never);
     this.modelId = options.model;
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId;

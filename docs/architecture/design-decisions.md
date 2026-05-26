@@ -24,7 +24,7 @@ nexora/
 │   │   ├── interfaces/     ← ToolDefinition
 │   │   ├── builtin/        ← 자체 도구
 │   │   └── mcp/            ← MCP client/server 브릿지
-│   ├── architectures/      ← 사고 패턴 (ReAct, DeepResearch, PlanExecute)
+│   ├── architectures/      ← 사고 패턴 (ReAct)
 │   ├── context/            ← 멀티테넌트 컨텍스트 주입
 │   ├── transport/          ← topic 기반 pub/sub (이벤트 중심)
 │   ├── store/              ← 영속화 인터페이스
@@ -55,7 +55,7 @@ nexora/
 - [x] System prompt 조합 구조 → context 패키지
 - [x] 스킬/지식 시스템 → store + context
 - [ ] Discord 진입점 → adapters/discord (새로 구현)
-- [x] deep-research 파이프라인 → architectures 패키지
+- [ ] deep-research 파이프라인 → 외부 커스텀 아키텍처로 구현 가능
 
 ### Claude Code에서 차용
 - [x] Tool 레지스트리 (assemble → filter → merge) → tools 패키지
@@ -87,7 +87,7 @@ nexora/
 - [x] 무상태 Runner → core 런타임
 - [x] 이벤트가 SOT → transport MessageEnvelope
 - [x] 서비스 추상화 (Interface 기반) → store 인터페이스
-- [x] 멀티에이전트 타입 (Loop/Parallel/Sequential) → architectures
+- [x] 멀티에이전트 타입 (Loop/Parallel/Sequential) → transport + orchestrator (워크플로우로 구현)
 
 ### Super-Memory에서 차용
 - [ ] 연관 회상 (2-hop 그래프) → 향후 store 확장

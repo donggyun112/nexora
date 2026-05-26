@@ -67,7 +67,12 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const arch = (typeof args.flags.arch === 'string' ? args.flags.arch : 'react') as 'react';
+    const archRaw = typeof args.flags.arch === 'string' ? args.flags.arch : 'react';
+    if (archRaw !== 'react') {
+      console.error(`Error: unsupported architecture "${archRaw}". Only "react" is supported.`);
+      process.exit(1);
+    }
+    const arch = archRaw as 'react';
 
     const toolsStr = typeof args.flags.tools === 'string' ? args.flags.tools : 'read,grep';
     const tools = toolsStr.split(',').map(s => s.trim()).filter(Boolean);
@@ -213,7 +218,7 @@ Usage:
   nexora import <file.tar.gz> [--force]  Unpack a shared bundle
 
 Create options:
-  --arch <name>      Architecture (react, deep-research, plan-execute, loop). Default: react
+  --arch <name>      Architecture (react). Default: react
   --tools a,b,c      Comma-separated tool names. Default: read,grep
   --force            Overwrite existing directory
 

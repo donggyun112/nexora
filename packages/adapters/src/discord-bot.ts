@@ -6,11 +6,9 @@
  *
  * This is the "it just works" layer on top of DiscordAdapter + GatewayRouter.
  *
- * ```typescript
- * const team = await createAgentTeam({ agents: [...], llm });
- * const bot = await startDiscordBot({ team, client });
- * // Done. @mention routes to specific agent, unmentioned → group chat.
- * ```
+ * `team` is supplied by the caller — wire transport / registry / contextLoader
+ * yourself (see examples/ for the canonical pattern) and pass the resulting
+ * object here.
  */
 
 import type {
@@ -23,7 +21,7 @@ import type {
 import { DiscordAdapter, type DiscordClientLike } from './discord.js';
 
 export interface DiscordAgentBotOptions {
-  /** The agent team (from createAgentTeam). Provides cards, transport, registry. */
+  /** The agent team. Provides cards, transport, registry, and llm. */
   team: {
     readonly cards: ReadonlyArray<{
       name: string;

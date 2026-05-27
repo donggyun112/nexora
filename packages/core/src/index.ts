@@ -78,8 +78,6 @@ export type { BudgetMiddlewareOptions } from './budget-middleware.js';
 export { InMemoryExtensionRegistry, loadExtensions, unloadExtensions } from './extension-loader.js';
 export type { ExtensionLoaderOptions, ExtensionManifest } from './extension-loader.js';
 
-export { createAgentTeam } from './team.js';
-export type { AgentTeamOptions, AgentTeam } from './team.js';
 
 export {
   ExecutionTracker,

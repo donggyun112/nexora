@@ -31,16 +31,42 @@ export interface PiAiProviderOptions {
 export class PiAiProvider implements LLMProvider {
   private readonly model: ReturnType<typeof getModel>;
   private readonly modelId: string;
+  private readonly providerName: string;
   private readonly apiKey?: string;
   private readonly sessionId?: string;
   private readonly cacheRetention?: 'short' | 'long' | 'none';
+  // Cache per-call model resolutions to avoid repeated getModel calls for the same override.
+  private readonly modelCache = new Map<string, ReturnType<typeof getModel>>();
 
   constructor(options: PiAiProviderOptions) {
-    this.model = getModel(options.provider as KnownProvider, options.model as never);
+    this.providerName = options.provider;
+    const initial = getModel(options.provider as KnownProvider, options.model as never);
+    if (!initial) {
+      throw new Error(`pi-ai: unknown model "${options.model}" for provider "${options.provider}"`);
+    }
+    this.model = initial;
     this.modelId = options.model;
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId;
     this.cacheRetention = options.cacheRetention;
+    this.modelCache.set(options.model, this.model);
+  }
+
+  private resolveModel(override?: string): { model: ReturnType<typeof getModel>; id: string } {
+    if (!override || override === this.modelId) {
+      return { model: this.model, id: this.modelId };
+    }
+    let cached = this.modelCache.get(override);
+    if (!cached) {
+      // pi-ai 0.75.5 getModel returns undefined for unknown ids rather than throwing.
+      // Surface this as a clear error here rather than letting it fail deep in pi-ai.
+      cached = getModel(this.providerName as KnownProvider, override as never);
+      if (!cached) {
+        throw new Error(`pi-ai: unknown model "${override}" for provider "${this.providerName}"`);
+      }
+      this.modelCache.set(override, cached);
+    }
+    return { model: cached, id: override };
   }
 
   private buildOpts(options?: LLMOptions): Record<string, unknown> {
@@ -69,7 +95,8 @@ export class PiAiProvider implements LLMProvider {
   async *stream(messages: LLMMessage[], options?: LLMOptions): AsyncGenerator<LLMChunk> {
     const ctx = this.buildContext(messages, options);
     const state = { toolNames: new Map<string, string>() };
-    const events = piStream(this.model, ctx as never, this.buildOpts(options) as never);
+    const resolved = this.resolveModel(options?.model);
+    const events = piStream(resolved.model, ctx as never, this.buildOpts(options) as never);
     for await (const event of events) {
       const chunk = fromPiChunk(event, state);
       if (chunk) yield chunk;
@@ -78,8 +105,9 @@ export class PiAiProvider implements LLMProvider {
 
   async complete(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse> {
     const ctx = this.buildContext(messages, options);
-    const result = await piComplete(this.model, ctx as never, this.buildOpts(options) as never);
+    const resolved = this.resolveModel(options?.model);
+    const result = await piComplete(resolved.model, ctx as never, this.buildOpts(options) as never);
     const mapped = fromPiAssistantMessage(result);
-    return { ...mapped, model: this.modelId };
+    return { ...mapped, model: resolved.id };
   }
 }

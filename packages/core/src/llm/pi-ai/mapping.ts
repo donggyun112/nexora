@@ -196,6 +196,13 @@ export function fromPiChunk(
         .join('');
       return { type: 'done', content: text, stopReason: piToStopReason(event.message.stopReason) };
     }
+    case 'error': {
+      const errEvent = event as unknown as { reason: 'aborted' | 'error'; error: AssistantMessage & { errorMessage?: string } };
+      const message = errEvent.error.errorMessage ?? `pi-ai ${errEvent.reason}`;
+      const err = new Error(message);
+      if (errEvent.reason === 'aborted') err.name = 'AbortError';
+      throw err;
+    }
     default:
       return undefined;
   }
@@ -209,6 +216,16 @@ function piToStopReason(reason: string): string {
 }
 
 export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
+  // pi-ai signals provider failures via assistantMessage with stopReason='error'/'aborted'
+  // and a populated errorMessage. Surface these as Error instead of silently returning
+  // an empty AssistantMessage to the caller.
+  if (msg.stopReason === 'error' || msg.stopReason === 'aborted') {
+    const message = (msg as unknown as { errorMessage?: string }).errorMessage ?? `pi-ai ${msg.stopReason}`;
+    const err = new Error(message);
+    if (msg.stopReason === 'aborted') err.name = 'AbortError';
+    throw err;
+  }
+
   const textParts: string[] = [];
   const toolCalls: { id: string; name: string; arguments: unknown }[] = [];
 

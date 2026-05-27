@@ -260,11 +260,54 @@ describe('fromPiAssistantMessage', () => {
     expect(r.toolCalls).toBeUndefined();
   });
 
-  it('preserves "aborted" stopReason verbatim', () => {
-    const r = fromPiAssistantMessage(makeMsg({
+  it('throws AbortError when stopReason is aborted (pi-ai error path)', () => {
+    expect(() => fromPiAssistantMessage(makeMsg({
       stopReason: 'aborted',
-    }));
-    expect(r.stopReason).toBe('aborted');
+    }))).toThrow();
+    let caught: Error | undefined;
+    try { fromPiAssistantMessage(makeMsg({ stopReason: 'aborted' })); } catch (e) { caught = e as Error; }
+    expect(caught?.name).toBe('AbortError');
+  });
+});
+
+describe('fromPiAssistantMessage error handling', () => {
+  it('throws Error when stopReason is error', () => {
+    expect(() => fromPiAssistantMessage({
+      role: 'assistant',
+      content: [],
+      stopReason: 'error',
+      errorMessage: 'rate limited',
+      usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+      api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+    } as never)).toThrow('rate limited');
+  });
+
+  it('throws AbortError when stopReason is aborted', () => {
+    let caught: Error | undefined;
+    try {
+      fromPiAssistantMessage({
+        role: 'assistant',
+        content: [],
+        stopReason: 'aborted',
+        errorMessage: 'cancelled',
+        usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+        api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+      } as never);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught?.name).toBe('AbortError');
+    expect(caught?.message).toBe('cancelled');
+  });
+
+  it('falls back to generic message when errorMessage is missing', () => {
+    expect(() => fromPiAssistantMessage({
+      role: 'assistant',
+      content: [],
+      stopReason: 'error',
+      usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+      api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+    } as never)).toThrow('pi-ai error');
   });
 });
 
@@ -347,5 +390,42 @@ describe('fromPiChunk', () => {
     expect(fromPiChunk({ type: 'thinking_start', contentIndex: 0, partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
     expect(fromPiChunk({ type: 'thinking_end', contentIndex: 0, content: 'x', partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
     expect(fromPiChunk({ type: 'toolcall_end', contentIndex: 0, toolCall: { type: 'toolCall', id: 't1', name: 's', arguments: {} }, partial: p } as AssistantMessageEvent, newState())).toBeUndefined();
+  });
+});
+
+describe('fromPiChunk error handling', () => {
+  const state = () => ({ toolNames: new Map<string, string>() });
+
+  it('throws Error on pi-ai error event with reason=error', () => {
+    expect(() => fromPiChunk({
+      type: 'error',
+      reason: 'error',
+      error: {
+        role: 'assistant', content: [], stopReason: 'error',
+        errorMessage: 'upstream 500',
+        usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+        api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+      },
+    } as never, state())).toThrow('upstream 500');
+  });
+
+  it('throws AbortError on pi-ai error event with reason=aborted', () => {
+    let caught: Error | undefined;
+    try {
+      fromPiChunk({
+        type: 'error',
+        reason: 'aborted',
+        error: {
+          role: 'assistant', content: [], stopReason: 'aborted',
+          errorMessage: 'user cancelled',
+          usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+          api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+        },
+      } as never, state());
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught?.name).toBe('AbortError');
+    expect(caught?.message).toBe('user cancelled');
   });
 });

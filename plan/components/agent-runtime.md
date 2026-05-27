@@ -26,7 +26,7 @@ type Config struct {
     Budget        BudgetGate              // pre-call enforcer
     Audit         AuditWriter             // 모든 turn 기록
     MaxTurns      int
-    Architecture  ArchKind                // ReAct / PlanExecute / Loop / DeepResearch
+    Architecture  ArchKind                // ReAct (historical: PlanExecute / Loop / DeepResearch)
 }
 
 type Agent struct { ... }
@@ -67,9 +67,9 @@ agentkit/
 ├── run.go                ← Run() 메인 진입
 ├── arch/
 │   ├── react.go          ← ReAct 전략 (think→tool→observe)
-│   ├── plan_execute.go   ← Plan 단계 + 순차 실행
-│   ├── loop.go           ← 단순 반복 (정해진 횟수)
-│   └── deep_research.go  ← Deep Research 다단계
+│   ├── plan_execute.go   ← Plan 단계 + 순차 실행 (historical)
+│   ├── loop.go           ← 단순 반복 (정해진 횟수) (historical)
+│   └── deep_research.go  ← Deep Research 다단계 (historical)
 ├── tools/
 │   ├── registry.go       ← tool 컬렉션 관리
 │   ├── schema.go         ← 함수 시그니처 → JSON Schema (reflection + instructor-go)

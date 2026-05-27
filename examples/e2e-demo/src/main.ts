@@ -8,8 +8,7 @@
 
 import { defineAgent, topic } from '@nexora/contracts';
 import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider } from '@nexora/contracts';
-import { FallbackLLMProvider, PiAiProvider, PiAgentRunner, AgentRunner, CoreToolExecutor } from '@nexora/core';
-import { getModel } from '@earendil-works/pi-ai';
+import { FallbackLLMProvider, PiAiProvider, AgentRunner, CoreToolExecutor } from '@nexora/core';
 import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@nexora/conversation';
 import { MeetingManager, createMeetingTools, createReadTool, createGrepTool, createWebSearchTool, createBraveBackend } from '@nexora/tools';
 import { createReactArchitecture } from '@nexora/architectures';
@@ -300,15 +299,6 @@ if (webSearchTool) console.log('[Tools] Brave Search enabled');
 
 const allCards = [moderator, degrowth, techno_sol, climate_justice, realist, energy_security, financier, labor_advocate, china_perspective, ag_policy, youth_advocate];
 
-const usePiAgent = process.env.LLM_BACKEND === 'pi-agent';
-const piAgentModel = usePiAgent
-  ? getModel(
-      (process.env.PI_PROVIDER ?? 'anthropic') as never,
-      process.env.PI_MODEL ?? 'claude-haiku-4-5-20251001',
-    )
-  : null;
-if (usePiAgent) console.log(`[Runtime] PiAgentRunner → ${process.env.PI_PROVIDER ?? 'anthropic'}/${process.env.PI_MODEL ?? 'claude-haiku-4-5-20251001'}`);
-
 for (const card of allCards) {
   const tools = [
     ...createMeetingTools(meetingMgr, card.name),
@@ -322,18 +312,11 @@ for (const card of allCards) {
     context: { tenantId: 'default', workdir: process.cwd(), secrets: { get: async () => undefined }, logger: { info: () => {}, warn: () => {}, error: () => {} } },
   });
 
-  const runtime = usePiAgent && piAgentModel
-    ? new PiAgentRunner({
-        model: piAgentModel,
-        tools,
-        toolExecutor,
-        systemPrompt: PROMPTS[card.name],
-      })
-    : new AgentRunner({
-        architecture: createReactArchitecture({ systemPrompt: PROMPTS[card.name], maxIterations: 8 }),
-        llm,
-        tools: toolExecutor,
-      });
+  const runtime = new AgentRunner({
+    architecture: createReactArchitecture({ systemPrompt: PROMPTS[card.name], maxIterations: 8 }),
+    llm,
+    tools: toolExecutor,
+  });
 
   const evaluatePrompt = card.name === 'moderator'
     ? `You are moderator — 회의 진행자. 중립적.

@@ -99,6 +99,3 @@ export type {
   ImprovementLoopOptions,
   SafeSkillWriterOptions,
 } from './self-improve.js';
-
-export { PiAgentRunner } from './pi-agent/index.js';
-export type { PiAgentRunnerOptions } from './pi-agent/index.js';

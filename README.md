@@ -84,7 +84,7 @@ Adapter (HTTP / Discord / Slack)
     → Transport (Local / Redis / InMemoryDurable)
       → Bootstrap (subscribe, validate, tenant)
         → ContextLoader (persona + limits + tools)
-          → AgentRunner (ReAct / PlanExecute / DeepResearch)
+          → AgentRunner (ReAct)
             → Tools (read / grep / exec / handraise / delegate)
             → Skills (SKILL.md — self-learning, auto-created)
             → Store (conversation / knowledge / audit → JSON or PostgreSQL)
@@ -105,7 +105,7 @@ Adapter (HTTP / Discord / Slack)
 | `@nexora/store` / `@nexora/store-json` | 6-store abstraction + JSON file implementations |
 | `@nexora/store-pg` | PostgreSQL production store (all 6 stores + session tree + auto-migration) |
 | `@nexora/orchestrator` | WorkflowEngine (checkpoint/resume) + CronScheduler |
-| `@nexora/architectures` | ReAct, Loop, Plan-Execute, Deep Research |
+| `@nexora/architectures` | ReAct |
 | `@nexora/tools` | ToolRegistry + ToolsetRegistry + 9 builtins + MCP bridge + handraise + delegate |
 | `@nexora/skills` | Self-learning skills system (SKILL.md format, SkillLoader, SkillRegistry, SkillCreator) |
 | `@nexora/conversation` | ConversationRoom, TurnManager (turn-taking protocol) |

@@ -15,7 +15,7 @@
 id: support-tier1
 version: 2.1.0
 description: 1차 고객 지원 에이전트
-architecture: react        # react | plan_execute | loop | deep_research
+architecture: react        # react (historical: plan_execute | loop | deep_research)
 model:
   primary: claude-opus-4-7
   fallback: gpt-5.2

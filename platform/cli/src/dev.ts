@@ -20,7 +20,7 @@
  *   --port <n>     HTTP port (default 3000)
  *   --context <dir> Context root (default ./context)
  *   --agents <dir>  Agent directory (default ./agents)
- *   --model <name>  Default LLM model (default claude-haiku-4-5-20251001)
+ *   --model <name>  Default LLM model (default claude-sonnet-4-5)
  */
 
 import fs from 'node:fs';

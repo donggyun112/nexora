@@ -10,6 +10,7 @@ import {
   createEditTool,
   createKnowledgeTool,
   createWebSearchTool,
+  createImageSearchTool,
 } from '../builtin/index.js';
 import type { ToolContext, KnowledgeStore, ToolResult } from '@nexora/contracts';
 
@@ -579,6 +580,36 @@ describe('web_search tool', () => {
 
   it('errors on missing query', async () => {
     const tool = createWebSearchTool({ search: async () => [] });
+    const result = await tool.execute('1', {}, makeContext(tmpDir));
+    expect(result.type).toBe('error');
+  });
+});
+
+describe('image_search tool', () => {
+  it('uses injected backend and returns image reference metadata', async () => {
+    const tool = createImageSearchTool({
+      searchImages: async (query, _options) => [
+        {
+          title: `image for ${query}`,
+          pageUrl: 'https://example.com/page',
+          imageUrl: 'https://example.com/image.png',
+          thumbnailUrl: 'https://example.com/thumb.png',
+          source: 'example.com',
+          width: 1200,
+          height: 800,
+        },
+      ],
+    });
+    const result = await tool.execute('1', { query: 'enterprise ai dashboard' }, makeContext(tmpDir));
+    if (result.type === 'text') {
+      expect(result.text).toContain('image for enterprise ai dashboard');
+      expect(result.text).toContain('https://example.com/image.png');
+      expect(result.text).toContain('https://example.com/thumb.png');
+    }
+  });
+
+  it('errors on missing query', async () => {
+    const tool = createImageSearchTool({ searchImages: async () => [] });
     const result = await tool.execute('1', {}, makeContext(tmpDir));
     expect(result.type).toBe('error');
   });

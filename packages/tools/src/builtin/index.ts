@@ -1,5 +1,5 @@
 /**
- * 10 builtin tools: file I/O + exec + knowledge + web search + handraise + delegate + skill_manage.
+ * Builtin tools: file I/O + exec + knowledge + web/image search + handraise + delegate + skill_manage.
  */
 
 export { createExecTool } from './exec.js';
@@ -17,6 +17,12 @@ export type { SearchBackend, SearchResult } from './web-search.js';
 
 export { createBraveBackend } from './brave-search.js';
 export type { BraveSearchOptions } from './brave-search.js';
+
+export { createImageSearchTool } from './image-search.js';
+export type { ImageSearchBackend, ImageSearchResult } from './image-search.js';
+
+export { createBraveImageBackend } from './brave-image-search.js';
+export type { BraveImageSearchOptions } from './brave-image-search.js';
 
 export { createWebFetchTool } from './web-fetch.js';
 export type { WebFetchToolOptions, WebFetchSummarizer } from './web-fetch.js';

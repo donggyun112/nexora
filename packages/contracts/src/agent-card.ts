@@ -37,7 +37,7 @@ export interface AgentCard {
   /** 사용하는 도구 이름 목록 */
   tools: string[];
 
-  /** 에이전트 아키텍처 (react, deep-research, plan-execute 등) */
+  /** 에이전트 아키텍처 (react, 또는 외부에서 정의한 커스텀 아키텍처) */
   architecture: string;
 
   /** 리소스 제한 */

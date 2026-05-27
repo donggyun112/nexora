@@ -37,11 +37,11 @@ describe('scaffoldAgent', () => {
     const result = await scaffoldAgent({
       name: 'researcher',
       outDir: path.join(tmpDir, 'researcher'),
-      architecture: 'deep-research',
+      architecture: 'react',
       tools: ['read', 'web_search'],
     });
     const config = fs.readFileSync(path.join(result.outDir, 'agent.config.ts'), 'utf-8');
-    expect(config).toContain("architecture: 'deep-research'");
+    expect(config).toContain("architecture: 'react'");
     expect(config).toContain('"web_search"');
   });
 

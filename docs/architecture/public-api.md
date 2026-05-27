@@ -10,7 +10,7 @@ Use these. We won't break them without a major version bump + migration guide.
 | Package | What you import | Why |
 |---|---|---|
 | `@nexora/contracts` | `defineAgent`, `topic`, ID helpers, all interface types | The vocabulary. Everything depends on this. |
-| `@nexora/core` | `AgentRunner`, `bootstrapAgent`, `AnthropicProvider`, `OpenAIProvider`, `CoreToolExecutor`, `createSchemaValidator`, `InMemoryBudgetTracker`, `createBudgetMiddleware` | The engine. Runs agents. |
+| `@nexora/core` | `AgentRunner`, `bootstrapAgent`, `PiAiProvider`, `FallbackLLMProvider`, `CoreToolExecutor`, `createSchemaValidator`, `InMemoryBudgetTracker`, `createBudgetMiddleware` | The engine. Runs agents. |
 | `@nexora/cli` | `nexora create agent`, `nexora dev`, `nexora export/import` | The DX entry point. |
 
 ## Tier 2: Official extensions (stable, but opt-in)
@@ -25,7 +25,7 @@ Use when you need the specific capability. Same stability promise as Tier 1.
 | `@nexora/adapters` | You need HTTP, Discord, Slack, or Paperclip entry points |
 | `@nexora/gateway` | You need request routing or SSE streaming |
 | `@nexora/orchestrator` | You need workflow chains with checkpoint/resume |
-| `@nexora/architectures` | You need ReAct, PlanExecute, DeepResearch, or Loop |
+| `@nexora/architectures` | You need the ReAct architecture (or a base to build a custom one) |
 
 ## Tier 3: Advanced / internal (may change)
 

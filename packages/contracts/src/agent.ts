@@ -71,7 +71,7 @@ export interface AgentRuntime {
  * 기존 runner.ts의 단일 루프를 플러그인 가능한 아키텍처로 분리.
  */
 export interface AgentArchitecture {
-  /** 아키텍처 이름 (react, deep-research, plan-execute 등) */
+  /** 아키텍처 이름 (react, 또는 외부에서 정의한 커스텀 아키텍처) */
   name: string;
 
   /** 메인 실행 루프 */

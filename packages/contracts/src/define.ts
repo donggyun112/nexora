@@ -18,7 +18,7 @@ export interface AgentDefinition {
   /** 에이전트 설명 */
   description: string;
 
-  /** 아키텍처 (react, deep-research, plan-execute, loop) */
+  /** 아키텍처 (react, 또는 외부에서 정의한 커스텀 아키텍처) */
   architecture: string;
 
   /** 사용할 도구 이름 목록 */

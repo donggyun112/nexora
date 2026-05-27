@@ -20,7 +20,7 @@
  *   --port <n>     HTTP port (default 3000)
  *   --context <dir> Context root (default ./context)
  *   --agents <dir>  Agent directory (default ./agents)
- *   --model <name>  Default LLM model (default claude-sonnet-4-5)
+ *   --model <name>  Default LLM model (default claude-haiku-4-5-20251001)
  */
 
 import fs from 'node:fs';
@@ -43,7 +43,7 @@ export async function runDev(options: DevOptions): Promise<void> {
     AgentRunner,
     CoreToolExecutor,
     bootstrapAgent,
-    AnthropicProvider,
+    PiAiProvider,
   } = await import('@nexora/core' as string) as typeof import('@nexora/core');
   const { createReactArchitecture } = await import('@nexora/architectures' as string) as typeof import('@nexora/architectures');
   const { createReadTool, createGrepTool, createWriteTool, createEditTool } = await import('@nexora/tools' as string) as typeof import('@nexora/tools');
@@ -81,9 +81,10 @@ export async function runDev(options: DevOptions): Promise<void> {
     workdirBase: process.cwd(),
   });
 
-  const llm = new AnthropicProvider({
+  const llm = new PiAiProvider({
+    provider: 'anthropic',
+    model: options.model ?? 'claude-haiku-4-5-20251001',
     apiKey: process.env.ANTHROPIC_API_KEY,
-    defaultModel: options.model,
   });
 
   const allTools = [createReadTool(), createGrepTool(), createWriteTool(), createEditTool()];

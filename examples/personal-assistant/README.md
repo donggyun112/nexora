@@ -14,7 +14,7 @@ resume after a crash. None of that is possible with a raw LLM SDK.
 ```typescript
 import { ConversationRoom, TurnManager } from '@nexora/conversation';
 import { DiscordAdapter } from '@nexora/adapters';
-import { AnthropicProvider } from '@nexora/core';
+import { PiAiProvider } from '@nexora/core';
 import { defineAgent, topic } from '@nexora/contracts';
 
 const card = defineAgent({
@@ -26,7 +26,7 @@ const card = defineAgent({
   publishes: [topic('assistant.completed')],
 });
 
-const llm = new AnthropicProvider();
+const llm = new PiAiProvider({ provider: 'anthropic', model: 'claude-sonnet-4-5' });
 const room = new ConversationRoom('discord-session');
 room.join({ card, llm });
 

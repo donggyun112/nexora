@@ -83,7 +83,7 @@ export interface AgentTeam {
  * ```typescript
  * const team = await createAgentTeam({
  *   agents: [coderCard, reviewerCard, pmCard],
- *   llm: new AnthropicProvider({ apiKey: '...' }),
+ *   llm: new PiAiProvider({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001' }),
  *   contextDir: './context',
  * });
  *

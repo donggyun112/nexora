@@ -14,7 +14,7 @@ its `package.json` under `nexora.stability`.
 | `@nexora/store` | Store interface re-export + factory |
 | `@nexora/store-json` | JSON file store implementations |
 | `@nexora/orchestrator` | WorkflowEngine + checkpoint/resume + CronScheduler |
-| `@nexora/architectures` | react, loop, plan-execute, deep-research |
+| `@nexora/architectures` | react |
 | `@nexora/tools` | ToolRegistry + 9 builtin tools + MCP bridge + handraise + delegate |
 | `@nexora/adapters` | HttpAdapter |
 | `@nexora/gateway` | GatewayRouter, LocalRuntimeRouter |

@@ -106,9 +106,8 @@ tools/
 | 이름 | 출처 | 설명 |
 |------|------|------|
 | react | runner.ts 기본 루프 | Thought → Action → Observation |
-| deep-research | deep-research.ts | Plan → Research → Compose → Develop |
-| plan-execute | Google ADK SequentialAgent | Plan → Step-by-step → Replan |
-| loop | Google ADK LoopAgent | 조건 충족까지 반복 |
+
+커스텀 아키텍처는 `AgentArchitecture` 인터페이스를 구현해 외부에서 정의 가능.
 
 **의존성:** @nexora/contracts
 

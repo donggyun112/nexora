@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.75.5",
-    "@earendil-works/pi-agent-core": "^0.75.5",
     "@nexora/contracts": "workspace:*",
     "ajv": "^8.18.0"
   },

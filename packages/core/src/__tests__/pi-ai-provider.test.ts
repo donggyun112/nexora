@@ -89,6 +89,52 @@ describe('PiAiProvider.complete', () => {
   });
 });
 
+describe('PiAiProvider error propagation', () => {
+  beforeEach(() => {
+    vi.mocked(piAi.complete).mockReset();
+    vi.mocked(piAi.stream).mockReset();
+  });
+
+  it('complete() throws when pi-ai returns stopReason error', async () => {
+    vi.mocked(piAi.complete).mockResolvedValueOnce({
+      role: 'assistant', content: [], stopReason: 'error',
+      errorMessage: 'rate limited',
+      usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+      api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+    } as never);
+
+    const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o-mini' });
+    await expect(p.complete([{ role: 'user', content: 'hi' }]))
+      .rejects.toThrow('rate limited');
+  });
+
+  it('stream() propagates pi-ai error event as thrown Error', async () => {
+    async function* fakeEvents() {
+      yield { type: 'text_delta', delta: 'partial', contentIndex: 0, partial: baseAsstMsg({ content: [] }) } as piAi.AssistantMessageEvent;
+      yield {
+        type: 'error', reason: 'error',
+        error: {
+          role: 'assistant', content: [], stopReason: 'error',
+          errorMessage: 'upstream went down',
+          usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+          api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+        },
+      } as never;
+    }
+    vi.mocked(piAi.stream).mockReturnValueOnce(fakeEvents() as never);
+
+    const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o-mini' });
+    const collected: unknown[] = [];
+    let thrown: Error | undefined;
+    try {
+      for await (const c of p.stream([{ role: 'user', content: 'hi' }])) collected.push(c);
+    } catch (e) { thrown = e as Error; }
+
+    expect(thrown?.message).toBe('upstream went down');
+    expect(collected).toContainEqual({ type: 'text_delta', delta: 'partial' });
+  });
+});
+
 describe('PiAiProvider.stream', () => {
   beforeEach(() => { vi.mocked(piAi.stream).mockReset(); });
 

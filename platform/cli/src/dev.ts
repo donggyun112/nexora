@@ -83,7 +83,7 @@ export async function runDev(options: DevOptions): Promise<void> {
 
   const llm = new PiAiProvider({
     provider: 'anthropic',
-    model: options.model ?? 'claude-haiku-4-5-20251001',
+    model: options.model ?? 'claude-sonnet-4-5',
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
 

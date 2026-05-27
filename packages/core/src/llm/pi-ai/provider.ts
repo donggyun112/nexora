@@ -40,7 +40,11 @@ export class PiAiProvider implements LLMProvider {
 
   constructor(options: PiAiProviderOptions) {
     this.providerName = options.provider;
-    this.model = getModel(options.provider as KnownProvider, options.model as never);
+    const initial = getModel(options.provider as KnownProvider, options.model as never);
+    if (!initial) {
+      throw new Error(`pi-ai: unknown model "${options.model}" for provider "${options.provider}"`);
+    }
+    this.model = initial;
     this.modelId = options.model;
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId;
@@ -54,7 +58,12 @@ export class PiAiProvider implements LLMProvider {
     }
     let cached = this.modelCache.get(override);
     if (!cached) {
+      // pi-ai 0.75.5 getModel returns undefined for unknown ids rather than throwing.
+      // Surface this as a clear error here rather than letting it fail deep in pi-ai.
       cached = getModel(this.providerName as KnownProvider, override as never);
+      if (!cached) {
+        throw new Error(`pi-ai: unknown model "${override}" for provider "${this.providerName}"`);
+      }
       this.modelCache.set(override, cached);
     }
     return { model: cached, id: override };

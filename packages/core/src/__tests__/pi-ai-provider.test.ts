@@ -260,4 +260,58 @@ describe('PiAiProvider per-call model override', () => {
     expect(r1.model).toBe('gpt-4o');
     expect(r2.model).toBe('gpt-4o-mini');
   });
+
+  it('stream() also honors per-call model override', async () => {
+    const capturedModels: unknown[] = [];
+    const modelA = { id: 'mockA', api: 'openai-completions', provider: 'openai' } as never;
+    const modelB = { id: 'mockB', api: 'openai-completions', provider: 'openai' } as never;
+    vi.mocked(piAi.getModel).mockImplementation((_p: unknown, name: unknown) => {
+      if (name === 'gpt-4o') return modelA;
+      if (name === 'gpt-4o-mini') return modelB;
+      throw new Error(`unknown ${name}`);
+    });
+    vi.mocked(piAi.stream).mockImplementation((model: unknown) => {
+      capturedModels.push(model);
+      async function* events() {
+        yield { type: 'text_delta', delta: 'ok', contentIndex: 0, partial: {} } as never;
+        yield {
+          type: 'done', reason: 'stop',
+          message: {
+            role: 'assistant', content: [{ type: 'text', text: 'ok' }], stopReason: 'stop',
+            usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+            api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+          },
+        } as never;
+      }
+      return events() as never;
+    });
+
+    const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o' });
+    for await (const _ of p.stream([{ role: 'user', content: 'a' }])) { /* drain */ }
+    for await (const _ of p.stream([{ role: 'user', content: 'b' }], { model: 'gpt-4o-mini' })) { /* drain */ }
+    expect(capturedModels[0]).toBe(modelA);
+    expect(capturedModels[1]).toBe(modelB);
+  });
+
+  it('throws a clear error when constructor model is unknown to pi-ai', () => {
+    vi.mocked(piAi.getModel).mockReturnValueOnce(undefined as never);
+    expect(() => new PiAiProvider({ provider: 'openai', model: 'imaginary-model' }))
+      .toThrow(/unknown model "imaginary-model"/);
+  });
+
+  it('throws a clear error when per-call override model is unknown to pi-ai', async () => {
+    vi.mocked(piAi.getModel).mockImplementation((_p: unknown, name: unknown) => {
+      if (name === 'gpt-4o') return { id: 'gpt-4o', api: 'openai-completions', provider: 'openai' } as never;
+      return undefined as never;
+    });
+    vi.mocked(piAi.complete).mockResolvedValue({
+      role: 'assistant', content: [], stopReason: 'stop',
+      usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+      api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,
+    } as never);
+
+    const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o' });
+    await expect(p.complete([{ role: 'user', content: 'q' }], { model: 'imaginary' }))
+      .rejects.toThrow(/unknown model "imaginary"/);
+  });
 });

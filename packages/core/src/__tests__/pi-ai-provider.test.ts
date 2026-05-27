@@ -187,3 +187,77 @@ describe('PiAiProvider.stream', () => {
     expect(chunks).toContainEqual({ type: 'tool_call_delta', id: 'call_xyz', delta: '{"q":"x"}' });
   });
 });
+
+describe('PiAiProvider per-call model override', () => {
+  beforeEach(() => {
+    vi.mocked(piAi.complete).mockReset();
+    vi.mocked(piAi.getModel).mockReset();
+  });
+
+  it('complete() uses options.model when provided, defaults to constructor model otherwise', async () => {
+    const capturedModels: unknown[] = [];
+    vi.mocked(piAi.complete).mockImplementation(async (model: unknown) => {
+      capturedModels.push(model);
+      return {
+        role: 'assistant', content: [{ type: 'text', text: 'ok' }],
+        stopReason: 'stop',
+        usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+        api: 'openai-completions', provider: 'openai', model: 'mock', timestamp: 0,
+      } as never;
+    });
+
+    const modelA = { id: 'mockA', api: 'openai-completions', provider: 'openai' } as never;
+    const modelB = { id: 'mockB', api: 'openai-completions', provider: 'openai' } as never;
+    vi.mocked(piAi.getModel).mockImplementation((_p: unknown, name: unknown) => {
+      if (name === 'gpt-4o') return modelA;
+      if (name === 'gpt-4o-mini') return modelB;
+      throw new Error(`unknown ${name}`);
+    });
+
+    const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o' });
+    await p.complete([{ role: 'user', content: 'a' }]);
+    await p.complete([{ role: 'user', content: 'b' }], { model: 'gpt-4o-mini' });
+    await p.complete([{ role: 'user', content: 'c' }]);
+
+    expect(capturedModels[0]).toBe(modelA);
+    expect(capturedModels[1]).toBe(modelB);
+    expect(capturedModels[2]).toBe(modelA);
+  });
+
+  it('caches model resolutions across calls', async () => {
+    vi.mocked(piAi.complete).mockResolvedValue({
+      role: 'assistant', content: [{ type: 'text', text: 'ok' }],
+      stopReason: 'stop',
+      usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+      api: 'openai-completions', provider: 'openai', model: 'mock', timestamp: 0,
+    } as never);
+    vi.mocked(piAi.getModel).mockImplementation((_p: unknown, _n: unknown) =>
+      ({ id: 'mock', api: 'openai-completions', provider: 'openai' } as never));
+
+    const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o' });
+    // constructor consumed 1 getModel call. Now do 3 overrides with the same name.
+    await p.complete([{ role: 'user', content: 'a' }], { model: 'gpt-4o-mini' });
+    await p.complete([{ role: 'user', content: 'b' }], { model: 'gpt-4o-mini' });
+    await p.complete([{ role: 'user', content: 'c' }], { model: 'gpt-4o-mini' });
+
+    // 1 for constructor + 1 for the first override (cached after) = 2 total
+    expect(vi.mocked(piAi.getModel)).toHaveBeenCalledTimes(2);
+  });
+
+  it('response.model reflects the override when used', async () => {
+    vi.mocked(piAi.getModel).mockImplementation((_p: unknown, name: unknown) =>
+      ({ id: name, api: 'openai-completions', provider: 'openai' } as never));
+    vi.mocked(piAi.complete).mockResolvedValue({
+      role: 'assistant', content: [{ type: 'text', text: 'hi' }],
+      stopReason: 'stop',
+      usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
+      api: 'openai-completions', provider: 'openai', model: 'mock', timestamp: 0,
+    } as never);
+
+    const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o' });
+    const r1 = await p.complete([{ role: 'user', content: 'q' }]);
+    const r2 = await p.complete([{ role: 'user', content: 'q' }], { model: 'gpt-4o-mini' });
+    expect(r1.model).toBe('gpt-4o');
+    expect(r2.model).toBe('gpt-4o-mini');
+  });
+});

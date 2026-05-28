@@ -130,9 +130,22 @@ export async function runDev(options: DevOptions): Promise<void> {
             idleTimeoutMs: context.limits.maxExecutionMs,
           });
         },
-        toAgentInput: (env) => ({
-          prompt: (env.payload as { prompt?: string }).prompt ?? '',
-        }),
+        toAgentInput: (env) => {
+          const payload = env.payload as {
+            prompt?: string;
+            images?: { data: string; mimeType: string }[];
+            history?: { role: 'user' | 'assistant'; content: string }[];
+          };
+          return {
+            prompt: payload.prompt ?? '',
+            images: payload.images?.map(i => ({
+              type: 'image' as const,
+              data: i.data,
+              mimeType: i.mimeType,
+            })),
+            history: payload.history,
+          };
+        },
       });
 
       runningAgents.push({ name: card.name, shutdown: running.shutdown.bind(running) });

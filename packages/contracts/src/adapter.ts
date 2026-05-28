@@ -5,6 +5,8 @@
  * Discord, Slack, HTTP API 등 어떤 진입점이든 이 인터페이스를 구현.
  */
 
+import type { ChatMessage } from './agent.js';
+
 export interface Adapter {
   /** 어댑터 이름 */
   name: string;
@@ -45,6 +47,9 @@ export interface InboundMessage {
 
   /** 첨부 이미지 */
   images?: { data: string; mimeType: string }[];
+
+  /** 이전 대화 히스토리 (스토어 미사용 시 진입점이 직접 주입) */
+  history?: ChatMessage[];
 
   /** 테넌트 ID (Gateway가 해석해서 주입) */
   tenantId: string;

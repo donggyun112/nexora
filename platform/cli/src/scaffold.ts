@@ -178,8 +178,20 @@ export async function start${camel}(options: Start${camel}Options) {
       });
     },
     toAgentInput: (env) => {
-      const payload = env.payload as { prompt?: string };
-      return { prompt: payload.prompt ?? '' };
+      const payload = env.payload as {
+        prompt?: string;
+        images?: { data: string; mimeType: string }[];
+        history?: { role: 'user' | 'assistant'; content: string }[];
+      };
+      return {
+        prompt: payload.prompt ?? '',
+        images: payload.images?.map(i => ({
+          type: 'image' as const,
+          data: i.data,
+          mimeType: i.mimeType,
+        })),
+        history: payload.history,
+      };
     },
   });
 }

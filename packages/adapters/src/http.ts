@@ -227,6 +227,9 @@ function normalizeInbound(
     images: Array.isArray(body.images)
       ? body.images.filter(isImage)
       : undefined,
+    history: Array.isArray(body.history)
+      ? body.history.filter(isChatMessage)
+      : undefined,
     tenantId,
     conversationId: typeof body.conversationId === 'string' ? body.conversationId : undefined,
   };
@@ -240,6 +243,12 @@ function isImage(x: unknown): x is { data: string; mimeType: string } {
   return !!x && typeof x === 'object'
     && typeof (x as { data?: unknown }).data === 'string'
     && typeof (x as { mimeType?: unknown }).mimeType === 'string';
+}
+
+function isChatMessage(x: unknown): x is { role: 'user' | 'assistant'; content: string } {
+  return !!x && typeof x === 'object'
+    && ((x as { role?: unknown }).role === 'user' || (x as { role?: unknown }).role === 'assistant')
+    && typeof (x as { content?: unknown }).content === 'string';
 }
 
 // ─── Built-in test page ───────────────────────────────────────────────────

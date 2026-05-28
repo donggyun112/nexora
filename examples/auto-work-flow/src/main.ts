@@ -166,11 +166,19 @@ for (const card of [coder, reviewer, pm]) {
           },
         }),
       }),
-    toAgentInput: (env) => ({
-      prompt: typeof env.payload === 'object' && env.payload !== null
-        ? (env.payload as any).prompt ?? (env.payload as any).content ?? JSON.stringify(env.payload)
-        : String(env.payload),
-    }),
+    toAgentInput: (env) => {
+      const p = env.payload as any;
+      const prompt = typeof env.payload === 'object' && env.payload !== null
+        ? p.prompt ?? p.content ?? JSON.stringify(env.payload)
+        : String(env.payload);
+      return {
+        prompt,
+        images: Array.isArray(p?.images)
+          ? p.images.map((i: { data: string; mimeType: string }) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
+          : undefined,
+        history: p?.history,
+      };
+    },
   });
 }
 

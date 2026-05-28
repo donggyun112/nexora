@@ -138,6 +138,7 @@ export class GatewayRouter implements MessageRouter {
       requesterId: message.userId,
       requesterName: message.displayName,
       images: message.images,
+      history: message.history,
       channelId: message.channelId,
     };
   }

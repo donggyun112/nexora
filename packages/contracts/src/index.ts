@@ -68,6 +68,8 @@ export type {
   LLMResponse,
   LLMUsage,
   ToolExecutor,
+  ToolBatchCall,
+  ToolBatchResult,
   ToolDefinitionSummary,
   MemoryProvider,
   AgentLogger,

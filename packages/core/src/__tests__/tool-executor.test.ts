@@ -32,11 +32,17 @@ function makeFailing(): ToolDefinition {
   };
 }
 
-function makeSlow(ms: number): ToolDefinition {
+function makeSlow(
+  ms: number,
+  options: { name?: string; isConcurrencySafe?: boolean } = {},
+): ToolDefinition {
   return {
-    name: 'slow',
+    name: options.name ?? 'slow',
     description: 'Slow tool',
     parameters: { type: 'object', properties: {} },
+    ...(options.isConcurrencySafe === undefined
+      ? {}
+      : { isConcurrencySafe: options.isConcurrencySafe }),
     execute: async (): Promise<ToolResult> => {
       await new Promise(r => setTimeout(r, ms));
       return { type: 'text', text: 'slow done' };
@@ -72,7 +78,30 @@ describe('CoreToolExecutor', () => {
     expect(result).toEqual({ type: 'error', message: 'boom' });
   });
 
-  it('executeBatch runs in parallel and isolates failures', async () => {
+  it('execute does not run unavailable tools even when called by name', async () => {
+    let ran = false;
+    const gated: ToolDefinition = {
+      name: 'gated',
+      description: 'Gated tool',
+      parameters: { type: 'object', properties: {} },
+      checkAvailability: () => false,
+      execute: async () => {
+        ran = true;
+        return { type: 'text', text: 'should not run' };
+      },
+    };
+    const exec = new CoreToolExecutor({ tools: [gated], context: mockContext });
+
+    expect(exec.list()).toEqual([]);
+    expect(exec.get('gated')).toBeUndefined();
+    expect(exec.has('gated')).toBe(false);
+    const result = await exec.execute('gated', 'call-1', {});
+
+    expect(ran).toBe(false);
+    expect(result).toEqual({ type: 'error', message: 'Tool unavailable: gated' });
+  });
+
+  it('executeBatch returns ordered results and isolates failures', async () => {
     const exec = new CoreToolExecutor({
       tools: [makeEcho(), makeFailing(), makeSlow(50)],
       context: mockContext,
@@ -93,6 +122,63 @@ describe('CoreToolExecutor', () => {
     expect(results[0]).toMatchObject({ callId: 'a', isError: false });
     expect(results[1]).toMatchObject({ callId: 'b', isError: true });
     expect(results[2]).toMatchObject({ callId: 'c', isError: false });
+  });
+
+  it('executeBatch runs unsafe tools sequentially by default', async () => {
+    let active = 0;
+    let peak = 0;
+    const tracked = (name: string): ToolDefinition => ({
+      name,
+      description: name,
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise(r => setTimeout(r, 20));
+        active--;
+        return { type: 'text', text: name };
+      },
+    });
+    const exec = new CoreToolExecutor({
+      tools: [tracked('a'), tracked('b')],
+      context: mockContext,
+    });
+
+    await exec.executeBatch([
+      { callId: 'a', name: 'a', input: {} },
+      { callId: 'b', name: 'b', input: {} },
+    ]);
+
+    expect(peak).toBe(1);
+  });
+
+  it('executeBatch parallelizes consecutive concurrency-safe tools', async () => {
+    let active = 0;
+    let peak = 0;
+    const tracked = (name: string): ToolDefinition => ({
+      name,
+      description: name,
+      parameters: { type: 'object', properties: {} },
+      isConcurrencySafe: true,
+      execute: async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise(r => setTimeout(r, 20));
+        active--;
+        return { type: 'text', text: name };
+      },
+    });
+    const exec = new CoreToolExecutor({
+      tools: [tracked('a'), tracked('b')],
+      context: mockContext,
+    });
+
+    await exec.executeBatch([
+      { callId: 'a', name: 'a', input: {} },
+      { callId: 'b', name: 'b', input: {} },
+    ]);
+
+    expect(peak).toBe(2);
   });
 });
 

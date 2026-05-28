@@ -4,7 +4,7 @@
  * 표준 ReAct 패턴:
  *   1. LLM 호출 (system + history + user)
  *   2. 응답에 도구 호출 있으면:
- *      - 모든 도구 병렬 실행
+ *      - executor 정책에 따라 도구 실행
  *      - 결과를 history에 추가
  *      - 다시 LLM 호출
  *   3. 응답에 도구 호출 없으면 종료
@@ -20,6 +20,7 @@ import type {
   LLMMessage,
   LLMContentBlock,
   LLMResponse,
+  ToolBatchResult,
 } from '@nexora/contracts';
 
 export interface ReactOptions {
@@ -130,20 +131,14 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         }
 
         // 도구 병렬 실행 (Promise.all 안에서 yield 불가하므로 결과 모은 후 일괄 emit)
-        const toolResults = await Promise.all(
-          response.toolCalls.map(async (tc) => {
-            const result = await services.tools.execute(tc.name, tc.id, tc.arguments, services.signal);
-            return { tc, result };
-          }),
-        );
+        const toolResults = await executeToolCalls(services, response.toolCalls);
 
         if (services.signal.aborted) return;
 
         // tool_result emit + history에 추가할 블록 생성
         const toolResultBlocks: { type: 'tool_result'; id: string; content: string; isError: boolean }[] = [];
         const toolImageMessages: LLMMessage[] = [];
-        for (const { tc, result } of toolResults) {
-          const isError = isErrorResult(result);
+        for (const { tc, result, isError } of toolResults) {
           yield { type: 'tool_result', id: tc.id, name: tc.name, result, isError };
 
           toolResultBlocks.push({
@@ -187,6 +182,47 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
       };
     },
   };
+}
+
+type ToolCall = NonNullable<LLMResponse['toolCalls']>[number];
+
+async function executeToolCalls(
+  services: RuntimeServices,
+  toolCalls: ToolCall[],
+): Promise<{ tc: ToolCall; result: unknown; isError: boolean }[]> {
+  if (services.tools.executeBatch) {
+    const batchResults = await services.tools.executeBatch(
+      toolCalls.map(tc => ({ callId: tc.id, name: tc.name, input: tc.arguments })),
+      services.signal,
+    );
+    return mergeBatchResults(toolCalls, batchResults);
+  }
+
+  const results: { tc: ToolCall; result: unknown; isError: boolean }[] = [];
+  for (const tc of toolCalls) {
+    if (services.signal.aborted) break;
+    const result = await services.tools.execute(tc.name, tc.id, tc.arguments, services.signal);
+    results.push({ tc, result, isError: isErrorResult(result) });
+  }
+  return results;
+}
+
+function mergeBatchResults(
+  toolCalls: ToolCall[],
+  batchResults: ToolBatchResult[],
+): { tc: ToolCall; result: unknown; isError: boolean }[] {
+  const byId = new Map(batchResults.map(result => [result.callId, result]));
+  return toolCalls.map((tc) => {
+    const result = byId.get(tc.id);
+    if (!result) {
+      return {
+        tc,
+        result: { type: 'error' as const, message: `Missing tool result: ${tc.id}` },
+        isError: true,
+      };
+    }
+    return { tc, result: result.result, isError: result.isError };
+  });
 }
 
 /**

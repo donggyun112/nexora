@@ -82,7 +82,7 @@ describe('ReactArchitecture', () => {
     }
   });
 
-  it('runs multiple parallel tool calls in one round', async () => {
+  it('runs multiple tool calls in one round', async () => {
     const llm = new MockLLMProvider([
       {
         text: '',
@@ -108,6 +108,74 @@ describe('ReactArchitecture', () => {
     const toolResults = events.filter(e => e.type === 'tool_result');
     expect(toolCalls).toHaveLength(2);
     expect(toolResults).toHaveLength(2);
+  });
+
+  it('delegates tool-call batches to the executor policy when available', async () => {
+    const llm = new MockLLMProvider([
+      {
+        text: '',
+        toolCalls: [
+          { id: 't1', name: 'echo', arguments: { msg: 'a' } },
+          { id: 't2', name: 'echo', arguments: { msg: 'b' } },
+        ],
+      },
+      { text: 'done with both' },
+    ]);
+    const services = makeServices(llm, new Map()) as unknown as RuntimeServices;
+    let batchCalled = false;
+    services.tools = {
+      list: () => [{ name: 'echo', description: 'echo', parameters: {} }],
+      execute: async () => {
+        throw new Error('direct execute should not be called');
+      },
+      executeBatch: async (calls) => {
+        batchCalled = true;
+        return calls.map(call => ({
+          callId: call.callId,
+          name: call.name,
+          result: { type: 'text' as const, text: (call.input as { msg: string }).msg },
+          isError: false,
+        }));
+      },
+    };
+
+    const arch = createReactArchitecture();
+    const events = await collect(arch.loop(services, { prompt: 'go' }));
+
+    expect(batchCalled).toBe(true);
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(2);
+  });
+
+  it('runs tool calls sequentially when the executor has no batch policy', async () => {
+    const llm = new MockLLMProvider([
+      {
+        text: '',
+        toolCalls: [
+          { id: 't1', name: 'a', arguments: {} },
+          { id: 't2', name: 'b', arguments: {} },
+        ],
+      },
+      { text: 'done with both' },
+    ]);
+    let active = 0;
+    let peak = 0;
+    const tracked = async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise(r => setTimeout(r, 20));
+      active--;
+      return { type: 'text' as const, text: 'ok' };
+    };
+    const tools = new Map([
+      ['a', tracked],
+      ['b', tracked],
+    ]);
+    const services = makeServices(llm, tools);
+
+    const arch = createReactArchitecture();
+    await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(peak).toBe(1);
   });
 
   it('emits error on LLM throw', async () => {

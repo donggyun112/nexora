@@ -18,6 +18,9 @@ import type {
   ToolExecutor,
   AgentLogger,
   ToolDefinition,
+  ToolResult,
+  LLMMessage,
+  LLMOptions,
 } from '@nexora/contracts';
 import {
   MiddlewarePipeline,
@@ -85,6 +88,7 @@ export class AgentRunner implements AgentRuntime {
     this.activeControllers.add(controller);
 
     const collectedEvents: AgentEvent[] = [];
+    const toolInputs = new Map<string, unknown>();
     let finalContent = '';
     let executionError: Error | undefined;
 
@@ -131,6 +135,7 @@ export class AgentRunner implements AgentRuntime {
         collectedEvents.push(event);
 
         if (event.type === 'tool_call') {
+          toolInputs.set(event.id, event.input);
           const tool = (services.tools as { get?: (name: string) => unknown }).get?.(event.name);
           await this.pipeline.runBeforeToolCall({
             toolName: event.name,
@@ -139,11 +144,13 @@ export class AgentRunner implements AgentRuntime {
             tool: tool as never,
           });
         } else if (event.type === 'tool_result') {
+          const toolInput = toolInputs.get(event.id);
+          toolInputs.delete(event.id);
           await this.pipeline.runAfterToolCall({
             toolName: event.name,
             callId: event.id,
-            input: undefined,
-            result: event.result as { type: 'text'; text: string },
+            input: toolInput,
+            result: event.result as ToolResult,
             isError: event.isError,
           });
         } else if (event.type === 'done') {
@@ -214,16 +221,20 @@ class NullMemory implements MemoryProvider {
 }
 
 /**
- * Wrap an LLMProvider so afterLLMCall middleware fires on every complete() call.
+ * Wrap an LLMProvider so before/after LLM middleware fires on provider calls.
  */
 function wrapLLMWithMiddleware(
   inner: LLMProvider,
   pipeline: MiddlewarePipeline,
 ): LLMProvider {
   return {
-    stream: (messages, options) => inner.stream(messages, options),
+    stream: async function* (messages, options) {
+      const call = await prepareLLMCall(messages, options, pipeline);
+      yield* inner.stream(call.messages, call.options);
+    },
     async complete(messages, options) {
-      const response = await inner.complete(messages, options);
+      const call = await prepareLLMCall(messages, options, pipeline);
+      const response = await inner.complete(call.messages, call.options);
       try {
         await pipeline.runAfterLLMCall({ response, usage: response.usage });
       } catch {
@@ -231,6 +242,25 @@ function wrapLLMWithMiddleware(
       }
       return response;
     },
+  };
+}
+
+async function prepareLLMCall(
+  messages: LLMMessage[],
+  options: LLMOptions | undefined,
+  pipeline: MiddlewarePipeline,
+): Promise<{ messages: LLMMessage[]; options?: LLMOptions }> {
+  const beforeCtx = {
+    messages,
+    systemPrompt: options?.systemPrompt ?? '',
+  };
+  await pipeline.runBeforeLLMCall(beforeCtx);
+  const nextOptions = options || beforeCtx.systemPrompt
+    ? { ...options, systemPrompt: beforeCtx.systemPrompt }
+    : undefined;
+  return {
+    messages: beforeCtx.messages,
+    options: nextOptions,
   };
 }
 
@@ -247,6 +277,10 @@ function wrapToolExecutorWithSignal(inner: ToolExecutor, signal: AbortSignal): T
       return inner.execute(name, callId, input, callerSignal ?? signal);
     },
   };
+  if (inner.executeBatch) {
+    wrapped.executeBatch = (calls, callerSignal) =>
+      inner.executeBatch?.(calls, callerSignal ?? signal) ?? Promise.resolve([]);
+  }
   // Pass-through optional helpers (for middleware that calls .get()).
   const innerWithExtras = inner as ToolExecutor & {
     get?: (name: string) => unknown;

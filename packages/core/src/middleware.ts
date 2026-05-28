@@ -8,7 +8,7 @@
 import type {
   AgentInput,
   AgentEvent,
-  ChatMessage,
+  LLMMessage,
   ToolDefinition,
   ToolResult,
   LLMResponse,
@@ -52,7 +52,7 @@ export interface AfterToolCallContext {
 }
 
 export interface BeforeLLMCallContext {
-  messages: ChatMessage[];
+  messages: LLMMessage[];
   systemPrompt: string;
 }
 

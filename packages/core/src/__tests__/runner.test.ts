@@ -149,6 +149,85 @@ describe('AgentRunner', () => {
     expect(calls).toContain('agent.end');
   });
 
+  it('runs beforeLLMCall and applies message/system prompt mutations', async () => {
+    const llm = new MockLLMProvider([{ text: 'done' }]);
+    const tools = new CoreToolExecutor({ tools: [], context: mockContext });
+    const runner = new AgentRunner({
+      architecture: simpleReact,
+      llm,
+      tools,
+      middlewares: [
+        {
+          name: 'llm-guard',
+          beforeLLMCall(ctx) {
+            ctx.messages = [{ role: 'user', content: 'rewritten prompt' }];
+            ctx.systemPrompt = 'guarded system';
+          },
+        },
+      ],
+    });
+
+    for await (const _ of runner.execute({ prompt: 'original prompt' })) {
+      // drain
+    }
+
+    expect(llm.callLog[0].messages).toEqual([{ role: 'user', content: 'rewritten prompt' }]);
+    expect(llm.callLog[0].options?.systemPrompt).toBe('guarded system');
+  });
+
+  it('passes original tool input to afterToolCall middleware', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'tc-1', name: 'echo', arguments: { msg: 'hi' } }] },
+      { text: 'done' },
+    ]);
+    const tools = new CoreToolExecutor({ tools: [makeEcho()], context: mockContext });
+    const afterInputs: unknown[] = [];
+    const runner = new AgentRunner({
+      architecture: simpleReact,
+      llm,
+      tools,
+      middlewares: [
+        {
+          name: 'capture-after-tool',
+          afterToolCall(ctx) {
+            afterInputs.push(ctx.input);
+          },
+        },
+      ],
+    });
+
+    for await (const _ of runner.execute({ prompt: 'echo hi' })) {
+      // drain
+    }
+
+    expect(afterInputs).toEqual([{ msg: 'hi' }]);
+  });
+
+  it('preserves executeBatch on the signal-wrapped tool executor', async () => {
+    let batchResult: ToolResult | undefined;
+    const batchArch: AgentArchitecture = {
+      name: 'batch-arch',
+      async *loop(services: RuntimeServices, _input: AgentInput): AsyncGenerator<AgentEvent> {
+        const results = await services.tools.executeBatch?.([
+          { callId: 'tc-1', name: 'echo', input: { msg: 'hi' } },
+        ], services.signal);
+        batchResult = results?.[0]?.result;
+        yield { type: 'done', content: 'ok', toolCalls: [] };
+      },
+    };
+    const runner = new AgentRunner({
+      architecture: batchArch,
+      llm: new MockLLMProvider([]),
+      tools: new CoreToolExecutor({ tools: [makeEcho()], context: mockContext }),
+    });
+
+    for await (const _ of runner.execute({ prompt: 'echo hi' })) {
+      // drain
+    }
+
+    expect(batchResult).toEqual({ type: 'text', text: 'echoed: hi' });
+  });
+
   it('applies beforeExecution tool mutations to the executor used by the architecture', async () => {
     const llm = new MockLLMProvider([
       { text: '', toolCalls: [{ id: 'tc-1', name: 'echo', arguments: { msg: 'hi' } }] },

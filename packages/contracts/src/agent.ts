@@ -1,4 +1,4 @@
-import type { ToolDefinition } from './tool.js';
+import type { ToolDefinition, ToolResult } from './tool.js';
 import type { OutboundArtifact } from './adapter.js';
 
 /**
@@ -164,6 +164,13 @@ export interface ToolExecutor {
    */
   execute(name: string, callId: string, input: unknown, signal?: AbortSignal): Promise<unknown>;
 
+  /**
+   * Execute a model-issued batch while preserving executor policy.
+   * Implementations should only parallelize calls that are explicitly safe
+   * for concurrent execution.
+   */
+  executeBatch?(calls: ToolBatchCall[], signal?: AbortSignal): Promise<ToolBatchResult[]>;
+
   /** 사용 가능한 도구 목록 */
   list(): ToolDefinitionSummary[];
 
@@ -172,6 +179,19 @@ export interface ToolExecutor {
 
   /** 같은 실행 컨텍스트로 도구 목록을 교체한 executor 반환. */
   withTools?(tools: ToolDefinition[]): ToolExecutor;
+}
+
+export interface ToolBatchCall {
+  callId: string;
+  name: string;
+  input: unknown;
+}
+
+export interface ToolBatchResult {
+  callId: string;
+  name: string;
+  result: ToolResult;
+  isError: boolean;
 }
 
 export interface ToolDefinitionSummary {

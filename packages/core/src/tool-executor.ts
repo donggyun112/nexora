@@ -49,7 +49,7 @@ export class CoreToolExecutor implements ToolExecutor {
 
   list(): ToolDefinitionSummary[] {
     return Array.from(this.tools.values())
-      .filter(t => !t.checkAvailability || t.checkAvailability())
+      .filter(isAvailable)
       .map(t => ({
         name: t.name,
         description: t.description,
@@ -74,6 +74,9 @@ export class CoreToolExecutor implements ToolExecutor {
     const tool = this.tools.get(name);
     if (!tool) {
       return { type: 'error', message: `Unknown tool: ${name}` } satisfies ToolResult;
+    }
+    if (!isAvailable(tool)) {
+      return { type: 'error', message: `Tool unavailable: ${name}` } satisfies ToolResult;
     }
 
     if (signal?.aborted || this.context.signal?.aborted) {
@@ -118,14 +121,14 @@ export class CoreToolExecutor implements ToolExecutor {
     let i = 0;
     while (i < calls.length) {
       const call = calls[i];
-      const tool = this.tools.get(call.name);
+      const tool = this.get(call.name);
 
       if (tool && resolveBool(tool.isConcurrencySafe, call.input)) {
         // Collect consecutive concurrent calls into one batch
         const batchStart = i;
         while (i < calls.length) {
           const c = calls[i];
-          const t = this.tools.get(c.name);
+          const t = this.get(c.name);
           if (!t || !resolveBool(t.isConcurrencySafe, c.input)) break;
           i++;
         }
@@ -159,13 +162,13 @@ export class CoreToolExecutor implements ToolExecutor {
 
   /** 도구 존재 여부 */
   has(name: string): boolean {
-    return this.tools.has(name);
+    return Boolean(this.get(name));
   }
 
   /** 도구 가져오기 */
   get(name: string): ToolDefinition | undefined {
     const tool = this.tools.get(name);
-    if (!tool || (tool.checkAvailability && !tool.checkAvailability())) return undefined;
+    if (!tool || !isAvailable(tool)) return undefined;
     return tool;
   }
 }
@@ -179,6 +182,14 @@ function resolveBool(
 ): boolean {
   if (field === undefined) return false;
   return typeof field === 'function' ? field(input) : field;
+}
+
+function isAvailable(tool: ToolDefinition): boolean {
+  try {
+    return !tool.checkAvailability || tool.checkAvailability();
+  } catch {
+    return false;
+  }
 }
 
 /**

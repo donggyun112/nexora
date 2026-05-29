@@ -5,7 +5,7 @@
  * AgentCard를 쉽게 구성하도록 도와주는 빌더.
  */
 
-import type { AgentCard, AgentLimits } from './agent-card.js';
+import type { AgentCard, AgentInlineMode, AgentLimits } from './agent-card.js';
 import type { TopicString } from './topic.js';
 
 export interface AgentDefinition {
@@ -39,6 +39,15 @@ export interface AgentDefinition {
   /** 출력 스키마 (JSON Schema) */
   outputSchema?: Record<string, unknown>;
 
+  /** 시스템 프롬프트 인라인 모드. 없으면 인라인하지 않음. */
+  mode?: AgentInlineMode;
+
+  /** mode 로 인라인할 스킬 이름 목록 (확장자 제외) */
+  mainSkill?: string[];
+
+  /** ReAct 최대 반복 수 — architecture 기본값 override */
+  maxIterations?: number;
+
   /** 리소스 제한 */
   limits?: AgentLimits;
 }
@@ -59,6 +68,9 @@ export function defineAgent(def: AgentDefinition): AgentCard {
     outputSchema: def.outputSchema,
     tools: def.tools,
     architecture: def.architecture,
+    mode: def.mode,
+    mainSkill: def.mainSkill,
+    maxIterations: def.maxIterations,
     limits: def.limits,
   };
 }

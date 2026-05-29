@@ -33,6 +33,11 @@ export interface ContextLoaderOptions {
   cache?: boolean;
   /** workdir 베이스 */
   workdirBase?: string;
+  /**
+   * persona 기본 파일 경로를 커스텀 해석한다. 반환 경로가 존재하면 그것을,
+   * 없으면 root/personas/<name>.md 로 폴백 (PersonaLoader 로 전달).
+   */
+  resolvePersonaPath?: (agentName: string, tenantId?: string) => string | null | undefined;
 }
 
 export class CoreContextLoader implements IContextLoader {
@@ -48,7 +53,11 @@ export class CoreContextLoader implements IContextLoader {
   constructor(options: ContextLoaderOptions) {
     this.root = path.resolve(options.root);
     this.cacheEnabled = options.cache ?? true;
-    this.personas = new PersonaLoader({ root: this.root, cache: this.cacheEnabled });
+    this.personas = new PersonaLoader({
+      root: this.root,
+      cache: this.cacheEnabled,
+      resolveDefaultPath: options.resolvePersonaPath,
+    });
     this.skills = new SkillLoader({ root: this.root, cache: this.cacheEnabled });
     this.tenants = new TenantConfigStore({ root: this.root, cache: this.cacheEnabled });
     this.defaultTools = options.defaultTools ?? [];

@@ -22,16 +22,23 @@ export interface PersonaLoaderOptions {
   root: string;
   /** 캐싱 활성화 (기본 true) */
   cache?: boolean;
+  /**
+   * 기본 persona 파일 경로를 커스텀 해석한다. 반환 경로가 실제로 존재하면 그것을,
+   * 없으면 root/personas/<name>.md 컨벤션으로 폴백한다 (점진적 마이그레이션 안전).
+   */
+  resolveDefaultPath?: (agentName: string, tenantId?: string) => string | null | undefined;
 }
 
 export class PersonaLoader {
   private readonly root: string;
   private readonly cacheEnabled: boolean;
+  private readonly resolveDefaultPath?: PersonaLoaderOptions['resolveDefaultPath'];
   private readonly cache = new Map<string, string>();
 
   constructor(options: PersonaLoaderOptions) {
     this.root = path.resolve(options.root);
     this.cacheEnabled = options.cache ?? true;
+    this.resolveDefaultPath = options.resolveDefaultPath;
   }
 
   /**
@@ -46,7 +53,11 @@ export class PersonaLoader {
     const tenantPath = tenantId
       ? path.join(this.root, 'tenants', tenantId, 'personas', `${agentName}.md`)
       : null;
-    const defaultPath = path.join(this.root, 'personas', `${agentName}.md`);
+    const resolved = this.resolveDefaultPath?.(agentName, tenantId);
+    const defaultPath =
+      resolved && fs.existsSync(resolved)
+        ? resolved
+        : path.join(this.root, 'personas', `${agentName}.md`);
 
     let content = DEFAULT_PERSONA;
     if (tenantPath && fs.existsSync(tenantPath)) {

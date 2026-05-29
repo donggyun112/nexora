@@ -9,6 +9,9 @@
 
 import type { TopicString } from './topic.js';
 
+/** 시스템 프롬프트 인라인 모드 — 'workflow'(강제 절차) | 'principles'(판단 기준). */
+export type AgentInlineMode = 'workflow' | 'principles';
+
 export interface AgentCard {
   /** 에이전트 고유 이름 */
   name: string;
@@ -39,6 +42,15 @@ export interface AgentCard {
 
   /** 에이전트 아키텍처 (react, 또는 외부에서 정의한 커스텀 아키텍처) */
   architecture: string;
+
+  /** 시스템 프롬프트 인라인 모드. 없으면 인라인하지 않음 (스킬 메뉴만 노출). */
+  mode?: AgentInlineMode;
+
+  /** mode 로 인라인할 스킬 이름 목록 (skills 디렉터리의 .md, 확장자 제외) */
+  mainSkill?: string[];
+
+  /** ReAct 최대 반복 수 — architecture 기본값 override */
+  maxIterations?: number;
 
   /** 리소스 제한 */
   limits?: AgentLimits;

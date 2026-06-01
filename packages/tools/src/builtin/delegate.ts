@@ -22,8 +22,16 @@ import type {
   AgentInput,
   AgentEvent,
   TopicString,
+  MessageEnvelope,
 } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import {
+  textResult,
+  errorResult,
+  messageId,
+  traceId,
+  spanId,
+  conversationId,
+} from '@nexora/contracts';
 
 // ─── Subagent types (deepagents pattern) ────────────────────────────────
 
@@ -116,6 +124,16 @@ interface DelegateParams {
   capability: string;
   input: unknown;
   timeoutMs?: number;
+  /**
+   * Result-handling mode. See wiki/decisions/2026-06-01-delegation-primitives.md.
+   * - `'sync'` (default, legacy): RPC. Awaits reply within this turn.
+   * - `false`: Fire-and-forget. Publishes a request envelope and returns
+   *   immediately. The caller will NOT receive a result.
+   * - `'async'`: Reserved. Will spawn a thread and route the eventual
+   *   `*.completed/.failed` envelope back to the caller as a new turn.
+   *   Not yet implemented — bootstrap/runner support pending.
+   */
+  waitForResult?: 'sync' | 'async' | false;
 }
 
 const DEFAULT_MAX_DEPTH = 5;
@@ -159,7 +177,13 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         },
         timeoutMs: {
           type: 'number',
-          description: `Max wait time in ms. Default ${DEFAULT_TIMEOUT_MS}.`,
+          description: `Max wait time in ms (sync mode only). Default ${DEFAULT_TIMEOUT_MS}.`,
+        },
+        waitForResult: {
+          description:
+            'Result handling. "sync" (default): wait for reply this turn. ' +
+            'false: fire-and-forget, no result returned. ' +
+            '"async": spawn thread, result arrives in a later turn (not yet implemented).',
         },
       },
       required: ['capability', 'input'],
@@ -209,14 +233,56 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         ? params.timeoutMs
         : defaultTimeoutMs;
 
+      const waitMode: 'sync' | 'async' | false =
+        params.waitForResult === undefined ? 'sync' : params.waitForResult;
+
       ctx.logger.info('delegate', {
         capability: params.capability,
         target: target.name,
         topic: targetTopic,
         depth: nextDepth,
         caller: callerAgentName,
-        timeoutMs,
+        waitMode,
+        timeoutMs: waitMode === 'sync' ? timeoutMs : undefined,
       });
+
+      if (waitMode === 'async') {
+        return errorResult(
+          `delegate({ waitForResult: 'async' }) is not yet implemented. ` +
+          `Pending bootstrap/runner support for ephemeral result subscription. ` +
+          `Use 'sync' (await result) or false (fire-forget) for now. ` +
+          `See wiki/decisions/2026-06-01-delegation-primitives.md.`,
+        );
+      }
+
+      if (waitMode === false) {
+        try {
+          const envelope: MessageEnvelope = {
+            id: messageId(),
+            topic: targetTopic,
+            type: 'request',
+            payload: params.input,
+            metadata: {
+              traceId: traceId(),
+              spanId: spanId(),
+              conversationId: conversationId(),
+              tenantId: ctx.tenantId,
+              sourceInstanceId: callerAgentName,
+              callerAgent: callerAgentName,
+              delegationDepth: nextDepth,
+              timestamp: Date.now(),
+            },
+          };
+          await transport.publish(envelope);
+          return textResult(
+            `Dispatched to "${target.name}" (${params.capability}) — fire-and-forget. ` +
+            `No result will be returned.`,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return errorResult(`fire-forget delegate to "${target.name}" failed: ${msg}`);
+        }
+      }
 
       try {
         const reply = await transport.request(

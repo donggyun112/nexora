@@ -25,3 +25,17 @@ export { SkillRegistry } from './skill-registry.js';
 
 export { SkillCreator } from './skill-creator.js';
 export type { SkillCreatorOptions, CreateSkillInput } from './skill-creator.js';
+
+export {
+  buildSkillMenu,
+  invalidateSkillMenuCache,
+  snapshotSkills,
+} from './skill-menu.js';
+export type {
+  BuildSkillMenuOptions,
+  SkillMenuPreamble,
+  SkillMenuFilter,
+} from './skill-menu.js';
+
+export { postProcessSkillBody } from './skill-body-postprocess.js';
+export type { PostProcessSkillOptions } from './skill-body-postprocess.js';

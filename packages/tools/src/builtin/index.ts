@@ -48,6 +48,9 @@ export type {
 export { createSkillManageTool } from './skill-manage.js';
 export type { SkillManageToolOptions } from './skill-manage.js';
 
+export { createSkillReloadTool } from './skill-reload.js';
+export type { SkillReloadToolOptions } from './skill-reload.js';
+
 export { createTodoTool, TodoStore } from './todo.js';
 export type { TodoItem } from './todo.js';
 

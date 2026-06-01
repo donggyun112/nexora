@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@nexora/contracts": "workspace:*",
+    "@nexora/skills": "workspace:*",
     "@nexora/store": "workspace:*"
   },
   "devDependencies": {

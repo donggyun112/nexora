@@ -379,6 +379,9 @@ importers:
       '@nexora/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@nexora/skills':
+        specifier: workspace:*
+        version: link:../skills
       '@nexora/store':
         specifier: workspace:*
         version: link:../store

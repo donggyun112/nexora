@@ -54,3 +54,9 @@ export type { TodoItem } from './todo.js';
 export { createMeetingTools, MeetingManager } from './meeting.js';
 export type { MeetingSpeakListener } from './meeting.js';
 export type { Meeting, MeetingMessage } from './meeting.js';
+
+export { createPublishTopicTool } from './publish-topic.js';
+export type { PublishTopicToolOptions } from './publish-topic.js';
+
+export { createEphemeralResultListener } from './ephemeral-result-listener.js';
+export type { EphemeralResultListenerOptions } from './ephemeral-result-listener.js';

@@ -193,4 +193,67 @@ describe('delegate tool', () => {
     const r2 = await tool.execute('d-7', { capability: 'x' }, makeCtx());
     expect(r2.type).toBe('error');
   });
+
+  it('fire-forget (waitForResult=false) publishes a request envelope without waiting', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([
+      makeCard('writer', 'write', ['write.requested']),
+    ]);
+    const tool = createDelegateTool({
+      transport,
+      registry,
+      callerAgentName: 'caller-A',
+    });
+
+    let received: MessageEnvelope | undefined;
+    transport.subscribe('write.requested', async (env) => {
+      received = env;
+      // intentionally do not reply — should not block the call below
+    });
+
+    const result = await tool.execute(
+      'd-ff',
+      { capability: 'write', input: { topic: 'x' }, waitForResult: false },
+      makeCtx(),
+    );
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toMatch(/fire-and-forget/i);
+    }
+    expect(received).toBeDefined();
+    expect(received?.metadata.callerAgent).toBe('caller-A');
+  });
+
+  it('async (waitForResult="async") publishes and returns immediately with correlation id', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([
+      makeCard('writer', 'write', ['write.requested']),
+    ]);
+    const tool = createDelegateTool({
+      transport,
+      registry,
+      callerAgentName: 'caller-A',
+    });
+
+    let received: MessageEnvelope | undefined;
+    transport.subscribe('write.requested', async (env) => {
+      received = env;
+    });
+
+    const result = await tool.execute(
+      'd-async',
+      { capability: 'write', input: { topic: 'x' }, waitForResult: 'async' },
+      makeCtx(),
+    );
+
+    expect(result.type).toBe('text');
+    expect(received).toBeDefined();
+    if (result.type === 'text' && received) {
+      expect(result.text).toMatch(/async/i);
+      // The returned text must surface the envelope id so callers can wire an
+      // ephemeral listener with metadata.replyTo === envelope.id.
+      expect(result.text).toContain(received.id);
+    }
+  });
 });

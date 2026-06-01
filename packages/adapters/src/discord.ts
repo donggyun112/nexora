@@ -54,7 +54,7 @@ export interface DiscordMessageLike {
   author: { id: string; username: string; bot: boolean };
   channelId: string;
   guildId: string | null;
-  mentions: { users: Map<string, { id: string; username: string }> };
+  mentions: { users: Map<string, { id: string; username: string; bot?: boolean }> };
   attachments?: { size: number; keys?: () => Iterable<string> };
   reply: (content: DiscordSendPayload) => Promise<unknown>;
   channel: {
@@ -107,6 +107,8 @@ export interface DiscordClientLike {
   user?: { id: string } | null;
 }
 
+export type DiscordBotMessagePolicy = 'none' | 'mentions' | 'all';
+
 export interface DiscordAdapterOptions extends SessionKeyOptions {
   /** Pre-authenticated discord.js Client instance. */
   client: DiscordClientLike;
@@ -150,11 +152,35 @@ export interface DiscordAdapterOptions extends SessionKeyOptions {
   /** When `allowedRoles` is set, also accept DMs (default false). */
   allowDmForRoles?: boolean;
   /**
-   * Channels where the bot replies even without an @mention. By default the
-   * adapter has no @mention gate; this is a hook for callers that DO gate
-   * elsewhere and want to mark certain channels as free-response.
+   * Require @mention of this bot or a configured agent bot in server channels.
+   * DMs always bypass this gate. Default: false, preserving the historical
+   * Nexora behavior of responding to all allowed channel messages.
+   */
+  requireMention?: boolean;
+  /**
+   * Channels where the bot replies even without an @mention when
+   * `requireMention` is enabled. Threads inherit from their parent channel.
+   * Use "*" to allow all channels.
    */
   freeResponseChannels?: ReadonlyArray<string>;
+  /**
+   * If false, a thread where the adapter has already handled a message can keep
+   * the conversation going without repeated @mentions. Default: false.
+   */
+  threadRequireMention?: boolean;
+  /**
+   * Whether messages authored by other bots are processed.
+   * - "none": ignore all bot-authored messages (default)
+   * - "mentions": accept bot messages only when they mention this bot/agent
+   * - "all": accept all bot messages except this client itself
+   */
+  allowBots?: DiscordBotMessagePolicy;
+  /**
+   * Drop messages that explicitly mention another bot but not this bot or a
+   * configured agent bot. This prevents multi-bot cross-talk when mention data
+   * includes `bot: true`. Default: true.
+   */
+  ignoreOtherBotMentions?: boolean;
   /**
    * Optional hook for unauthorized access attempts (admin notification).
    * Receives the rejected message and a short reason string.
@@ -204,7 +230,11 @@ export class DiscordAdapter implements Adapter {
   private readonly allowedUsers: ReadonlySet<string> | null;
   private readonly allowedRoles: ReadonlySet<string> | null;
   private readonly allowDmForRoles: boolean;
+  private readonly requireMention: boolean;
   private readonly freeResponseChannels: ReadonlySet<string>;
+  private readonly threadRequireMention: boolean;
+  private readonly allowBots: DiscordBotMessagePolicy;
+  private readonly ignoreOtherBotMentions: boolean;
   private readonly onUnauthorized: NonNullable<DiscordAdapterOptions['onUnauthorized']> | null;
   private readonly statusReactionOptions: StatusReactionOptions | null;
   private readonly messageDebounceMs: number;
@@ -212,6 +242,7 @@ export class DiscordAdapter implements Adapter {
   private readonly seenMessages = new Map<string, { fingerprint: string; seenAt: number }>();
   private readonly debounceBuffers = new Map<string, DebounceBuffer>();
   private readonly channelRuns = new Map<string, Promise<void>>();
+  private readonly participatedThreads = new Set<string>();
 
   constructor(options: DiscordAdapterOptions) {
     this.client = options.client;
@@ -231,7 +262,11 @@ export class DiscordAdapter implements Adapter {
     this.allowedUsers = options.allowedUsers ? new Set(options.allowedUsers) : null;
     this.allowedRoles = options.allowedRoles ? new Set(options.allowedRoles) : null;
     this.allowDmForRoles = options.allowDmForRoles ?? false;
+    this.requireMention = options.requireMention ?? false;
     this.freeResponseChannels = new Set(options.freeResponseChannels ?? []);
+    this.threadRequireMention = options.threadRequireMention ?? false;
+    this.allowBots = options.allowBots ?? 'none';
+    this.ignoreOtherBotMentions = options.ignoreOtherBotMentions ?? true;
     this.onUnauthorized = options.onUnauthorized ?? null;
 
     const sr = options.statusReactions;
@@ -252,8 +287,7 @@ export class DiscordAdapter implements Adapter {
     if (this.handler) throw new Error('DiscordAdapter already started');
 
     this.handler = (message: DiscordMessageLike) => {
-      // Ignore bot messages (prevents infinite loops).
-      if (message.author.bot) return;
+      if (this.shouldDropBotAuthoredMessage(message)) return;
       if (this.isDuplicateMessageEvent(message)) return;
       // Ignore empty messages.
       if (!message.content.trim()) return;
@@ -267,28 +301,6 @@ export class DiscordAdapter implements Adapter {
         return;
       }
 
-      // Discovery command: !agents
-      if (message.content.trim() === '!agents' && this.agentDescriptions.size > 0) {
-        const lines = ['**Available Agents:**'];
-        for (const [name, desc] of this.agentDescriptions) {
-          lines.push(`• **${name}** — ${desc}`);
-        }
-        void message.reply(lines.join('\n')).catch(() => {});
-        return;
-      }
-
-      // Extract mentioned agent name from @mentions
-      let mentionedAgent: string | undefined;
-      if (this.agentBotMap.size > 0) {
-        for (const [userId] of message.mentions.users) {
-          const agentName = this.agentBotMap.get(userId);
-          if (agentName) {
-            mentionedAgent = agentName;
-            break;
-          }
-        }
-      }
-
       const chatType: ChatType = message.guildId ? 'channel' : 'dm';
       const isThread = Boolean(message.channel.isThread?.());
       const threadId = isThread ? message.channelId : null;
@@ -296,6 +308,8 @@ export class DiscordAdapter implements Adapter {
         ? message.channel.parentId ?? message.channelId
         : message.channelId;
 
+      const mentionedAgent = this.findMentionedAgent(message);
+      const selfMentioned = this.isSelfMentioned(message);
       const sessionKey = buildSessionKey(
         {
           platform: 'discord',
@@ -308,15 +322,36 @@ export class DiscordAdapter implements Adapter {
       );
 
       const freeResponse =
-        this.freeResponseChannels.has(message.channelId) ||
-        (parentChannelId !== message.channelId &&
-          this.freeResponseChannels.has(parentChannelId));
+        channelSetMatches(this.freeResponseChannels, message.channelId, parentChannelId);
+
+      if (this.hasOtherBotMention(message)) return;
+      if (!this.passesMentionGate({
+        message,
+        isThread,
+        threadId,
+        mentionedAgent,
+        selfMentioned,
+        freeResponse,
+      })) {
+        return;
+      }
+
+      // Discovery command: !agents
+      if (message.content.trim() === '!agents' && this.agentDescriptions.size > 0) {
+        const lines = ['**Available Agents:**'];
+        for (const [name, desc] of this.agentDescriptions) {
+          lines.push(`• **${name}** — ${desc}`);
+        }
+        void message.reply(lines.join('\n')).catch(() => {});
+        return;
+      }
 
       const metadata: Record<string, unknown> = {};
       if (mentionedAgent) metadata.mentionedAgent = mentionedAgent;
       if (threadId) metadata.threadId = threadId;
       if (parentChannelId !== message.channelId) metadata.parentChannelId = parentChannelId;
       if (freeResponse) metadata.freeResponse = true;
+      if (selfMentioned) metadata.mentionedSelf = true;
 
       const inbound: InboundMessage = {
         platform: 'discord',
@@ -330,6 +365,7 @@ export class DiscordAdapter implements Adapter {
       };
 
       // Fire and forget — we don't want to block the Discord event loop.
+      if (threadId) this.participatedThreads.add(threadId);
       void this.enqueueMessage(router, { message, inbound });
     };
 
@@ -344,6 +380,7 @@ export class DiscordAdapter implements Adapter {
     this.clearDebounceBuffers();
     this.channelRuns.clear();
     this.seenMessages.clear();
+    this.participatedThreads.clear();
   }
 
   /**
@@ -354,13 +391,14 @@ export class DiscordAdapter implements Adapter {
     const channelId = message.channelId;
     const parentId = message.channel.parentId ?? null;
 
-    if (this.ignoredChannels.has(channelId)) return 'channel ignored';
-    if (parentId && this.ignoredChannels.has(parentId)) return 'parent channel ignored';
+    if (channelSetMatches(this.ignoredChannels, channelId, parentId)) {
+      return parentId && this.ignoredChannels.has(parentId)
+        ? 'parent channel ignored'
+        : 'channel ignored';
+    }
 
     if (this.allowedChannels) {
-      const channelOk =
-        this.allowedChannels.has(channelId) ||
-        (parentId !== null && this.allowedChannels.has(parentId));
+      const channelOk = channelSetMatches(this.allowedChannels, channelId, parentId);
       if (!channelOk) return 'channel not in allowlist';
     }
 
@@ -380,6 +418,67 @@ export class DiscordAdapter implements Adapter {
     }
 
     return null;
+  }
+
+  private shouldDropBotAuthoredMessage(message: DiscordMessageLike): boolean {
+    if (!message.author.bot) return false;
+    if (this.client.user?.id && message.author.id === this.client.user.id) return true;
+    if (this.allowBots === 'all') return false;
+    if (this.allowBots === 'mentions') {
+      return !this.isSelfMentioned(message) && !this.findMentionedAgent(message);
+    }
+    return true;
+  }
+
+  private findMentionedAgent(message: DiscordMessageLike): string | undefined {
+    if (this.agentBotMap.size === 0) return undefined;
+    for (const [userId, user] of message.mentions.users) {
+      const agentName = this.agentBotMap.get(userId) ?? this.agentBotMap.get(user.id);
+      if (agentName) return agentName;
+    }
+    return undefined;
+  }
+
+  private isSelfMentioned(message: DiscordMessageLike): boolean {
+    const selfId = this.client.user?.id;
+    return Boolean(selfId && mentionIncludesUser(message, selfId));
+  }
+
+  private hasOtherBotMention(message: DiscordMessageLike): boolean {
+    if (!this.ignoreOtherBotMentions) return false;
+    if (this.isSelfMentioned(message) || this.findMentionedAgent(message)) return false;
+    const selfId = this.client.user?.id ?? null;
+    for (const [userId, user] of message.mentions.users) {
+      const mentionedId = user.id || userId;
+      if (!user.bot) continue;
+      if (mentionedId === selfId) continue;
+      if (this.agentBotMap.has(mentionedId)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  private passesMentionGate(args: {
+    message: DiscordMessageLike;
+    isThread: boolean;
+    threadId: string | null;
+    mentionedAgent: string | undefined;
+    selfMentioned: boolean;
+    freeResponse: boolean;
+  }): boolean {
+    if (!args.message.guildId) return true;
+    if (!this.requireMention) return true;
+    if (args.freeResponse) return true;
+    if (args.selfMentioned || args.mentionedAgent) return true;
+    if (
+      args.isThread &&
+      args.threadId &&
+      !this.threadRequireMention &&
+      this.participatedThreads.has(args.threadId)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   private isDuplicateMessageEvent(message: DiscordMessageLike): boolean {
@@ -688,6 +787,26 @@ function truncate(value: string, max: number): string {
 
 function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
+}
+
+function mentionIncludesUser(message: DiscordMessageLike, userId: string): boolean {
+  if (message.mentions.users.has(userId)) return true;
+  for (const user of message.mentions.users.values()) {
+    if (user.id === userId) return true;
+  }
+  return false;
+}
+
+function channelSetMatches(
+  channels: ReadonlySet<string>,
+  channelId: string,
+  parentId?: string | null,
+): boolean {
+  return (
+    channels.has('*') ||
+    channels.has(channelId) ||
+    (parentId !== null && parentId !== undefined && channels.has(parentId))
+  );
 }
 
 function attachmentSignature(message: DiscordMessageLike): string {

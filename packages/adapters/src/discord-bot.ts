@@ -18,7 +18,7 @@ import type {
   OutboundChunk,
   TopicString,
 } from '@nexora/contracts';
-import { DiscordAdapter, type DiscordClientLike } from './discord.js';
+import { DiscordAdapter, type DiscordBotMessagePolicy, type DiscordClientLike } from './discord.js';
 
 export interface DiscordAgentBotOptions {
   /** The agent team. Provides cards, transport, registry, and llm. */
@@ -51,6 +51,16 @@ export interface DiscordAgentBotOptions {
   resolveTenant?: (guildId: string | null) => string | null;
   /** Debounce rapid same channel/user Discord messages. Default: adapter default. */
   messageDebounceMs?: number;
+  /** Require @mention of this bot or a configured agent bot in server channels. */
+  requireMention?: boolean;
+  /** Channels where messages bypass `requireMention`; threads inherit from parents. */
+  freeResponseChannels?: ReadonlyArray<string>;
+  /** If true, thread follow-ups also need @mention. Default: false. */
+  threadRequireMention?: boolean;
+  /** Whether bot-authored messages are accepted. Default: "none". */
+  allowBots?: DiscordBotMessagePolicy;
+  /** Drop messages that mention other bots but not this bot/agent. Default: true. */
+  ignoreOtherBotMentions?: boolean;
 }
 
 export interface RunningDiscordBot {
@@ -125,6 +135,11 @@ export async function startDiscordBot(options: DiscordAgentBotOptions): Promise<
     agentBotMap,
     agentDescriptions,
     messageDebounceMs: options.messageDebounceMs,
+    requireMention: options.requireMention,
+    freeResponseChannels: options.freeResponseChannels,
+    threadRequireMention: options.threadRequireMention,
+    allowBots: options.allowBots,
+    ignoreOtherBotMentions: options.ignoreOtherBotMentions,
   });
 
   await adapter.start(router);

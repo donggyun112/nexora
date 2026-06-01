@@ -356,6 +356,188 @@ describe('DiscordAdapter', () => {
     await adapter.stop();
   });
 
+  it('requires a bot or agent mention in guild channels when requireMention=true', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({
+      client,
+      requireMention: true,
+      agentBotMap: new Map([['agent-1', 'researcher']]),
+    });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('plain guild message'));
+    client.fire(makeFakeMessage('<@bot-123> hello', {
+      mentions: { users: new Map([['bot-123', { id: 'bot-123', username: 'nexora', bot: true }]]) },
+    }));
+    client.fire(makeFakeMessage('<@agent-1> handle this', {
+      mentions: { users: new Map([['agent-1', { id: 'agent-1', username: 'researcher-bot', bot: true }]]) },
+    }));
+    client.fire(makeFakeMessage('dm bypasses mention gate', {
+      guildId: null,
+      channelId: 'dm-mention-gate',
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured.map((m) => m.content)).toEqual(expect.arrayContaining([
+      '<@bot-123> hello',
+      '<@agent-1> handle this',
+      'dm bypasses mention gate',
+    ]));
+    expect(captured).toHaveLength(3);
+    expect(captured.find((m) => m.content === '<@bot-123> hello')?.metadata?.mentionedSelf).toBe(true);
+    expect(captured.find((m) => m.content === '<@agent-1> handle this')?.metadata?.mentionedAgent).toBe('researcher');
+    await adapter.stop();
+  });
+
+  it('lets free-response channels bypass requireMention', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({
+      client,
+      requireMention: true,
+      freeResponseChannels: ['parent-free'],
+    });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('parent channel is free', {
+      channelId: 'parent-free',
+    }));
+    client.fire(makeFakeMessage('thread inherits parent free response', {
+      channelId: 'thread-free',
+      channel: {
+        sendTyping: vi.fn(async () => {}),
+        send: vi.fn(async () => {}),
+        isThread: () => true,
+        parentId: 'parent-free',
+      },
+    }));
+    client.fire(makeFakeMessage('not free', { channelId: 'locked' }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured).toHaveLength(2);
+    expect(captured.every((msg) => msg.metadata?.freeResponse === true)).toBe(true);
+    await adapter.stop();
+  });
+
+  it('allows follow-up messages in participated threads unless threadRequireMention=true', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({ client, requireMention: true });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const threadChannel = {
+      sendTyping: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+      isThread: () => true,
+      parentId: 'parent-ch',
+    };
+
+    client.fire(makeFakeMessage('<@bot-123> start thread', {
+      channelId: 'thread-1',
+      channel: threadChannel,
+      mentions: { users: new Map([['bot-123', { id: 'bot-123', username: 'nexora', bot: true }]]) },
+    }));
+    client.fire(makeFakeMessage('follow-up without mention', {
+      channelId: 'thread-1',
+      channel: threadChannel,
+    }));
+    client.fire(makeFakeMessage('other thread without mention', {
+      channelId: 'thread-2',
+      channel: { ...threadChannel, parentId: 'parent-ch' },
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured.map((m) => m.content)).toEqual([
+      '<@bot-123> start thread',
+      'follow-up without mention',
+    ]);
+    await adapter.stop();
+
+    const strictAdapter = makeAdapter({
+      client,
+      requireMention: true,
+      threadRequireMention: true,
+    });
+    const strictCaptured: InboundMessage[] = [];
+    await strictAdapter.start(makeRouter(async (msg) => {
+      strictCaptured.push(msg);
+      return { content: 'ok' };
+    }));
+    client.fire(makeFakeMessage('<@bot-123> start strict thread', {
+      channelId: 'strict-thread',
+      channel: threadChannel,
+      mentions: { users: new Map([['bot-123', { id: 'bot-123', username: 'nexora', bot: true }]]) },
+    }));
+    client.fire(makeFakeMessage('strict follow-up without mention', {
+      channelId: 'strict-thread',
+      channel: threadChannel,
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(strictCaptured.map((m) => m.content)).toEqual(['<@bot-123> start strict thread']);
+    await strictAdapter.stop();
+  });
+
+  it('supports configurable bot-authored message policy', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({ client, allowBots: 'mentions' });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('bot without mention', {
+      author: { id: 'bot-other', username: 'other-bot', bot: true },
+    }));
+    client.fire(makeFakeMessage('<@bot-123> bot with mention', {
+      author: { id: 'bot-other', username: 'other-bot', bot: true },
+      mentions: { users: new Map([['bot-123', { id: 'bot-123', username: 'nexora', bot: true }]]) },
+    }));
+    client.fire(makeFakeMessage('<@bot-123> own echo still ignored', {
+      author: { id: 'bot-123', username: 'nexora', bot: true },
+      mentions: { users: new Map([['bot-123', { id: 'bot-123', username: 'nexora', bot: true }]]) },
+    }));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured.map((m) => m.content)).toEqual(['<@bot-123> bot with mention']);
+    await adapter.stop();
+  });
+
+  it('drops messages aimed at another bot when mention data marks that user as a bot', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({ client });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    client.fire(makeFakeMessage('<@other-bot> not for us', {
+      mentions: { users: new Map([['other-bot', { id: 'other-bot', username: 'other', bot: true }]]) },
+    }));
+    client.fire(makeFakeMessage('normal message'));
+    await new Promise(r => setTimeout(r, 30));
+
+    expect(captured.map((m) => m.content)).toEqual(['normal message']);
+    await adapter.stop();
+  });
+
   it('requires allowed role when allowedRoles is set', async () => {
     const client = makeFakeClient();
     const adapter = makeAdapter({

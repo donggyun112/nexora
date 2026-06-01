@@ -11,6 +11,7 @@ export type { HttpAdapterOptions } from './http.js';
 export { DiscordAdapter, renderDiscordArtifactMessages } from './discord.js';
 export type {
   DiscordAdapterOptions,
+  DiscordBotMessagePolicy,
   DiscordClientLike,
   DiscordMessageLike,
   DiscordMessagePayload,

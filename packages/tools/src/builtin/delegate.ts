@@ -247,12 +247,35 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       });
 
       if (waitMode === 'async') {
-        return errorResult(
-          `delegate({ waitForResult: 'async' }) is not yet implemented. ` +
-          `Pending bootstrap/runner support for ephemeral result subscription. ` +
-          `Use 'sync' (await result) or false (fire-forget) for now. ` +
-          `See wiki/decisions/2026-06-01-delegation-primitives.md.`,
-        );
+        try {
+          const envelopeId = messageId();
+          const envelope: MessageEnvelope = {
+            id: envelopeId,
+            topic: targetTopic,
+            type: 'request',
+            payload: params.input,
+            metadata: {
+              traceId: traceId(),
+              spanId: spanId(),
+              conversationId: conversationId(),
+              tenantId: ctx.tenantId,
+              sourceInstanceId: callerAgentName,
+              callerAgent: callerAgentName,
+              delegationDepth: nextDepth,
+              timestamp: Date.now(),
+            },
+          };
+          await transport.publish(envelope);
+          return textResult(
+            `Dispatched to "${target.name}" (${params.capability}) — async. ` +
+            `Result will arrive on a later turn as topic "${targetTopic}.completed" ` +
+            `or ".failed" with metadata.replyTo="${envelopeId}". ` +
+            `Subscribe via createEphemeralResultListener if needed.`,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return errorResult(`async delegate to "${target.name}" failed: ${msg}`);
+        }
       }
 
       if (waitMode === false) {

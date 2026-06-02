@@ -1,11 +1,13 @@
 import type { CapabilityRef } from './capability.js';
 import type { MessageEnvelope } from './message.js';
 import type { ToolBatchCall } from './agent.js';
+import type { BroadcastMode } from './worker-protocol.js';
 import type { WorkerHeartbeat, WorkerRegistration } from './worker.js';
 
 export type NexoraSyscall =
   | RegisterWorkerSyscall
   | HeartbeatWorkerSyscall
+  | BroadcastSyscall
   | DispatchSyscall
   | DelegateSyscall
   | ToolCallSyscall
@@ -25,6 +27,18 @@ export interface RegisterWorkerSyscall {
 export interface HeartbeatWorkerSyscall {
   type: 'heartbeat_worker';
   heartbeat: WorkerHeartbeat;
+}
+
+export interface BroadcastSyscall {
+  type: 'broadcast';
+  capability: CapabilityRef;
+  input: unknown;
+  mode: BroadcastMode;
+  broadcastId: string;
+  ttlMs?: number;
+  timeoutMs?: number;
+  idempotencyKey?: string;
+  quorum?: number;
 }
 
 export interface DispatchSyscall {

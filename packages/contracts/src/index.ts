@@ -50,6 +50,8 @@ export type {
 } from './worker.js';
 
 export type {
+  BroadcastMode,
+  WorkerInvocationBroadcast,
   WorkerInvocationRequest,
   WorkerInvocationResult,
   WorkerSubmitResult,
@@ -62,6 +64,7 @@ export type {
   NexoraSyscall,
   RegisterWorkerSyscall,
   HeartbeatWorkerSyscall,
+  BroadcastSyscall,
   DispatchSyscall,
   DelegateSyscall,
   ToolCallSyscall,

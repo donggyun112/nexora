@@ -171,6 +171,202 @@ describe('FleetCoordinator', () => {
       context,
     })).rejects.toBeInstanceOf(OracleRejectedSyscallError);
   });
+
+  it('announces a broadcast without invoking workers', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    await registry.register({
+      id: 'writer-1',
+      adapter: 'http',
+      provides: ['marketing.long-form-content@v1'],
+      endpoint: { type: 'http', url: 'https://workers.test/writer-1' },
+      version: '0.1.0',
+    });
+    await registry.register({
+      id: 'writer-2',
+      adapter: 'http',
+      provides: ['marketing.long-form-content@v1'],
+      endpoint: { type: 'http', url: 'https://workers.test/writer-2' },
+      version: '0.1.0',
+    });
+
+    const invoke = vi.fn();
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: { invoke },
+    });
+
+    const result = await coordinator.broadcast({
+      id: 'broadcast-1',
+      mode: 'announce',
+      capability: 'marketing.long-form-content@v1',
+      input: { title: 'Nexora' },
+      context,
+    });
+
+    expect(result.workers.map(w => w.id)).toEqual(['writer-1', 'writer-2']);
+    expect(result.deliveries).toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('fans out work to every eligible worker with broadcast metadata', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    for (const id of ['writer-1', 'writer-2']) {
+      await registry.register({
+        id,
+        adapter: 'http',
+        provides: ['marketing.long-form-content@v1'],
+        endpoint: { type: 'http', url: `https://workers.test/${id}` },
+        version: '0.1.0',
+      });
+    }
+
+    const invoke = vi.fn(async (target: Worker, request: WorkerInvocationRequest) => ({
+      type: 'submit' as const,
+      contract: 'submit_content',
+      output: { workerId: target.id, broadcast: request.broadcast },
+    }));
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: { invoke },
+    });
+
+    const result = await coordinator.broadcast({
+      id: 'broadcast-1',
+      mode: 'fanout',
+      capability: 'marketing.long-form-content@v1',
+      input: { title: 'Nexora' },
+      context,
+      ttlMs: 1_000,
+      idempotencyKey: 'brief-1',
+    });
+
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(result.deliveries).toHaveLength(2);
+    expect(result.deliveries.every(d => d.result?.type === 'submit')).toBe(true);
+    expect(result.deliveries[0]?.request?.broadcast).toEqual({
+      broadcastId: 'broadcast-1',
+      mode: 'fanout',
+      recipientCount: 2,
+      ttlMs: 1_000,
+      quorum: undefined,
+    });
+  });
+
+  it('records the first accepted submit as race winner', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    for (const id of ['slow', 'fast']) {
+      await registry.register({
+        id,
+        adapter: 'http',
+        provides: ['marketing.long-form-content@v1'],
+        endpoint: { type: 'http', url: `https://workers.test/${id}` },
+        version: '0.1.0',
+      });
+    }
+
+    const invoke = vi.fn(async (target: Worker) => {
+      if (target.id === 'slow') {
+        await Promise.resolve();
+      }
+      return {
+        type: 'submit' as const,
+        contract: 'submit_content',
+        output: { workerId: target.id },
+      };
+    });
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: { invoke },
+    });
+
+    const result = await coordinator.broadcast({
+      id: 'broadcast-1',
+      mode: 'race',
+      capability: 'marketing.long-form-content@v1',
+      input: {},
+      context,
+    });
+
+    expect(result.winner?.worker.id).toBe('fast');
+    expect(result.deliveries).toHaveLength(2);
+  });
+
+  it('reports quorum status from accepted submit deliveries', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    for (const id of ['a', 'b', 'c']) {
+      await registry.register({
+        id,
+        adapter: 'http',
+        provides: ['marketing.long-form-content@v1'],
+        endpoint: { type: 'http', url: `https://workers.test/${id}` },
+        version: '0.1.0',
+      });
+    }
+
+    const invoke = vi.fn(async (target: Worker) => {
+      if (target.id === 'c') {
+        return { type: 'error' as const, message: 'not enough evidence', retryable: false };
+      }
+      return { type: 'submit' as const, contract: 'submit_content', output: { workerId: target.id } };
+    });
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: { invoke },
+    });
+
+    const result = await coordinator.broadcast({
+      id: 'broadcast-1',
+      mode: 'quorum',
+      quorum: 2,
+      capability: 'marketing.long-form-content@v1',
+      input: {},
+      context,
+    });
+
+    expect(result.quorum).toEqual({ required: 2, accepted: 2, met: true });
+  });
+
+  it('aggregates oracle submit denials as delivery errors', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    await registry.register({
+      id: 'writer-1',
+      adapter: 'http',
+      provides: ['marketing.long-form-content@v1'],
+      endpoint: { type: 'http', url: 'https://workers.test/writer-1' },
+      version: '0.1.0',
+    });
+
+    const oracle: NexoraOracle = {
+      async judge({ syscall }) {
+        if (syscall.type === 'submit') {
+          return { decision: 'deny', reason: 'missing required evidence' };
+        }
+        return { decision: 'allow' };
+      },
+    };
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: {
+        async invoke() {
+          return { type: 'submit', contract: 'submit_content', output: {} };
+        },
+      },
+      oracle,
+    });
+
+    const result = await coordinator.broadcast({
+      id: 'broadcast-1',
+      mode: 'fanout',
+      capability: 'marketing.long-form-content@v1',
+      input: {},
+      context,
+    });
+
+    expect(result.deliveries[0]?.error).toBeInstanceOf(OracleRejectedSyscallError);
+    expect(result.deliveries[0]?.decisions).toEqual([
+      { decision: 'deny', reason: 'missing required evidence' },
+    ]);
+  });
 });
 
 describe('HttpWorkerInvoker', () => {

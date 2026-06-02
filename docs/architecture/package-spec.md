@@ -171,12 +171,14 @@ tools/
 |------|------|
 | WorkerRegistry | Live worker registration, heartbeat, health, capability lookup |
 | FleetCoordinator | Capability dispatch -> worker selection -> invocation -> oracle submit check |
+| Broadcast | `announce`, `fanout`, `race`, and `quorum` fan-out modes |
 | HttpWorkerInvoker | Calls external workers with HTTP endpoints |
 
 **Rules:**
 - Nexora does not start or stop worker processes.
 - Workers request tool, memory, submit, and effect operations through the Nexora protocol boundary.
 - Worker selection is based on capability, health, and load.
+- Broadcast requests must carry broadcast identity, TTL, and idempotency metadata when side effects are possible.
 
 ---
 

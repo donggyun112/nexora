@@ -74,6 +74,12 @@ Nexora does not need to own each worker's internal reasoning loop. It owns the
 coordination boundary: registration, heartbeat, capability dispatch, tool and
 memory syscalls, submit validation, trace propagation, and recovery.
 
+Broadcast is part of that boundary. A Nexora cluster can announce a control
+event to eligible workers, fan out work to every worker, race multiple workers
+and accept the first valid submit, or wait for a quorum. Side-effecting
+broadcasts must preserve `broadcastId`, TTL, idempotency, trace, and submit
+validation metadata.
+
 ---
 
 ## Core Model
@@ -184,7 +190,7 @@ adapters, and OTel. The fleet OS direction extends that separation:
 ```text
 packages/
   contracts/            # add capability protocol, worker, runtime, oracle types
-  fleet/                # worker registry, selection, coordinator, HTTP invoker
+  fleet/                # worker registry, selection, dispatch, broadcast, HTTP invoker
   architectures/
     react.ts            # existing internal loop
     remote.ts           # RuntimeAdapter-based remote execution

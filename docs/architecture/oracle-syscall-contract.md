@@ -52,6 +52,7 @@ These are the primitive actions that agents and workers request from Nexora.
 |---|---|
 | `register_worker` | A live worker announces capabilities, adapter kind, version, endpoint, and health. |
 | `heartbeat_worker` | A worker reports liveness, in-flight count, degradation, and version. |
+| `broadcast` | Propagate a control or work request to multiple eligible workers with `announce`, `fanout`, `race`, or `quorum` mode. |
 | `dispatch` | Request a capability asynchronously. |
 | `delegate` | Request a capability synchronously or as a child execution while preserving delegation metadata. |
 | `tool_call` | Ask Nexora to execute or broker a tool call. |

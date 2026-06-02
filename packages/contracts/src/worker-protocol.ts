@@ -9,7 +9,18 @@ export interface WorkerInvocationRequest {
   input: unknown;
   timeoutMs?: number;
   idempotencyKey?: string;
+  broadcast?: WorkerInvocationBroadcast;
   metadata?: Record<string, unknown>;
+}
+
+export type BroadcastMode = 'announce' | 'fanout' | 'race' | 'quorum';
+
+export interface WorkerInvocationBroadcast {
+  broadcastId: string;
+  mode: BroadcastMode;
+  recipientCount: number;
+  ttlMs?: number;
+  quorum?: number;
 }
 
 export type WorkerInvocationResult =

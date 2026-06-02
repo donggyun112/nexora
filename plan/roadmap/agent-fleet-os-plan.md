@@ -57,6 +57,7 @@ Build the smallest external worker boundary.
 - [x] Add worker registration convention.
 - [x] Add heartbeat convention.
 - [x] Route one capability request to one registered HTTP worker.
+- [x] Add broadcast/fan-out primitive with `announce`, `fanout`, `race`, and `quorum` modes.
 - [ ] Accept `submit` only when output schema and submit contract pass.
 - [x] Preserve trace, tenant, conversation, caller, and delegation depth in the invocation request.
 

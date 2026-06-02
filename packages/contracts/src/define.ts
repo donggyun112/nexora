@@ -6,6 +6,8 @@
  */
 
 import type { AgentCard, AgentInlineMode, AgentLimits } from './agent-card.js';
+import type { CapabilityRef } from './capability.js';
+import type { RuntimeSpec } from './runtime.js';
 import type { TopicString } from './topic.js';
 
 export interface AgentDefinition {
@@ -21,11 +23,15 @@ export interface AgentDefinition {
   /** 아키텍처 (react, 또는 외부에서 정의한 커스텀 아키텍처) */
   architecture: string;
 
+  runtime?: RuntimeSpec;
+
   /** 사용할 도구 이름 목록 */
   tools: string[];
 
   /** 이 에이전트가 제공하는 능력 */
-  capabilities?: string[];
+  capabilities?: CapabilityRef[];
+
+  provides?: CapabilityRef[];
 
   /** 구독하는 topic 목록 */
   subscribes?: TopicString[];
@@ -62,12 +68,14 @@ export function defineAgent(def: AgentDefinition): AgentCard {
     version: def.version ?? '0.1.0',
     description: def.description,
     capabilities: def.capabilities ?? [],
+    provides: def.provides ?? def.capabilities ?? [],
     subscribes: def.subscribes ?? [],
     publishes: def.publishes ?? [],
     inputSchema: def.inputSchema,
     outputSchema: def.outputSchema,
     tools: def.tools,
     architecture: def.architecture,
+    runtime: def.runtime,
     mode: def.mode,
     mainSkill: def.mainSkill,
     maxIterations: def.maxIterations,

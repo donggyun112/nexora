@@ -53,6 +53,7 @@ That's it. Everything else is optional and added when you need it.
 | Discord/Slack/Paperclip | `@nexora/adapters` |
 | Scaffold + dev server | `@nexora/cli` |
 | Self-learning agent skills (YAML+MD) | `@nexora/skills` |
+| External agents as a worker fleet | `@nexora/fleet` |
 | Production store (PostgreSQL) | `@nexora/store-pg` |
 | Plugin-style extensibility | `NexoraExtension` + `ExtensionLoader` (in `@nexora/core`) |
 
@@ -71,6 +72,7 @@ See the [full getting started guide](docs/getting-started.md) — zero to runnin
 | LLM costs spiral | **Budget tracking** — per-agent/tenant limits with block/warn |
 | Agent keeps making the same mistake | **Skills** — agent self-creates reusable SKILL.md files |
 | LLM provider goes down | **Smart fallback** — error classification + automatic retry on another provider |
+| OpenClaw/Hermes/custom agents need to collaborate | **Fleet** — register external workers and route by capability |
 
 ### Can I build OpenClaw with this?
 
@@ -94,7 +96,7 @@ Adapter (HTTP / Discord / Slack)
 ## All packages
 
 <details>
-<summary>19 packages (click to expand)</summary>
+<summary>20 packages (click to expand)</summary>
 
 | Package | Purpose |
 |---|---|
@@ -105,6 +107,7 @@ Adapter (HTTP / Discord / Slack)
 | `@nexora/store` / `@nexora/store-json` | 6-store abstraction + JSON file implementations |
 | `@nexora/store-pg` | PostgreSQL production store (all 6 stores + session tree + auto-migration) |
 | `@nexora/orchestrator` | WorkflowEngine (checkpoint/resume) + CronScheduler |
+| `@nexora/fleet` | Worker registry, capability matching, fleet coordinator, HTTP worker invoker |
 | `@nexora/architectures` | ReAct |
 | `@nexora/tools` | ToolRegistry + ToolsetRegistry + 9 builtins + MCP bridge + handraise + delegate |
 | `@nexora/skills` | Self-learning skills system (SKILL.md format, SkillLoader, SkillRegistry, SkillCreator) |

@@ -1,6 +1,6 @@
 # Public API Surface
 
-Nexora has 17 packages but only **3 official support tiers**. Users should
+Nexora has multiple packages but only **3 official support tiers**. Users should
 know which APIs are guaranteed stable and which are internal/advanced.
 
 ## Tier 1: Supported (these are the product)
@@ -25,6 +25,7 @@ Use when you need the specific capability. Same stability promise as Tier 1.
 | `@nexora/adapters` | You need HTTP, Discord, Slack, or Paperclip entry points |
 | `@nexora/gateway` | You need request routing or SSE streaming |
 | `@nexora/orchestrator` | You need workflow chains with checkpoint/resume |
+| `@nexora/fleet` | You need external OpenClaw, Hermes, Claude Code, or custom workers in one capability fleet |
 | `@nexora/architectures` | You need the ReAct architecture (or a base to build a custom one) |
 
 ## Tier 3: Advanced / internal (may change)
@@ -37,7 +38,7 @@ advanced users who are willing to track changes.
 | `@nexora/conversation` | Turn-taking protocol is novel; API surface will likely shrink |
 | `@nexora/otel` | Depends on OTel SDK internals; W3C bridge is new |
 | `@nexora/store` / `@nexora/store-json` | JSON file stores are dev-only; will be replaced by durable backends |
-| `@nexora/registry` | InMemory only; will be replaced or merged into core |
+| `@nexora/registry` | AgentCard registry only; fleet worker registry lives in `@nexora/fleet` |
 
 ## Rule
 

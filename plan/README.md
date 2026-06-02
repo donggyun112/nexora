@@ -30,6 +30,7 @@ plan/
 | 컴포넌트 설계 | [components/README.md](components/README.md) |
 | DB 스키마 | [data/postgres-schema.md](data/postgres-schema.md) |
 | 12주 일정 | [roadmap/12-week-plan.md](roadmap/12-week-plan.md) |
+| Agent fleet OS 진화 계획 | [roadmap/agent-fleet-os-plan.md](roadmap/agent-fleet-os-plan.md) |
 | 결정 근거 | [adrs/README.md](adrs/README.md) |
 
 ## 핵심 결정 (모두 ADR 있음)

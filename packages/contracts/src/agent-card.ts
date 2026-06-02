@@ -7,6 +7,8 @@
  * 기존 runner.ts의 ToolSetOptions, SubAgentToolset 개념을 일반화.
  */
 
+import type { CapabilityRef } from './capability.js';
+import type { RuntimeSpec } from './runtime.js';
 import type { TopicString } from './topic.js';
 
 /** 시스템 프롬프트 인라인 모드 — 'workflow'(강제 절차) | 'principles'(판단 기준). */
@@ -23,7 +25,9 @@ export interface AgentCard {
   description: string;
 
   /** 이 에이전트가 제공하는 능력 */
-  capabilities: string[];
+  capabilities: CapabilityRef[];
+
+  provides?: CapabilityRef[];
 
   /** 구독하는 topic 목록 (이 topic에 대한 메시지를 수신) */
   subscribes: TopicString[];
@@ -42,6 +46,8 @@ export interface AgentCard {
 
   /** 에이전트 아키텍처 (react, 또는 외부에서 정의한 커스텀 아키텍처) */
   architecture: string;
+
+  runtime?: RuntimeSpec;
 
   /** 시스템 프롬프트 인라인 모드. 없으면 인라인하지 않음 (스킬 메뉴만 노출). */
   mode?: AgentInlineMode;

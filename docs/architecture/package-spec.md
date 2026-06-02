@@ -163,6 +163,23 @@ tools/
 
 ---
 
+## packages/fleet
+
+**Role:** Worker coordination layer that lets Nexora operate as an agent fleet control plane. External OpenClaw, Hermes, Claude Code, and personal agents register as Nexora workers, then Nexora selects workers by capability.
+
+| Feature | Description |
+|------|------|
+| WorkerRegistry | Live worker registration, heartbeat, health, capability lookup |
+| FleetCoordinator | Capability dispatch -> worker selection -> invocation -> oracle submit check |
+| HttpWorkerInvoker | Calls external workers with HTTP endpoints |
+
+**Rules:**
+- Nexora does not start or stop worker processes.
+- Workers request tool, memory, submit, and effect operations through the Nexora protocol boundary.
+- Worker selection is based on capability, health, and load.
+
+---
+
 ## packages/store + packages/store-json
 
 **역할:** 영속화 인터페이스 + JSON 파일 구현체.

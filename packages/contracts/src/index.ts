@@ -18,6 +18,74 @@ export type { AgentDefinition } from './define.js';
 export { defineAgent } from './define.js';
 
 export type {
+  CapabilityRef,
+  SubmitContractRef,
+  EffectKind,
+  EffectSpec,
+  IdempotencySpec,
+  HitlPolicy,
+  EvidenceSpec,
+  CapabilityProtocol,
+} from './capability.js';
+export { defineCapability } from './capability.js';
+
+export type {
+  RuntimeKind,
+  AdapterKind,
+  RuntimeAdapterRef,
+  AdapterEndpoint,
+  RuntimeSpec,
+  ReactRuntimeSpec,
+  RemoteRuntimeSpec,
+  DeterministicRuntimeSpec,
+  CustomRuntimeSpec,
+} from './runtime.js';
+
+export type {
+  WorkerHealth,
+  Worker,
+  WorkerRegistration,
+  WorkerHeartbeat,
+  WorkerRegistry,
+} from './worker.js';
+
+export type {
+  WorkerInvocationRequest,
+  WorkerInvocationResult,
+  WorkerSubmitResult,
+  WorkerEscalationResult,
+  WorkerErrorResult,
+  WorkerInvoker,
+} from './worker-protocol.js';
+
+export type {
+  NexoraSyscall,
+  RegisterWorkerSyscall,
+  HeartbeatWorkerSyscall,
+  DispatchSyscall,
+  DelegateSyscall,
+  ToolCallSyscall,
+  MemoryReadSyscall,
+  MemoryWriteSyscall,
+  PublishSyscall,
+  SubmitSyscall,
+  EscalateSyscall,
+  RetrySyscall,
+  DlqSyscall,
+} from './syscall.js';
+
+export type {
+  OracleContext,
+  RuntimeState,
+  Evidence,
+  PolicySnapshot,
+  RuntimeConstraint,
+  EventCondition,
+  OracleDecision,
+  NexoraOracle,
+} from './oracle.js';
+
+export type {
   MessageEnvelope,
   MessageType,
   MessageMetadata,

@@ -98,6 +98,12 @@ nexora/
 
 ## 주요 설계 결정 이유
 
+- [Nexora as an Agent Fleet Operating System](agent-fleet-os.md) — Nexora를
+  단일 agent framework가 아니라 capability protocol, worker fleet, oracle
+  gate를 가진 agent fleet control plane으로 진화시키는 reasoning note.
+- [Oracle and syscall contract](oracle-syscall-contract.md) — 외부 worker를
+  받아들이기 위한 kernel gate와 syscall 초안.
+
 ### Q: 왜 A2A 프로토콜을 안 쓰나?
 A: A2A는 에이전트 간 직접 RPC 통신이 전제. Nexora는 "에이전트는 서로를 모른다"가 원칙이라 topic pub/sub과 충돌. Agent Card 개념만 registry에 흡수.
 

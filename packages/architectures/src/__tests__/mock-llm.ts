@@ -10,6 +10,7 @@ import type {
   LLMOptions,
   LLMChunk,
   LLMResponse,
+  RuntimeServices,
 } from '@nexora/contracts';
 
 export interface MockResponse {
@@ -58,9 +59,16 @@ export class MockLLMProvider implements LLMProvider {
 export function makeServices(
   llm: LLMProvider,
   tools: Map<string, (input: unknown) => Promise<unknown>>,
-  signal: AbortSignal = new AbortController().signal,
+  overridesOrSignal?: AbortSignal | Partial<RuntimeServices>,
 ) {
-  return {
+  const signal = overridesOrSignal instanceof AbortSignal
+    ? overridesOrSignal
+    : new AbortController().signal;
+  const overrides = overridesOrSignal instanceof AbortSignal || overridesOrSignal === undefined
+    ? {}
+    : overridesOrSignal;
+
+  const base = {
     llm,
     tools: {
       execute: async (name: string, _id: string, input: unknown) => {
@@ -88,4 +96,6 @@ export function makeServices(
     },
     signal,
   };
+
+  return { ...base, ...overrides };
 }

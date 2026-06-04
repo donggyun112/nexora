@@ -138,8 +138,21 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         // tool_result emit + history에 추가할 블록 생성
         const toolResultBlocks: { type: 'tool_result'; id: string; content: string; isError: boolean }[] = [];
         const toolImageMessages: LLMMessage[] = [];
+        let suspended: { pendingId: string; toolCallId: string } | null = null;
         for (const { tc, result, isError } of toolResults) {
           yield { type: 'tool_result', id: tc.id, name: tc.name, result, isError };
+
+          if (
+            result &&
+            typeof result === 'object' &&
+            (result as { type?: string }).type === 'suspend'
+          ) {
+            suspended = {
+              pendingId: (result as { pendingId: string }).pendingId,
+              toolCallId: tc.id,
+            };
+            break;
+          }
 
           toolResultBlocks.push({
             type: 'tool_result',
@@ -160,6 +173,16 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
               ],
             });
           }
+        }
+
+        if (suspended) {
+          yield { type: 'suspended', pendingId: suspended.pendingId, toolCallId: suspended.toolCallId };
+          await services.onSuspend?.({
+            pendingId: suspended.pendingId,
+            toolCallId: suspended.toolCallId,
+            architectureHistory: [...history],
+          });
+          return;
         }
 
         // tool_result 메시지 history에 추가

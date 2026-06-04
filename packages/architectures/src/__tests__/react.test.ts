@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createReactArchitecture } from '../react.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
 import type { AgentEvent, RuntimeServices } from '@nexora/contracts';
+import { suspendResult } from '@nexora/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -207,5 +208,50 @@ describe('ReactArchitecture', () => {
     expect(toolCalls.length).toBe(3); // exactly 3 iterations
     const done = events.find(e => e.type === 'done');
     expect(done).toBeDefined();
+  });
+});
+
+describe('ReAct suspend', () => {
+  it('terminates with suspended event when tool returns suspend', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'call-1', name: 'ask', arguments: {} }] },
+    ]);
+    const tools = new Map([
+      ['ask', async () => suspendResult('pending-xyz')],
+    ]);
+    const onSuspendCalls: { pendingId: string; toolCallId: string; historyLen: number }[] = [];
+    const services = makeServices(llm, tools, {
+      onSuspend: async ({ pendingId, toolCallId, architectureHistory }) => {
+        onSuspendCalls.push({ pendingId, toolCallId, historyLen: architectureHistory.length });
+      },
+    });
+
+    const arch = createReactArchitecture();
+    const events = await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'q' }));
+    const suspended = events.find(e => e.type === 'suspended');
+
+    expect(suspended).toEqual({ type: 'suspended', pendingId: 'pending-xyz', toolCallId: 'call-1' });
+    expect(events.some(e => e.type === 'done')).toBe(false);
+    expect(onSuspendCalls).toHaveLength(1);
+    expect(onSuspendCalls[0]).toMatchObject({ pendingId: 'pending-xyz', toolCallId: 'call-1' });
+    expect(onSuspendCalls[0].historyLen).toBeGreaterThan(0);
+  });
+
+  it('first suspend in a parallel batch terminates the turn', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [
+        { id: 'call-1', name: 'ask', arguments: {} },
+        { id: 'call-2', name: 'echo', arguments: { msg: 'hi' } },
+      ]},
+    ]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>([
+      ['ask', async () => suspendResult('p1')],
+      ['echo', async () => ({ type: 'text' as const, text: 'echoed' })],
+    ]);
+    const services = makeServices(llm, tools);
+    const arch = createReactArchitecture();
+    const events = await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'q' }));
+    expect(events.some(e => e.type === 'suspended' && (e as { type: 'suspended'; pendingId: string }).pendingId === 'p1')).toBe(true);
+    expect(events.some(e => e.type === 'done')).toBe(false);
   });
 });

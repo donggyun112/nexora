@@ -11,6 +11,7 @@ import type {
   ToolContext,
   ToolResult,
 } from '@nexora/contracts';
+import { suspendResult } from '@nexora/contracts';
 import { MockLLMProvider } from './mock-llm.js';
 
 const mockContext: ToolContext = {
@@ -409,5 +410,54 @@ describe('AgentRunner', () => {
     const err = collected.find(e => e.type === 'error');
     expect(err).toBeDefined();
     if (err?.type === 'error') expect(err.message).toBe('aborted');
+  });
+
+  it('AgentRunner forwards onSuspend to RuntimeServices', async () => {
+    const calls: { pendingId: string }[] = [];
+
+    // Minimal architecture: calls a tool that returns suspend, then invokes
+    // services.onSuspend and emits the suspended event — mirroring what the
+    // real ReAct architecture does (A3).
+    const suspendArch: AgentArchitecture = {
+      name: 'suspend-arch',
+      async *loop(services: RuntimeServices, input: AgentInput): AsyncGenerator<AgentEvent> {
+        const callId = 'c1';
+        yield { type: 'tool_call', id: callId, name: 'ask', input: {} };
+        const result = await services.tools.execute('ask', callId, {}, services.signal);
+        yield { type: 'tool_result', id: callId, name: 'ask', result, isError: false };
+
+        if ((result as { type: string }).type === 'suspend') {
+          const { pendingId } = result as { type: 'suspend'; pendingId: string };
+          await services.onSuspend?.({
+            pendingId,
+            toolCallId: callId,
+            architectureHistory: [{ role: 'user', content: input.prompt }],
+          });
+          yield { type: 'suspended', pendingId, toolCallId: callId };
+        } else {
+          yield { type: 'done', content: '', toolCalls: [] };
+        }
+      },
+    };
+
+    const askTool: ToolDefinition = {
+      name: 'ask',
+      description: 'Ask a human',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => suspendResult('pid-1'),
+    };
+
+    const runner = new AgentRunner({
+      architecture: suspendArch,
+      llm: new MockLLMProvider([]),
+      tools: new CoreToolExecutor({ tools: [askTool], context: mockContext }),
+      onSuspend: async ({ pendingId }) => { calls.push({ pendingId }); },
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runner.execute({ prompt: 'go' })) events.push(ev);
+
+    expect(calls).toEqual([{ pendingId: 'pid-1' }]);
+    expect(events.some(e => e.type === 'suspended')).toBe(true);
   });
 });

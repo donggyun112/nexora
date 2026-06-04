@@ -46,6 +46,8 @@ export interface AgentRunnerOptions {
   middlewares?: AgentMiddleware[];
   /** Idle timeout (ms, 기본 600000 = 10분) */
   idleTimeoutMs?: number;
+  /** Optional architecture-level suspend hook. Forwarded to RuntimeServices. */
+  onSuspend?: RuntimeServices['onSuspend'];
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
@@ -65,6 +67,7 @@ export class AgentRunner implements AgentRuntime {
   private readonly logger: AgentLogger;
   private readonly pipeline: MiddlewarePipeline;
   private readonly idleTimeoutMs: number;
+  private readonly onSuspend?: RuntimeServices['onSuspend'];
   /**
    * Active controllers per concurrent execute() call. abort() aborts ALL of them.
    * Per-call structure means concurrent executions don't trample each other's state.
@@ -79,6 +82,7 @@ export class AgentRunner implements AgentRuntime {
     this.logger = options.logger ?? NOOP_LOGGER;
     this.pipeline = new MiddlewarePipeline(options.middlewares ?? []);
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+    this.onSuspend = options.onSuspend;
   }
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
@@ -106,6 +110,7 @@ export class AgentRunner implements AgentRuntime {
       memory: this.memory,
       logger: this.logger,
       signal: controller.signal,
+      onSuspend: this.onSuspend,
     };
 
     let loopGen: AsyncGenerator<AgentEvent> | null = null;

@@ -101,7 +101,8 @@ export interface ToolLogger {
 export type ToolResult =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'suspend'; pendingId: string };
 
 /** 텍스트 결과 헬퍼 — 기존 tool-helpers.ts의 text() 함수와 동일 역할 */
 export function textResult(text: string): ToolResult {
@@ -110,4 +111,8 @@ export function textResult(text: string): ToolResult {
 
 export function errorResult(message: string): ToolResult {
   return { type: 'error', message };
+}
+
+export function suspendResult(pendingId: string): ToolResult {
+  return { type: 'suspend', pendingId };
 }

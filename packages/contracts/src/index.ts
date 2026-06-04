@@ -120,7 +120,7 @@ export type {
   ToolLogger,
   ToolResult,
 } from './tool.js';
-export { textResult, errorResult } from './tool.js';
+export { textResult, errorResult, suspendResult } from './tool.js';
 
 export type {
   AgentInput,

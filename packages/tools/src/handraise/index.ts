@@ -34,4 +34,12 @@ export { createApprovalGateMiddleware } from './approval-middleware.js';
 export type {
   ApprovalGateOptions,
   ApprovalGatePredicate,
+  ApprovalMode,
 } from './approval-middleware.js';
+
+export {
+  defaultShellHardlineRule,
+  composeHardlineRules,
+  extractCommandString,
+} from './hardline.js';
+export type { HardlineRule, HardlineHit } from './hardline.js';

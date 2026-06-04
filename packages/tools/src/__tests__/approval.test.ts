@@ -4,10 +4,12 @@ import {
   InMemoryApprovalPolicyStore,
   createApprovalGateMiddleware,
   isApprovalRequest,
+  defaultShellHardlineRule,
 } from '../index.js';
 import type {
   ApprovalRequest,
   ApprovalReply,
+  ApprovalMode,
   ToolDefinition,
   ToolContext,
 } from '../index.js';
@@ -147,16 +149,25 @@ describe('approvalGateMiddleware', () => {
     transport: FakeTransport;
     store: InMemoryApprovalPolicyStore;
     sessionKey?: string;
+    mode?: ApprovalMode;
+    resolveMode?: (ctx: { tenantId: string; toolName: string; sessionKey: string }) => ApprovalMode | undefined;
+    hardline?: Parameters<typeof createApprovalGateMiddleware>[0]['hardline'];
+    predicate?: Parameters<typeof createApprovalGateMiddleware>[0]['predicate'];
   }) {
     return createApprovalGateMiddleware({
       transport: opts.transport,
       store: opts.store,
       channel: 'default',
-      predicate: (tool) =>
-        tool === 'risky'
-          ? { approvalKey: 'risky-key', command: 'rm -rf /tmp/x', reason: 'cleanup' }
-          : null,
+      predicate:
+        opts.predicate ??
+        ((tool) =>
+          tool === 'risky'
+            ? { approvalKey: 'risky-key', command: 'rm -rf /tmp/x', reason: 'cleanup' }
+            : null),
       resolveSessionKey: () => opts.sessionKey ?? 'session-1',
+      mode: opts.mode,
+      resolveMode: opts.resolveMode,
+      hardline: opts.hardline,
     });
   }
 
@@ -289,5 +300,103 @@ describe('approvalGateMiddleware', () => {
     expect(result.type).toBe('text');
     if (result.type === 'text') expect(result.text).toContain('[approved-once by Bob]');
     inbox.stop();
+  });
+
+  it("mode='off': skips prompt and runs the tool", async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    const mw = setupGate({ transport, store, mode: 'off' });
+    const calls: { input: unknown }[] = [];
+    const wrapped = wrap(mw, makeTool('risky', calls));
+
+    const result = await wrapped.execute('c1', { x: 1 }, makeCtx());
+    expect(result.type).toBe('text');
+    expect(calls).toHaveLength(1);
+    // No prompt was published.
+    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+  });
+
+  it("mode='off': prior 'deny' record still binds", async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    await store.rememberDeny('tenant-A', 'session-1', 'risky-key', 'Carol');
+    const mw = setupGate({ transport, store, mode: 'off' });
+    const calls: { input: unknown }[] = [];
+    const wrapped = wrap(mw, makeTool('risky', calls));
+
+    const result = await wrapped.execute('c1', {}, makeCtx());
+    expect(result.type).toBe('error');
+    expect(calls).toHaveLength(0);
+  });
+
+  it("mode='block': short-circuits without prompting", async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    const mw = setupGate({ transport, store, mode: 'block' });
+    const calls: { input: unknown }[] = [];
+    const wrapped = wrap(mw, makeTool('risky', calls));
+
+    const result = await wrapped.execute('c1', {}, makeCtx());
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toContain("mode='block'");
+    expect(calls).toHaveLength(0);
+    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+  });
+
+  it("resolveMode overrides static mode per call", async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    const mw = setupGate({
+      transport,
+      store,
+      mode: 'ask',
+      resolveMode: () => 'off',
+    });
+    const calls: { input: unknown }[] = [];
+    const wrapped = wrap(mw, makeTool('risky', calls));
+
+    const result = await wrapped.execute('c1', {}, makeCtx());
+    expect(result.type).toBe('text');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('hardline floor blocks even when mode=off', async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    const mw = setupGate({
+      transport,
+      store,
+      mode: 'off',
+      hardline: defaultShellHardlineRule,
+      predicate: () => null, // predicate would skip approval — hardline must still fire
+    });
+    const calls: { input: unknown }[] = [];
+    const wrapped = wrap(mw, makeTool('shell', calls));
+
+    const result = await wrapped.execute('c1', { command: 'rm -rf /' }, makeCtx());
+    expect(result.type).toBe('error');
+    if (result.type === 'error') {
+      expect(result.message).toContain('hardline');
+      expect(result.message).toContain('rm_root');
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it('hardline floor lets safe commands pass through', async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    const mw = setupGate({
+      transport,
+      store,
+      mode: 'off',
+      hardline: defaultShellHardlineRule,
+      predicate: () => null,
+    });
+    const calls: { input: unknown }[] = [];
+    const wrapped = wrap(mw, makeTool('shell', calls));
+
+    const result = await wrapped.execute('c1', { command: 'ls /tmp' }, makeCtx());
+    expect(result.type).toBe('text');
+    expect(calls).toHaveLength(1);
   });
 });

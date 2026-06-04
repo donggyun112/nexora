@@ -32,6 +32,8 @@ import {
   spanId,
   conversationId,
 } from '@nexora/contracts';
+import { createApprovalGateMiddleware } from '../handraise/approval-middleware.js';
+import type { ApprovalGateOptions } from '../handraise/approval-middleware.js';
 
 // ─── Subagent types (deepagents pattern) ────────────────────────────────
 
@@ -60,7 +62,7 @@ export interface AsyncSubagent {
   description: string;
   url: string;
   headers?: Record<string, string>;
-  /** Timeout for the HTTP call. Default: 120_000. */
+  /** Timeout for the HTTP call. Default: 300_000. */
   timeoutMs?: number;
 }
 
@@ -79,7 +81,7 @@ export interface DelegateToolOptions {
   callerAgentName: string;
   /** Maximum delegation depth before refusing. Default: 5. */
   maxDepth?: number;
-  /** Default timeout for the delegated request. Default: 120_000 (2 min). */
+  /** Default timeout for the delegated request. Default: 300_000 (5 min). */
   defaultTimeoutMs?: number;
   /**
    * Current delegation depth inherited from the envelope that triggered this
@@ -110,6 +112,18 @@ export interface DelegateToolOptions {
    * progress to the parent agent's UI or logging.
    */
   onSubagentEvent?: (subagentName: string, event: AgentEvent) => void;
+  /**
+   * Optional approval gate. When supplied, the returned tool definition is
+   * wrapped with `createApprovalGateMiddleware`. The predicate receives the
+   * raw delegate input (`{ capability, input, ... }`) and decides per-call
+   * whether the hop needs human approval. Hardline rules (if any) fire
+   * before the predicate and cannot be bypassed by mode='off'.
+   *
+   * Typical use: gate when `capability` falls into a tenant-defined "risky"
+   * set (e.g. anything touching billing or production), or when the
+   * delegation target is an external/async subagent.
+   */
+  approvalGate?: ApprovalGateOptions;
 }
 
 /**
@@ -137,7 +151,7 @@ interface DelegateParams {
 }
 
 const DEFAULT_MAX_DEPTH = 5;
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 300_000;
 
 export function createDelegateTool(options: DelegateToolOptions): ToolDefinition {
   const {
@@ -151,6 +165,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     subagents = [],
     runtimeFactory,
     onSubagentEvent,
+    approvalGate,
   } = options;
 
   // Index inline subagents by name for O(1) lookup
@@ -159,7 +174,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     subagentsByName.set(sa.name, sa);
   }
 
-  return {
+  const toolDef: ToolDefinition = {
     name: 'delegate',
     description:
       'Delegate a subtask to another agent by capability. The framework ' +
@@ -337,6 +352,16 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       }
     },
   };
+
+  if (!approvalGate) return toolDef;
+
+  // Run the tool definition through the approval gate middleware.
+  // The middleware's beforeExecution mutates the tools array in place,
+  // returning a wrapped clone in slot 0.
+  const gate = createApprovalGateMiddleware(approvalGate);
+  const wrapper: { tools: ToolDefinition[] } = { tools: [toolDef] };
+  gate.beforeExecution(wrapper);
+  return wrapper.tools[0];
 }
 
 // ─── Subagent execution ─────────────────────────────────────────────────
@@ -367,7 +392,7 @@ async function executeSubagent(
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...sa.headers },
           body: JSON.stringify({ input: params.input }),
-          signal: AbortSignal.timeout(sa.timeoutMs ?? 120_000),
+          signal: AbortSignal.timeout(sa.timeoutMs ?? 300_000),
         });
         if (!res.ok) return errorResult(`async subagent "${sa.name}" returned ${res.status}`);
         const body = await res.text();

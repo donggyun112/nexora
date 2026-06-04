@@ -36,6 +36,23 @@ import type {
   HandraiseRequestPayload,
   HandraiseReplyPayload,
 } from '../builtin/handraise.js';
+import type { HardlineRule } from './hardline.js';
+
+/**
+ * Enforcement mode applied AFTER the hardline floor.
+ *
+ *   off   → bypass approval entirely (yolo / dev / cron). Cached `deny`
+ *           records are still honored — opting out of prompts is not the
+ *           same as overruling a prior explicit deny.
+ *   ask   → default. Run cache lookup, prompt the user on `unknown`.
+ *   block → short-circuit with errorResult without prompting. Useful for
+ *           lockdown windows (incident, release freeze) where a class of
+ *           tools must not run regardless of who is online to approve.
+ *
+ * The hardline floor is independent of this and fires before mode is
+ * consulted — `off` cannot let `rm -rf /` through.
+ */
+export type ApprovalMode = 'off' | 'ask' | 'block';
 
 /**
  * Structural subset of `@nexora/core`'s AgentMiddleware. Defined locally to
@@ -106,6 +123,29 @@ export interface ApprovalGateOptions {
     toolName: string;
     sessionKey: string;
   }) => { channelId?: string; threadId?: string } | null | undefined;
+  /**
+   * Static enforcement mode. Defaults to 'ask'. Overridden per-call by
+   * `resolveMode` when provided — use that for tenant-policy lookups.
+   */
+  mode?: ApprovalMode;
+  /**
+   * Per-call mode resolver (e.g. tenant policy → 'block' during a release
+   * freeze, 'off' for trusted internal services). Takes precedence over
+   * the static `mode` field. Return undefined to fall back to it.
+   */
+  resolveMode?: (ctx: {
+    tenantId: string;
+    toolName: string;
+    sessionKey: string;
+  }) => ApprovalMode | undefined | Promise<ApprovalMode | undefined>;
+  /**
+   * Hardline floor — unconditional block applied BEFORE mode is consulted.
+   * Fires for catastrophic actions (`rm -rf /`, `mkfs`, fork bomb…) that
+   * have no legitimate approve path. mode='off' does NOT bypass this.
+   * Defaults to no hardline checks; pass `defaultShellHardlineRule` for
+   * shell-style tools.
+   */
+  hardline?: HardlineRule;
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -121,6 +161,9 @@ export function createApprovalGateMiddleware(
     timeoutMs = DEFAULT_TIMEOUT_MS,
     resolveSessionKey,
     resolveRoute,
+    mode: staticMode = 'ask',
+    resolveMode,
+    hardline,
   } = options;
   const topic = `handraise.human.${channel}` as TopicString;
 
@@ -136,6 +179,24 @@ export function createApprovalGateMiddleware(
     return {
       ...tool,
       execute: async (callId, input, toolCtx): Promise<ToolResult> => {
+        // Hardline floor — fires before predicate, mode, and cache. No
+        // approval, no override. See hardline.ts for the rationale.
+        if (hardline) {
+          const hit = hardline(tool.name, input);
+          if (hit) {
+            toolCtx.logger.warn('approval.hardline.block', {
+              tool: tool.name,
+              ruleId: hit.ruleId,
+              description: hit.description,
+            });
+            return errorResult(
+              `BLOCKED by hardline floor (${hit.ruleId}): ${hit.description}. ` +
+                `This action has no approve path — do not retry, do not ` +
+                `rephrase, do not attempt the same outcome via a different tool.`,
+            );
+          }
+        }
+
         const spec = predicate(tool.name, input);
         if (!spec) return original(callId, input, toolCtx);
 
@@ -144,20 +205,46 @@ export function createApprovalGateMiddleware(
           resolveSessionKey?.({ tenantId, toolName: tool.name }) ??
           `tenant:${tenantId}`;
 
+        const effectiveMode: ApprovalMode =
+          (await resolveMode?.({ tenantId, toolName: tool.name, sessionKey })) ??
+          staticMode;
+
+        // Cached deny is binding regardless of mode — an explicit prior
+        // deny is not something `off` should override silently.
         const cached = await store.lookup(tenantId, sessionKey, spec.approvalKey);
-        if (cached === 'allow') {
-          toolCtx.logger.info('approval.cached.allow', {
-            tool: tool.name,
-            approvalKey: spec.approvalKey,
-          });
-          return original(callId, input, toolCtx);
-        }
         if (cached === 'deny') {
           toolCtx.logger.info('approval.cached.deny', {
             tool: tool.name,
             approvalKey: spec.approvalKey,
           });
           return errorResult(`Approval denied by prior policy for ${tool.name}`);
+        }
+
+        if (effectiveMode === 'block') {
+          toolCtx.logger.info('approval.mode.block', {
+            tool: tool.name,
+            approvalKey: spec.approvalKey,
+          });
+          return errorResult(
+            `BLOCKED by approval mode='block': ${tool.name} is currently ` +
+              `disallowed by policy. No prompt was issued.`,
+          );
+        }
+
+        if (effectiveMode === 'off') {
+          toolCtx.logger.info('approval.mode.off', {
+            tool: tool.name,
+            approvalKey: spec.approvalKey,
+          });
+          return original(callId, input, toolCtx);
+        }
+
+        if (cached === 'allow') {
+          toolCtx.logger.info('approval.cached.allow', {
+            tool: tool.name,
+            approvalKey: spec.approvalKey,
+          });
+          return original(callId, input, toolCtx);
         }
 
         const route = resolveRoute?.({

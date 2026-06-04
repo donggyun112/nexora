@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createDelegateTool } from '../builtin/delegate.js';
+import { InMemoryApprovalPolicyStore } from '../handraise/index.js';
 import type {
   EventTransport,
   MessageEnvelope,
@@ -255,5 +256,81 @@ describe('delegate tool', () => {
       // ephemeral listener with metadata.replyTo === envelope.id.
       expect(result.text).toContain(received.id);
     }
+  });
+
+  it("approvalGate mode='block' short-circuits before publishing", async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([
+      makeCard('billing-agent', 'billing.refund', ['billing.refund.requested']),
+    ]);
+    const store = new InMemoryApprovalPolicyStore();
+    const tool = createDelegateTool({
+      transport,
+      registry,
+      approvalGate: {
+        transport,
+        store,
+        // Gate on every delegate call — the caller's policy decides risk.
+        predicate: (_toolName, input) => {
+          const cap = (input as { capability?: string } | undefined)?.capability;
+          if (cap === 'billing.refund') {
+            return {
+              approvalKey: `delegate:${cap}`,
+              command: `delegate → ${cap}`,
+              reason: 'risky capability',
+            };
+          }
+          return null;
+        },
+        mode: 'block',
+      },
+    });
+
+    const result = await tool.execute('d-block', {
+      capability: 'billing.refund',
+      input: { amount: 100 },
+      timeoutMs: 500,
+    }, makeCtx());
+
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toContain("mode='block'");
+  });
+
+  it("approvalGate mode='off' lets non-risky caps through untouched", async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([makeCard('summarizer', 'summarize', ['summarize.requested'])]);
+    transport.subscribe('summarize.requested', async (env) => {
+      await transport.publish({
+        id: messageId(), topic: 'summarize.completed', type: 'result',
+        payload: { content: 'ok', toolCalls: [] },
+        metadata: { ...env.metadata, replyTo: env.id, timestamp: Date.now() },
+      });
+    });
+
+    const store = new InMemoryApprovalPolicyStore();
+    const tool = createDelegateTool({
+      transport,
+      registry,
+      approvalGate: {
+        transport,
+        store,
+        predicate: (_toolName, input) => {
+          const cap = (input as { capability?: string } | undefined)?.capability;
+          return cap === 'billing.refund'
+            ? { approvalKey: `delegate:${cap}`, command: `delegate → ${cap}`, reason: 'risky' }
+            : null;
+        },
+        mode: 'off',
+      },
+    });
+
+    const result = await tool.execute('d-off', {
+      capability: 'summarize',
+      input: { prompt: 'x' },
+      timeoutMs: 2000,
+    }, makeCtx());
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toContain('ok');
   });
 });

@@ -45,28 +45,45 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
     async *loop(services: RuntimeServices, input: AgentInput): AsyncGenerator<AgentEvent> {
       const history: LLMMessage[] = [];
 
-      // 1. 이전 대화 히스토리
-      const memoryHistory = await services.memory.getHistory();
-      for (const msg of memoryHistory) {
-        history.push({ role: msg.role, content: msg.content });
-      }
-      for (const prev of input.history ?? []) {
-        history.push({ role: prev.role, content: prev.content });
-      }
+      if (input.resumeContext) {
+        // Resume: hydrate from saved architecture history, inject tool_result, skip user-prompt push
+        history.push(...input.resumeContext.architectureHistory);
+        history.push({
+          role: 'tool_result',
+          content: [{
+            type: 'tool_result',
+            id: input.resumeContext.resumedCallId,
+            content: formatResultForLLM(input.resumeContext.toolResult),
+            isError: isErrorResult(input.resumeContext.toolResult),
+          }],
+        });
+        // memory.append for resume is intentionally skipped — the user-facing turn was
+        // already recorded in ConversationStore (memory) during the original execution.
+      } else {
+        // Normal entry: existing setup (unchanged)
+        // 1. 이전 대화 히스토리
+        const memoryHistory = await services.memory.getHistory();
+        for (const msg of memoryHistory) {
+          history.push({ role: msg.role, content: msg.content });
+        }
+        for (const prev of input.history ?? []) {
+          history.push({ role: prev.role, content: prev.content });
+        }
 
-      // 2. 현재 사용자 입력
-      const userContent = input.images && input.images.length > 0
-        ? [
-            { type: 'text' as const, text: input.prompt },
-            ...input.images.map(img => ({
-              type: 'image' as const,
-              data: img.data,
-              mimeType: img.mimeType,
-            })),
-          ]
-        : input.prompt;
-      history.push({ role: 'user', content: userContent });
-      await services.memory.append({ role: 'user', content: input.prompt });
+        // 2. 현재 사용자 입력
+        const userContent = input.images && input.images.length > 0
+          ? [
+              { type: 'text' as const, text: input.prompt },
+              ...input.images.map(img => ({
+                type: 'image' as const,
+                data: img.data,
+                mimeType: img.mimeType,
+              })),
+            ]
+          : input.prompt;
+        history.push({ role: 'user', content: userContent });
+        await services.memory.append({ role: 'user', content: input.prompt });
+      }
 
       const allToolCalls: { name: string; input: unknown }[] = [];
       let lastContent = '';

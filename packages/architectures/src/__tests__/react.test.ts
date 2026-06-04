@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createReactArchitecture } from '../react.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, RuntimeServices } from '@nexora/contracts';
+import type { AgentEvent, RuntimeServices, LLMMessage } from '@nexora/contracts';
 import { suspendResult } from '@nexora/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
@@ -253,5 +253,78 @@ describe('ReAct suspend', () => {
     const events = await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'q' }));
     expect(events.some(e => e.type === 'suspended' && (e as { type: 'suspended'; pendingId: string }).pendingId === 'p1')).toBe(true);
     expect(events.some(e => e.type === 'done')).toBe(false);
+  });
+});
+
+describe('ReAct resume', () => {
+  it('seeds history from resumeContext and injects tool_result before next LLM turn', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'final answer based on user reply', toolCalls: [] },
+    ]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>();
+    const services = makeServices(llm, tools);
+
+    const savedHistory: LLMMessage[] = [
+      { role: 'user', content: 'original prompt' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool_call', id: 'call-1', name: 'ask', arguments: { q: 'go?' } },
+        ],
+      },
+    ];
+
+    const react = createReactArchitecture();
+    const events = await collect(react.loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: {
+        architectureHistory: savedHistory,
+        resumedCallId: 'call-1',
+        toolResult: { type: 'text', text: 'yes' },
+      },
+    }));
+
+    const done = events.find(e => e.type === 'done');
+    expect(done).toMatchObject({ type: 'done', content: 'final answer based on user reply' });
+
+    // verify LLM saw the seeded history + injected tool_result
+    const lastCallMessages = llm.callLog[0].messages;
+    // assistant tool_call message preserved
+    expect(lastCallMessages).toContainEqual(savedHistory[1]);
+    // tool_result for resumed call present
+    expect(lastCallMessages.find((m: LLMMessage) =>
+      m.role === 'tool_result' &&
+      Array.isArray(m.content) &&
+      (m.content as any[]).some((c: any) => c.type === 'tool_result' && c.id === 'call-1' && c.content === 'yes')
+    )).toBeTruthy();
+  });
+
+  it('resume path does not call memory.append', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'ok', toolCalls: [] },
+    ]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>();
+    const memoryAppends: any[] = [];
+    const services = makeServices(llm, tools, {
+      memory: {
+        append: async (msg: any) => { memoryAppends.push(msg); },
+        getHistory: async () => [],
+        compact: async () => null,
+        clear: async () => {},
+      },
+    });
+
+    const react = createReactArchitecture();
+    await collect(react.loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: {
+        architectureHistory: [{ role: 'user', content: 'orig' }],
+        resumedCallId: 'c1',
+        toolResult: { type: 'text', text: 'yes' },
+      },
+    }));
+
+    // On resume, no user message should be appended to memory (it was appended on original execution).
+    expect(memoryAppends.some((m: any) => m.role === 'user')).toBe(false);
   });
 });

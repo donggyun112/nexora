@@ -245,6 +245,10 @@ export function formatToolResult(result: ToolResult): string {
       return `[image: ${result.mimeType}]`;
     case 'error':
       return `[ERROR] ${result.message}`;
+    case 'suspend':
+      // Suspend result should be handled at the ReAct loop level, not formatted for LLM.
+      // This case handles the unexpected occurrence in user code.
+      return `[SUSPENDED: pending=${result.pendingId}]`;
   }
 }
 

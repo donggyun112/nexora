@@ -57,8 +57,14 @@ interface CacheEntry {
   readonly menu: string;
 }
 
+export interface SkillMenuSnapshotEntry {
+  readonly name: string;
+  readonly description: string;
+}
+
 const CACHE_MAX = 32;
 const cache = new Map<string, CacheEntry>();
+const lastSnapshotByDirs = new Map<string, SkillMenuSnapshotEntry[]>();
 
 function dirSignature(dir: string): string {
   try {
@@ -123,6 +129,10 @@ function cacheKey(options: BuildSkillMenuOptions): string {
     recursiveStatSignature(options.agentSkillsDir),
     recursiveStatSignature(sharedDir),
   ].join('||');
+}
+
+function snapshotKey(agentSkillsDir: string, sharedSkillsDir?: string): string {
+  return [agentSkillsDir, sharedSkillsDir ?? ''].join('||');
 }
 
 function discoverSkills(rootDir: string): DiscoveredSkill[] {
@@ -300,6 +310,11 @@ export function buildSkillMenu(options: BuildSkillMenuOptions): string {
   const sharedSkills = options.sharedSkillsDir
     ? discoverSkills(options.sharedSkillsDir)
     : [];
+  rememberSkillMenuSnapshot(
+    options.agentSkillsDir,
+    options.sharedSkillsDir,
+    snapshotFromDiscovered(agentSkills, sharedSkills),
+  );
   const structure = buildStructure(agentSkills, sharedSkills, options.filter);
 
   if (structure.total === 0) {
@@ -327,6 +342,23 @@ export function invalidateSkillMenuCache(): void {
   cache.clear();
 }
 
+export function getLastSkillMenuSnapshot(
+  agentSkillsDir: string,
+  sharedSkillsDir?: string,
+): SkillMenuSnapshotEntry[] | null {
+  const snapshot = lastSnapshotByDirs.get(snapshotKey(agentSkillsDir, sharedSkillsDir));
+  return snapshot ? snapshot.map(s => ({ ...s })) : null;
+}
+
+export function refreshSkillMenuSnapshot(
+  agentSkillsDir: string,
+  sharedSkillsDir?: string,
+): SkillMenuSnapshotEntry[] {
+  const snapshot = snapshotSkills(agentSkillsDir, sharedSkillsDir);
+  rememberSkillMenuSnapshot(agentSkillsDir, sharedSkillsDir, snapshot);
+  return snapshot;
+}
+
 /**
  * 현재 디스크 상태로 스킬 인덱스 스냅샷 반환. skill_reload 의 before/after diff 용.
  * 메뉴 빌드와 같은 우선순위(agent override shared)로 dedupe.
@@ -334,10 +366,17 @@ export function invalidateSkillMenuCache(): void {
 export function snapshotSkills(
   agentSkillsDir: string,
   sharedSkillsDir?: string,
-): Array<{ name: string; description: string }> {
+): SkillMenuSnapshotEntry[] {
   const agent = discoverSkills(agentSkillsDir);
   const shared = sharedSkillsDir ? discoverSkills(sharedSkillsDir) : [];
-  const byName = new Map<string, { name: string; description: string }>();
+  return snapshotFromDiscovered(agent, shared);
+}
+
+function snapshotFromDiscovered(
+  agent: DiscoveredSkill[],
+  shared: DiscoveredSkill[],
+): SkillMenuSnapshotEntry[] {
+  const byName = new Map<string, SkillMenuSnapshotEntry>();
   for (const it of agent) {
     byName.set(it.skill.meta.name, {
       name: it.skill.meta.name,
@@ -353,4 +392,15 @@ export function snapshotSkills(
     }
   }
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function rememberSkillMenuSnapshot(
+  agentSkillsDir: string,
+  sharedSkillsDir: string | undefined,
+  snapshot: SkillMenuSnapshotEntry[],
+): void {
+  lastSnapshotByDirs.set(
+    snapshotKey(agentSkillsDir, sharedSkillsDir),
+    snapshot.map(s => ({ ...s })),
+  );
 }

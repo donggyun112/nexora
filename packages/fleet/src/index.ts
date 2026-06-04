@@ -208,7 +208,7 @@ export class FleetCoordinator {
 
     const request: WorkerInvocationRequest = {
       id: input.id,
-      context: input.context,
+      context: contextForWorker(input.context, worker, input.capability),
       capability: input.capability,
       input: input.input,
       timeoutMs: input.timeoutMs,
@@ -218,7 +218,7 @@ export class FleetCoordinator {
 
     const result = await this.options.invoker.invoke(worker, request);
     const submitDecisions = await this.validateSubmitIfNeeded({
-      context: input.context,
+      context: request.context,
       state,
       capability: input.capability,
       result,
@@ -282,10 +282,25 @@ export class FleetCoordinator {
         }),
     );
 
+    if (input.mode === 'race') {
+      const winner = await firstAcceptedDelivery(deliveryPromises);
+      if (winner) {
+        return {
+          mode: input.mode,
+          capability: input.capability,
+          broadcastId: input.id,
+          workers,
+          deliveries: completed.slice(),
+          winner,
+          decisions,
+        };
+      }
+    }
+
     const deliveries = await Promise.all(deliveryPromises);
     const accepted = deliveries.filter(isAcceptedDelivery);
     const winner = input.mode === 'race'
-      ? completed.find(isAcceptedDelivery)
+      ? deliveries.find(isAcceptedDelivery)
       : undefined;
     const required = input.mode === 'quorum'
       ? input.quorum ?? Math.floor(workers.length / 2) + 1
@@ -319,7 +334,7 @@ export class FleetCoordinator {
   ): Promise<FleetBroadcastDelivery> {
     const request: WorkerInvocationRequest = {
       id: `${input.id}:${worker.id}`,
-      context: input.context,
+      context: contextForWorker(input.context, worker, input.capability),
       capability: input.capability,
       input: input.input,
       timeoutMs: input.timeoutMs,
@@ -337,7 +352,7 @@ export class FleetCoordinator {
     try {
       const result = await this.options.invoker.invoke(worker, request);
       const decisions = await this.validateSubmitIfNeeded({
-        context: input.context,
+        context: request.context,
         state,
         capability: input.capability,
         result,
@@ -410,6 +425,41 @@ function selectBroadcastWorkers(
       if (loadRank !== 0) return loadRank;
       return a.id.localeCompare(b.id);
     });
+}
+
+function contextForWorker(
+  context: OracleContext,
+  worker: Worker,
+  capability: CapabilityRef,
+): OracleContext {
+  return {
+    ...context,
+    capability: context.capability ?? capability,
+    workerId: worker.id,
+  };
+}
+
+function firstAcceptedDelivery(
+  deliveries: Array<Promise<FleetBroadcastDelivery>>,
+): Promise<FleetBroadcastDelivery | null> {
+  return new Promise(resolve => {
+    let pending = deliveries.length;
+    if (pending === 0) {
+      resolve(null);
+      return;
+    }
+
+    for (const deliveryPromise of deliveries) {
+      void deliveryPromise.then(delivery => {
+        if (isAcceptedDelivery(delivery)) {
+          resolve(delivery);
+          return;
+        }
+        pending -= 1;
+        if (pending === 0) resolve(null);
+      });
+    }
+  });
 }
 
 function isAcceptedDelivery(delivery: FleetBroadcastDelivery): boolean {

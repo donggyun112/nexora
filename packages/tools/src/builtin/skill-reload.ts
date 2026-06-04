@@ -14,7 +14,9 @@ import {
   type ToolContext,
 } from '@nexora/contracts';
 import {
+  getLastSkillMenuSnapshot,
   invalidateSkillMenuCache,
+  refreshSkillMenuSnapshot,
   snapshotSkills,
 } from '@nexora/skills';
 
@@ -36,9 +38,11 @@ export function createSkillReloadTool(options: SkillReloadToolOptions): ToolDefi
     isConcurrencySafe: false,
     isDestructive: false,
     async execute(_callId: string, _rawInput: unknown, _ctx: ToolContext): Promise<ToolResult> {
-      const before = snapshotSkills(options.agentSkillsDir, options.sharedSkillsDir);
+      const before =
+        getLastSkillMenuSnapshot(options.agentSkillsDir, options.sharedSkillsDir) ??
+        snapshotSkills(options.agentSkillsDir, options.sharedSkillsDir);
       invalidateSkillMenuCache();
-      const after = snapshotSkills(options.agentSkillsDir, options.sharedSkillsDir);
+      const after = refreshSkillMenuSnapshot(options.agentSkillsDir, options.sharedSkillsDir);
 
       const beforeMap = new Map(before.map((s) => [s.name, s.description]));
       const afterMap = new Map(after.map((s) => [s.name, s.description]));

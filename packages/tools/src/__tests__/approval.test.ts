@@ -399,4 +399,15 @@ describe('approvalGateMiddleware', () => {
     expect(result.type).toBe('text');
     expect(calls).toHaveLength(1);
   });
+
+  it('hardline shell rules catch rm flag variants and avoid non-recursive chmod false positives', () => {
+    expect(defaultShellHardlineRule('shell', { command: 'rm -f -r /Users' })?.ruleId)
+      .toBe('hardline.rm_root');
+    expect(defaultShellHardlineRule('shell', { command: 'rm -rf --no-preserve-root /' })?.ruleId)
+      .toBe('hardline.rm_root');
+    expect(defaultShellHardlineRule('shell', { command: 'chmod 644 /etc/hosts' }))
+      .toBeNull();
+    expect(defaultShellHardlineRule('shell', { command: 'chmod -R 755 /etc' })?.ruleId)
+      .toBe('hardline.chmod_root');
+  });
 });

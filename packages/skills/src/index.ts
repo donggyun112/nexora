@@ -28,13 +28,16 @@ export type { SkillCreatorOptions, CreateSkillInput } from './skill-creator.js';
 
 export {
   buildSkillMenu,
+  getLastSkillMenuSnapshot,
   invalidateSkillMenuCache,
+  refreshSkillMenuSnapshot,
   snapshotSkills,
 } from './skill-menu.js';
 export type {
   BuildSkillMenuOptions,
   SkillMenuPreamble,
   SkillMenuFilter,
+  SkillMenuSnapshotEntry,
 } from './skill-menu.js';
 
 export { postProcessSkillBody } from './skill-body-postprocess.js';

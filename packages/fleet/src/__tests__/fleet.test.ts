@@ -37,6 +37,14 @@ function worker(id: string, overrides: Partial<Worker> = {}): Worker {
   };
 }
 
+function submitResult(workerId: string) {
+  return {
+    type: 'submit' as const,
+    contract: 'submit_content',
+    output: { workerId },
+  };
+}
+
 describe('InMemoryWorkerRegistry', () => {
   it('registers, heartbeats, and finds workers by capability', async () => {
     const registry = new InMemoryWorkerRegistry();
@@ -172,6 +180,49 @@ describe('FleetCoordinator', () => {
     })).rejects.toBeInstanceOf(OracleRejectedSyscallError);
   });
 
+  it('passes selected worker identity to invocation and submit oracle context', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    await registry.register({
+      id: 'writer-1',
+      adapter: 'http',
+      provides: ['marketing.long-form-content@v1'],
+      endpoint: { type: 'http', url: 'https://workers.test/writer-1' },
+      version: '0.1.0',
+    });
+
+    let invocationContext: OracleContext | undefined;
+    let submitContext: OracleContext | undefined;
+    const oracle: NexoraOracle = {
+      async judge({ context: judgedContext, syscall }) {
+        if (syscall.type === 'submit') submitContext = judgedContext;
+        return { decision: 'allow' };
+      },
+    };
+
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: {
+        async invoke(_worker, request) {
+          invocationContext = request.context;
+          return { type: 'submit', contract: 'submit_content', output: {} };
+        },
+      },
+      oracle,
+    });
+
+    await coordinator.dispatch({
+      id: 'dispatch-1',
+      capability: 'marketing.long-form-content@v1',
+      input: {},
+      context,
+    });
+
+    expect(invocationContext?.workerId).toBe('writer-1');
+    expect(invocationContext?.capability).toBe('marketing.long-form-content@v1');
+    expect(submitContext?.workerId).toBe('writer-1');
+    expect(submitContext?.capability).toBe('marketing.long-form-content@v1');
+  });
+
   it('announces a broadcast without invoking workers', async () => {
     const registry = new InMemoryWorkerRegistry();
     await registry.register({
@@ -252,6 +303,49 @@ describe('FleetCoordinator', () => {
     });
   });
 
+  it('passes each broadcast worker identity to submit oracle context', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    for (const id of ['writer-1', 'writer-2']) {
+      await registry.register({
+        id,
+        adapter: 'http',
+        provides: ['marketing.long-form-content@v1'],
+        endpoint: { type: 'http', url: `https://workers.test/${id}` },
+        version: '0.1.0',
+      });
+    }
+
+    const submitWorkerIds: string[] = [];
+    const oracle: NexoraOracle = {
+      async judge({ context: judgedContext, syscall }) {
+        if (syscall.type === 'submit' && judgedContext.workerId) {
+          submitWorkerIds.push(judgedContext.workerId);
+        }
+        return { decision: 'allow' };
+      },
+    };
+
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: {
+        async invoke() {
+          return { type: 'submit', contract: 'submit_content', output: {} };
+        },
+      },
+      oracle,
+    });
+
+    await coordinator.broadcast({
+      id: 'broadcast-1',
+      mode: 'fanout',
+      capability: 'marketing.long-form-content@v1',
+      input: {},
+      context,
+    });
+
+    expect(submitWorkerIds.sort()).toEqual(['writer-1', 'writer-2']);
+  });
+
   it('records the first accepted submit as race winner', async () => {
     const registry = new InMemoryWorkerRegistry();
     for (const id of ['slow', 'fast']) {
@@ -288,7 +382,50 @@ describe('FleetCoordinator', () => {
     });
 
     expect(result.winner?.worker.id).toBe('fast');
-    expect(result.deliveries).toHaveLength(2);
+    expect(result.deliveries.some(d => d.worker.id === 'fast')).toBe(true);
+  });
+
+  it('race broadcast returns after the first accepted submit without waiting for slow workers', async () => {
+    const registry = new InMemoryWorkerRegistry();
+    for (const id of ['slow', 'fast']) {
+      await registry.register({
+        id,
+        adapter: 'http',
+        provides: ['marketing.long-form-content@v1'],
+        endpoint: { type: 'http', url: `https://workers.test/${id}` },
+        version: '0.1.0',
+      });
+    }
+
+    let slowResolved = false;
+    let releaseSlow: (() => void) | undefined;
+    const invoke = vi.fn(async (target: Worker) => {
+      if (target.id === 'slow') {
+        return new Promise<ReturnType<typeof submitResult>>(resolve => {
+          releaseSlow = () => {
+            slowResolved = true;
+            resolve(submitResult(target.id));
+          };
+        });
+      }
+      return submitResult(target.id);
+    });
+    const coordinator = new FleetCoordinator({
+      registry,
+      invoker: { invoke },
+    });
+
+    const result = await coordinator.broadcast({
+      id: 'broadcast-1',
+      mode: 'race',
+      capability: 'marketing.long-form-content@v1',
+      input: {},
+      context,
+    });
+
+    expect(result.winner?.worker.id).toBe('fast');
+    expect(slowResolved).toBe(false);
+    releaseSlow?.();
   });
 
   it('reports quorum status from accepted submit deliveries', async () => {

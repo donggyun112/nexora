@@ -43,13 +43,14 @@ export function extractCommandString(input: unknown): string | null {
 const HARDLINE_SHELL_PATTERNS: Array<{
   ruleId: string;
   description: string;
-  pattern: RegExp;
+  pattern?: RegExp;
+  test?: (command: string) => boolean;
 }> = [
   {
     ruleId: 'hardline.rm_root',
     description: 'recursive rm targeting root or a top-level path',
-    // `rm -rf /`, `rm -rf /*`, `rm -rf /usr`, `rm --recursive --force /`
-    pattern: /\brm\s+(?:-[a-zA-Z]*[rRf][a-zA-Z]*\s+|--(?:recursive|force)\s+)+(?:--\s+)?\/(?:\s|\*|$|[a-z]+\s*$)/,
+    // `rm -rf /`, `rm -f -r /Users`, `rm -rf --no-preserve-root /`
+    test: isDangerousRecursiveRm,
   },
   {
     ruleId: 'hardline.mkfs',
@@ -79,7 +80,7 @@ const HARDLINE_SHELL_PATTERNS: Array<{
   {
     ruleId: 'hardline.chmod_root',
     description: 'recursive chmod against / or /etc',
-    pattern: /\bchmod\s+(?:-R\s+)?[0-7]+\s+\/(?:\s|etc\b|usr\b|bin\b)/,
+    test: isDangerousRecursiveChmod,
   },
   {
     ruleId: 'hardline.sudo_stdin_password',
@@ -96,7 +97,7 @@ export const defaultShellHardlineRule: HardlineRule = (_toolName, input) => {
   const cmd = extractCommandString(input);
   if (!cmd) return null;
   for (const entry of HARDLINE_SHELL_PATTERNS) {
-    if (entry.pattern.test(cmd)) {
+    if (entry.test?.(cmd) || entry.pattern?.test(cmd)) {
       return { ruleId: entry.ruleId, description: entry.description };
     }
   }
@@ -112,4 +113,72 @@ export function composeHardlineRules(...rules: HardlineRule[]): HardlineRule {
     }
     return null;
   };
+}
+
+function isDangerousRecursiveRm(command: string): boolean {
+  const words = shellWords(command);
+  for (let i = 0; i < words.length; i += 1) {
+    if (!isCommandName(words[i], 'rm')) continue;
+    const args = words.slice(i + 1);
+    if (!args.some(isRecursiveRmFlag)) continue;
+    if (args.some(isRootOrTopLevelPath)) return true;
+  }
+  return false;
+}
+
+function isDangerousRecursiveChmod(command: string): boolean {
+  const words = shellWords(command);
+  for (let i = 0; i < words.length; i += 1) {
+    if (!isCommandName(words[i], 'chmod')) continue;
+    const args = words.slice(i + 1);
+    if (!args.some(isRecursiveChmodFlag)) continue;
+    if (args.some(isRootOrSystemPath)) return true;
+  }
+  return false;
+}
+
+function shellWords(command: string): string[] {
+  const matches = command.match(/"(?:\\.|[^"\\])*"|'[^']*'|[^\s]+/g) ?? [];
+  return matches.map(stripOuterQuotes);
+}
+
+function stripOuterQuotes(value: string): string {
+  if (value.length < 2) return value;
+  const first = value[0];
+  const last = value[value.length - 1];
+  if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function isCommandName(value: string, expected: string): boolean {
+  return value === expected || value.endsWith(`/${expected}`);
+}
+
+function isRecursiveRmFlag(value: string): boolean {
+  if (value === '--recursive' || value.startsWith('--recursive=')) return true;
+  if (value.startsWith('--')) return false;
+  return value.startsWith('-') && /[rR]/.test(value);
+}
+
+function isRecursiveChmodFlag(value: string): boolean {
+  if (value === '--recursive' || value.startsWith('--recursive=')) return true;
+  if (value.startsWith('--')) return false;
+  return value.startsWith('-') && value.includes('R');
+}
+
+function isRootOrTopLevelPath(value: string): boolean {
+  const target = trimTrailingSlashes(value);
+  if (target === '/' || target === '/*') return true;
+  return /^\/[^/\s*]+$/.test(target);
+}
+
+function isRootOrSystemPath(value: string): boolean {
+  const target = trimTrailingSlashes(value);
+  return target === '/' || /^\/(?:etc|usr|bin)(?:\/\*)?$/.test(target);
+}
+
+function trimTrailingSlashes(value: string): string {
+  return value.replace(/\/+$/, '') || '/';
 }

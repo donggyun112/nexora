@@ -20,6 +20,18 @@ export interface AgentInput {
 
   /** 요청자 식별 (추적용) */
   requesterId?: string;
+
+  /**
+   * Set when re-entering the loop after a suspended tool call.
+   * Architecture must seed `history` from architectureHistory (already includes
+   * the assistant message containing the suspended tool_call), then inject the
+   * tool_result with `resumedCallId` before the next LLM turn.
+   */
+  resumeContext?: {
+    architectureHistory: LLMMessage[];
+    resumedCallId: string;
+    toolResult: ToolResult;
+  };
 }
 
 export interface ChatMessage {
@@ -45,7 +57,8 @@ export type AgentEvent =
   | { type: 'thinking'; content: string }
   | { type: 'progress'; message: string; agent?: string }
   | { type: 'done'; content: string; toolCalls: ToolCallSummary[] }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'suspended'; pendingId: string; toolCallId: string };
 
 export interface ToolCallSummary {
   name: string;
@@ -101,6 +114,18 @@ export interface RuntimeServices {
    * 매 루프 반복마다 signal.aborted를 확인해 빠르게 종료해야 한다.
    */
   signal: AbortSignal;
+
+  /**
+   * Architecture-level hook invoked when a tool returns ToolResult.suspend.
+   * Receives the architecture history snapshot so the caller can persist it.
+   * If not provided, the architecture still emits a `suspended` event but no
+   * persistence callback fires.
+   */
+  onSuspend?: (info: {
+    pendingId: string;
+    toolCallId: string;
+    architectureHistory: LLMMessage[];
+  }) => Promise<void>;
 }
 
 export interface LLMProvider {

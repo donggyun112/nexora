@@ -87,6 +87,9 @@ export interface AgentArchitecture {
   /** 아키텍처 이름 (react, 또는 외부에서 정의한 커스텀 아키텍처) */
   name: string;
 
+  /** 초기 시스템 프롬프트 — 로깅·관찰용 (옵션) */
+  systemPrompt?: string;
+
   /** 메인 실행 루프 */
   loop(runtime: RuntimeServices, input: AgentInput): AsyncGenerator<AgentEvent>;
 }

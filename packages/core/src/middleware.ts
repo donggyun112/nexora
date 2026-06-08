@@ -201,7 +201,11 @@ export function loggingMiddleware(
   return {
     name: 'logging',
     beforeExecution: (ctx) => {
-      logger.info('agent.start', { tools: ctx.tools.length });
+      logger.info('agent.start', {
+        tools: ctx.tools.length,
+        systemPrompt: summarizeToolInput(ctx.systemPrompt, 1000),
+        systemPromptLength: ctx.systemPrompt?.length ?? 0,
+      });
     },
     afterExecution: (ctx) => {
       logger.info('agent.end', {

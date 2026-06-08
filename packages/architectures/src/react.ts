@@ -41,6 +41,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 
   return {
     name: 'react',
+    systemPrompt: options.systemPrompt,
 
     async *loop(services: RuntimeServices, input: AgentInput): AsyncGenerator<AgentEvent> {
       const history: LLMMessage[] = [];

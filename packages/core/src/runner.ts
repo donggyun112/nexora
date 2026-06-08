@@ -124,7 +124,7 @@ export class AgentRunner implements AgentRuntime {
       const beforeCtx = {
         input,
         tools: listExecutableTools(services.tools),
-        systemPrompt: '',
+        systemPrompt: this.architecture.systemPrompt ?? '',
       };
       await this.pipeline.runBeforeExecution(beforeCtx);
       if (services.tools.withTools) {

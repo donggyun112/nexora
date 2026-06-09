@@ -58,7 +58,7 @@ export interface AgentBootstrapOptions {
    * Convert an incoming MessageEnvelope into the agent's domain-specific
    * AgentInput. Each agent implements this per its payload schema.
    */
-  toAgentInput: (envelope: MessageEnvelope) => AgentInput;
+  toAgentInput: (envelope: MessageEnvelope) => AgentInput | Promise<AgentInput>;
   /**
    * Compute the topic to publish the result on. Default: first entry of
    * `card.publishes`, or `<incoming-topic>.completed` if `publishes` is empty.
@@ -312,7 +312,7 @@ async function handleMessage(args: {
     const context = await contextLoader.load(tenantId, card.name);
     const runtime = await createRuntime({ context, envelope });
 
-    const input = toAgentInput(envelope);
+    const input = await toAgentInput(envelope);
 
     const events: AgentEvent[] = [];
     for await (const event of runtime.execute(input)) {

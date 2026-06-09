@@ -16,6 +16,12 @@ import type {
   BudgetScope,
 } from '@nexora/contracts';
 
+// 로그용 systemPrompt 요약 — 길면 잘라 길이 표시. (순수 로깅, 동작 영향 없음)
+function summarizeToolInput(value: string | undefined, max: number): string {
+  if (!value) return '';
+  return value.length <= max ? value : `${value.slice(0, max)}… (+${value.length - max} chars)`;
+}
+
 // ─── 훅 컨텍스트 ────────────────────────────────────────────────────────────
 
 export interface BeforeExecutionContext {

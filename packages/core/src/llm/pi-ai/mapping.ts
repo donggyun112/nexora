@@ -222,7 +222,15 @@ export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
   if (msg.stopReason === 'error' || msg.stopReason === 'aborted') {
     const message = (msg as unknown as { errorMessage?: string }).errorMessage ?? `pi-ai ${msg.stopReason}`;
     const err = new Error(message);
-    if (msg.stopReason === 'aborted') err.name = 'AbortError';
+    if (msg.stopReason === 'aborted') {
+      err.name = 'AbortError';
+    } else {
+      // Provider-side failure: the request was sent and upstream broke (overload,
+      // dropped stream, SDK parse error). The provider catch dropped the original
+      // status/code and kept only the message, so retry layers can't classify it
+      // by status. Mark it so they can treat it as transient and retry.
+      (err as { providerError?: boolean }).providerError = true;
+    }
     throw err;
   }
 

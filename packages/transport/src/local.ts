@@ -188,6 +188,9 @@ export class LocalTransport implements EventTransport {
 /**
  * MessageEnvelope 생성 헬퍼 (신규 발행용).
  * 분산 추적 메타데이터 자동 채움.
+ *
+ * caller 가 넘긴 metadata 의 custom 키(channel, sharedThread 등 앱 확장 필드)는
+ * 보존한다 — 고정 키만 재구성하면 앱 레이어의 envelope 전파가 조용히 깨진다.
  */
 export function createEnvelope<T>(args: {
   topic: TopicString | string;
@@ -202,6 +205,7 @@ export function createEnvelope<T>(args: {
     type: args.type ?? 'request',
     payload: args.payload,
     metadata: {
+      ...md,
       traceId: md.traceId ?? traceId(),
       spanId: md.spanId ?? spanId(),
       parentSpanId: md.parentSpanId,

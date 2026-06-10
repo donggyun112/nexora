@@ -152,7 +152,7 @@ function extractText(blocks: LLMContentBlock[]): string {
 
 export function toPiOptions(options: LLMOptions | undefined): {
   signal?: AbortSignal;
-  reasoning?: 'minimal' | 'low' | 'medium' | 'high';
+  reasoning?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   maxTokens?: number;
   temperature?: number;
 } {
@@ -162,7 +162,7 @@ export function toPiOptions(options: LLMOptions | undefined): {
   if (options.maxTokens !== undefined) out.maxTokens = options.maxTokens;
   if (options.temperature !== undefined) out.temperature = options.temperature;
   if (options.thinkingLevel && options.thinkingLevel !== 'off') {
-    out.reasoning = options.thinkingLevel as 'minimal' | 'low' | 'medium' | 'high';
+    out.reasoning = options.thinkingLevel as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   }
   return out;
 }

@@ -162,7 +162,7 @@ export interface LLMOptions {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string;
-  thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high';
+  thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   /** Cancellation signal — provider must forward to underlying SDK call. */
   signal?: AbortSignal;
   /** Dynamic tool definitions — overrides provider's static tools when set. */

@@ -45,7 +45,7 @@ export interface ResourceLimits {
   model: string;
 
   /** thinking 레벨 — 기존 AGENT_THINKING 설정 */
-  thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high';
+  thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
   /** 컨텍스트 윈도우 크기 — 기존 DEFAULT_CONTEXT_WINDOW */
   contextWindow: number;

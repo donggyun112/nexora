@@ -77,6 +77,11 @@ export interface TranscriptEntryBase {
   parentUuid: string | null;
   /** 대화 식별자 (Discord channelId, session UUID 등). */
   conversationId: string;
+  /**
+   * 대화가 오간 채널 ('discord' | 'web' | …). 분할 축이 아니라 속성 —
+   * 스토어는 채널 무관 통합 저장하고 이 값을 질의 차원으로만 쓴다.
+   */
+  channel?: string;
   /** ISO8601 timestamp. */
   timestamp: string;
   /** Schema version. 현재 'v2'. 마이그레이션 hook 용. */

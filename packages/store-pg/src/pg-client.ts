@@ -151,4 +151,40 @@ async function migrate(sql: Sql): Promise<void> {
       PRIMARY KEY (tenant_id, window_start)
     )
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS nexora_transcript_entry (
+      seq             BIGSERIAL PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      uuid            TEXT NOT NULL,
+      channel         TEXT,
+      type            TEXT NOT NULL,
+      ts              TIMESTAMPTZ NOT NULL,
+      entry           JSONB NOT NULL
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_nexora_transcript_entry_conv
+      ON nexora_transcript_entry (conversation_id, seq)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_nexora_transcript_entry_ts
+      ON nexora_transcript_entry (ts)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_nexora_transcript_entry_channel
+      ON nexora_transcript_entry (channel)
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS nexora_transcript_attachment (
+      conversation_id TEXT NOT NULL,
+      ref             TEXT NOT NULL,
+      media_type      TEXT NOT NULL,
+      size            BIGINT NOT NULL,
+      name            TEXT,
+      data            BYTEA NOT NULL,
+      PRIMARY KEY (conversation_id, ref)
+    )
+  `;
 }

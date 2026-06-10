@@ -17,6 +17,7 @@ export { AuditStorePg } from './audit.js';
 export { ScheduleStorePg } from './schedule.js';
 export { ContextStorePg } from './context-store.js';
 export { ToolContextStorePg } from './tool-context.js';
+export { TranscriptStorePg } from './transcript.js';
 export { TreeConversationStorePg } from './session-tree.js';
 
 export { createRedisRateLimiter } from './redis-rate-limiter.js';
@@ -40,6 +41,7 @@ import { AuditStorePg } from './audit.js';
 import { ScheduleStorePg } from './schedule.js';
 import { ContextStorePg } from './context-store.js';
 import { ToolContextStorePg } from './tool-context.js';
+import { TranscriptStorePg } from './transcript.js';
 
 export interface PgStoreProvider {
   conversation: ConversationStorePg;
@@ -48,9 +50,10 @@ export interface PgStoreProvider {
   schedule: ScheduleStorePg;
   context: ContextStorePg;
   toolContext: ToolContextStorePg;
+  transcript: TranscriptStorePg;
 }
 
-/** Create all 6 core stores from a single Postgres connection. */
+/** Create all core stores from a single Postgres connection. */
 export function createPgStoreProvider(sql: Sql): PgStoreProvider {
   return {
     conversation: new ConversationStorePg(sql),
@@ -59,5 +62,6 @@ export function createPgStoreProvider(sql: Sql): PgStoreProvider {
     schedule: new ScheduleStorePg(sql),
     context: new ContextStorePg(sql),
     toolContext: new ToolContextStorePg(sql),
+    transcript: new TranscriptStorePg(sql),
   };
 }

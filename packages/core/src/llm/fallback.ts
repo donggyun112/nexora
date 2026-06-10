@@ -46,9 +46,16 @@ export function classifyError(err: Error, signal?: AbortSignal): ErrorClass {
     return 'auth';
   }
   if (code !== undefined && code >= 500) return 'server';
-  if (msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('timeout') || msg.includes('network')) {
+  if (
+    msg.includes('econnrefused') || msg.includes('enotfound') || msg.includes('timeout') || msg.includes('network')
+    || msg.includes('econnreset') || msg.includes('terminated') || msg.includes('socket')
+    || msg.includes('und_err') || msg.includes('fetch failed') || msg.includes('other side closed')
+  ) {
     return 'network';
   }
+  // pi-ai marks dropped-stream / SDK-parse failures as providerError (status/code lost);
+  // treat them as transient so the retry loop can recover.
+  if ((err as Error & { providerError?: boolean }).providerError === true) return 'network';
   return 'unknown';
 }
 
@@ -68,6 +75,18 @@ export interface FallbackLLMProviderOptions {
    * Default: 1000. Set to 0 to skip retry and fallback immediately.
    */
   rateLimitRetryMs?: number;
+  /**
+   * Base delay in ms before retrying the SAME provider after a transient
+   * connection error ('network'/'server' class, or a providerError-marked
+   * dropped stream). Backoff escalates linearly per attempt. Default: 500.
+   * Set to 0 to skip transient retry and fall back immediately.
+   */
+  transientRetryMs?: number;
+  /**
+   * Max same-provider retries for a transient error before falling back.
+   * Default: 2. Set to 0 to disable transient retry.
+   */
+  transientRetryMaxAttempts?: number;
 }
 
 class AbortedBeforeCallError extends Error {
@@ -82,6 +101,8 @@ export class FallbackLLMProvider implements LLMProvider {
   private readonly onFallback?: FallbackLLMProviderOptions['onFallback'];
   private readonly onAuthError?: FallbackLLMProviderOptions['onAuthError'];
   private readonly rateLimitRetryMs: number;
+  private readonly transientRetryMs: number;
+  private readonly transientRetryMaxAttempts: number;
 
   constructor(options: FallbackLLMProviderOptions) {
     if (options.providers.length === 0) {
@@ -91,6 +112,8 @@ export class FallbackLLMProvider implements LLMProvider {
     this.onFallback = options.onFallback;
     this.onAuthError = options.onAuthError;
     this.rateLimitRetryMs = options.rateLimitRetryMs ?? 1000;
+    this.transientRetryMs = options.transientRetryMs ?? 500;
+    this.transientRetryMaxAttempts = options.transientRetryMaxAttempts ?? 2;
   }
 
   async *stream(messages: LLMMessage[], options?: LLMOptions): AsyncGenerator<LLMChunk> {
@@ -102,6 +125,7 @@ export class FallbackLLMProvider implements LLMProvider {
 
     let lastError: Error | null = null;
     let retried = false;
+    let transientRetries = 0;
 
     for (let i = 0; i < this.entries.length; i++) {
       // Re-check before each provider attempt (signal may have aborted between attempts)
@@ -112,8 +136,11 @@ export class FallbackLLMProvider implements LLMProvider {
       const entry = this.entries[i];
       const isLast = i === this.entries.length - 1;
 
+      // Hoisted so the catch block can tell whether ANY chunk already reached the
+      // caller this attempt: a transient error after the first yield is NOT safe
+      // to retry (it would duplicate already-emitted output).
+      let receivedAny = false;
       try {
-        let receivedAny = false;
         for await (const chunk of entry.provider.stream(messages, options)) {
           receivedAny = true;
           yield chunk;
@@ -157,10 +184,28 @@ export class FallbackLLMProvider implements LLMProvider {
           }
         }
 
+        // Transient connection error ('network'/'server' or a providerError-marked
+        // dropped stream): retry the SAME provider a bounded number of times before
+        // falling back — but ONLY if no chunk has reached the caller yet. Once any
+        // chunk was yielded, re-running would duplicate output, so we must fall back
+        // / throw per the existing behavior instead.
+        if (
+          !receivedAny
+          && (errorClass === 'network' || errorClass === 'server')
+          && this.transientRetryMs > 0
+          && transientRetries < this.transientRetryMaxAttempts
+        ) {
+          transientRetries++;
+          await delay(this.transientRetryMs * transientRetries);
+          i--; // retry same provider
+          continue;
+        }
+
         if (isLast) throw lastError;
         const next = this.entries[i + 1];
         this.onFallback?.(entry.name, next.name, `[${errorClass}] ${lastError.message}`);
         retried = false;
+        transientRetries = 0;
       }
     }
 
@@ -174,6 +219,7 @@ export class FallbackLLMProvider implements LLMProvider {
 
     let lastError: Error | null = null;
     let retried = false;
+    let transientRetries = 0;
 
     for (let i = 0; i < this.entries.length; i++) {
       if (options?.signal?.aborted) {
@@ -225,10 +271,26 @@ export class FallbackLLMProvider implements LLMProvider {
           }
         }
 
+        // Transient connection error ('network'/'server' or a providerError-marked
+        // dropped stream): retry the SAME provider a bounded number of times before
+        // falling back. A single 'terminated'/socket blip should not kill the run,
+        // and with a single provider configured there is nothing to fall back to.
+        if (
+          (errorClass === 'network' || errorClass === 'server')
+          && this.transientRetryMs > 0
+          && transientRetries < this.transientRetryMaxAttempts
+        ) {
+          transientRetries++;
+          await delay(this.transientRetryMs * transientRetries);
+          i--; // retry same provider
+          continue;
+        }
+
         if (isLast) throw lastError;
         const next = this.entries[i + 1];
         this.onFallback?.(entry.name, next.name, `[${errorClass}] ${lastError.message}`);
         retried = false;
+        transientRetries = 0;
       }
     }
 

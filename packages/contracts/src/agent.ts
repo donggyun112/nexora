@@ -75,6 +75,13 @@ export interface AgentRuntime {
 
   /** 실행 중단 */
   abort(): void;
+
+  /**
+   * 실행 중인 에이전트에 user 메시지를 주입(steer). 다음 루프 반복에서 LLM 호출 전
+   * history 에 도착순으로 합류한다. 활성 실행이 있으면 큐에 넣고 `true`, 없으면 주입할
+   * 곳이 없어 `false` 를 반환한다(호출자가 새 turn 으로 처리). 미구현 시 undefined.
+   */
+  steer?(text: string): boolean;
 }
 
 /**
@@ -117,6 +124,13 @@ export interface RuntimeServices {
    * 매 루프 반복마다 signal.aborted를 확인해 빠르게 종료해야 한다.
    */
   signal: AbortSignal;
+
+  /**
+   * 실행 중 주입(steer)된 user 메시지를 큐에서 꺼낸다(소비). 아키텍처는 매 루프 반복
+   * LLM 호출 직전, 그리고 종료 직전에 호출해 history 에 도착순으로 합류시켜야 한다.
+   * 큐가 비면 빈 배열. 미설정이면 steering 미지원(no-op).
+   */
+  drainSteers?: () => LLMMessage[];
 
   /**
    * Architecture-level hook invoked when a tool returns ToolResult.suspend.

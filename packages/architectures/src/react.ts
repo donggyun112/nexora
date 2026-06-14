@@ -89,9 +89,24 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
       const allToolCalls: { name: string; input: unknown }[] = [];
       let lastContent = '';
 
+      // 실행 중 주입(steer)된 user 메시지를 history + memory 에 도착순으로 합류시킨다.
+      // tool_result 뒤 user 메시지는 toolImageMessages 와 동일한 시퀀스라 안전.
+      const absorbSteers = async (): Promise<number> => {
+        const steers = services.drainSteers?.() ?? [];
+        for (const s of steers) {
+          history.push(s);
+          if (typeof s.content === 'string') {
+            await services.memory.append({ role: 'user', content: s.content });
+          }
+        }
+        return steers.length;
+      };
+
       // 3. ReAct 루프
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         if (services.signal.aborted) return;
+        // 직전 LLM/도구 실행 동안 주입된 steer 를 다음 LLM 호출 전에 합류.
+        await absorbSteers();
 
         let response: LLMResponse;
         try {
@@ -117,9 +132,13 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
           yield { type: 'text', text: response.content };
         }
 
-        // 도구 호출이 없으면 종료
+        // 도구 호출이 없으면 종료 — 단, 종료 직전 주입된 steer 가 있으면 끝내지 않고 이어간다.
         if (!response.toolCalls || response.toolCalls.length === 0) {
+          history.push({ role: 'assistant', content: response.content });
           await services.memory.append({ role: 'assistant', content: response.content });
+          if ((await absorbSteers()) > 0) {
+            continue;
+          }
           yield {
             type: 'done',
             content: response.content,

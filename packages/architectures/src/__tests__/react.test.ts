@@ -327,4 +327,33 @@ describe('ReAct resume', () => {
     // On resume, no user message should be appended to memory (it was appended on original execution).
     expect(memoryAppends.some((m: any) => m.role === 'user')).toBe(false);
   });
+
+  it('absorbs a mid-run steered message and continues instead of finishing', async () => {
+    const llm = new MockLLMProvider([{ text: 'first' }, { text: 'second after steer' }]);
+    const seenHistories: LLMMessage[][] = [];
+    const origComplete = llm.complete.bind(llm);
+    (llm as any).complete = async (history: LLMMessage[], opts: unknown) => {
+      seenHistories.push([...history]);
+      return origComplete(history, opts as any);
+    };
+
+    // drainSteers 호출 순서: iter0-top(빈) → iter0-pre-done(steer) → iter1-top(빈) → iter1-pre-done(빈).
+    let calls = 0;
+    const services = makeServices(llm, new Map(), {
+      drainSteers: () => {
+        calls += 1;
+        return calls === 2 ? [{ role: 'user', content: 'keep going' } as LLMMessage] : [];
+      },
+    });
+
+    const arch = createReactArchitecture();
+    const events = await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'start' }));
+
+    const done = events.find(e => e.type === 'done');
+    expect(done?.type).toBe('done');
+    if (done?.type === 'done') expect(done.content).toBe('second after steer'); // 끝내지 않고 이어감
+    expect(seenHistories.length).toBe(2);                                       // 2번째 LLM 호출 발생
+    // 2번째 호출 history 에 주입된 메시지가 합류해 있어야 한다.
+    expect(seenHistories[1].some(m => m.role === 'user' && m.content === 'keep going')).toBe(true);
+  });
 });

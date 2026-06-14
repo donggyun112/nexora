@@ -73,6 +73,12 @@ export class AgentRunner implements AgentRuntime {
    * Per-call structure means concurrent executions don't trample each other's state.
    */
   private readonly activeControllers = new Set<AbortController>();
+  /**
+   * 실행 중 주입된 user 메시지 큐. steer() 가 push, 아키텍처 루프가 drainSteers 로 소비.
+   * 런타임 인스턴스 단위(= 보통 thread 하나) — 동시 실행이 직렬화되는 in7 사용 패턴에서
+   * 활성 실행 하나에 합류한다.
+   */
+  private readonly pendingSteers: LLMMessage[] = [];
 
   constructor(options: AgentRunnerOptions) {
     this.architecture = options.architecture;
@@ -110,6 +116,7 @@ export class AgentRunner implements AgentRuntime {
       memory: this.memory,
       logger: this.logger,
       signal: controller.signal,
+      drainSteers: () => (this.pendingSteers.length > 0 ? this.pendingSteers.splice(0) : []),
       onSuspend: this.onSuspend,
     };
 
@@ -214,6 +221,19 @@ export class AgentRunner implements AgentRuntime {
 
   abort(): void {
     for (const c of this.activeControllers) c.abort(new Error('aborted'));
+  }
+
+  /**
+   * 실행 중인 에이전트에 user 메시지를 주입. 활성 실행이 있으면 steer 큐에 넣고 true —
+   * 아키텍처 루프가 다음 반복(또는 종료 직전)에 drainSteers 로 꺼내 history 에 합류한다.
+   * 활성 실행이 없으면 주입할 곳이 없으므로 false (호출자가 새 turn 으로 처리).
+   */
+  steer(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return this.activeControllers.size > 0;
+    if (this.activeControllers.size === 0) return false;
+    this.pendingSteers.push({ role: 'user', content: trimmed });
+    return true;
   }
 }
 

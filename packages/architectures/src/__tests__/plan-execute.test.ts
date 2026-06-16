@@ -93,4 +93,35 @@ describe('PlanExecuteArchitecture — plan-mode gating', () => {
     const toolNames = llm.callLog[0].options?.tools?.map((t: { name: string }) => t.name) ?? [];
     expect(toolNames).toContain('submit_keywords'); // execute phase on resume
   });
+
+  it('continuation turn (prior history present) starts in EXECUTE, not PLAN', async () => {
+    const llm = new MockLLMProvider([{ text: 'continuing work' }]);
+    const services = servicesWithToolList(llm, new Map(), ['web_search', 'submit_research_plan', 'submit_keywords']);
+
+    const arch = createPlanExecuteArchitecture({
+      exitPlanTool: 'submit_research_plan',
+      executePhaseTools: ['submit_keywords'],
+    });
+    // 부활/후속 turn: 이전 대화 history 가 실려온다 (plan 은 이전 turn 에 이미 제출).
+    const events = await collect(arch.loop(services, {
+      prompt: '에이전틱 ai로 발행',
+      history: [
+        { role: 'user', content: 'find keywords' },
+        { role: 'assistant', content: [{ type: 'tool_call', id: 'p1', name: 'submit_research_plan', arguments: {} }] },
+        { role: 'tool_result', content: [{ type: 'tool_result', id: 'p1', content: 'plan recorded', isError: false }] },
+        { role: 'assistant', content: 'keyword slate ready' },
+      ],
+    }));
+
+    const firstCallTools = llm.callLog[0].options?.tools?.map((t: { name: string }) => t.name) ?? [];
+    expect(firstCallTools).toContain('submit_keywords');          // execute 도구 노출
+    expect(firstCallTools).not.toContain('submit_research_plan');  // plan 종료 도구 숨김
+
+    // plan prompt 미주입 — 후속 turn user 메시지에 PLAN 지시문이 붙으면 안 된다.
+    const lastUser = llm.callLog[0].messages.filter(m => m.role === 'user').pop();
+    const userText = typeof lastUser?.content === 'string' ? lastUser!.content : JSON.stringify(lastUser?.content);
+    expect(userText).not.toContain('PLAN');
+
+    expect(events.some(e => e.type === 'done')).toBe(true);
+  });
 });

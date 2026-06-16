@@ -74,10 +74,12 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
     async *loop(services: RuntimeServices, input: AgentInput): AsyncGenerator<AgentEvent> {
       const history: LLMMessage[] = [];
-      // resume 는 보통 계획 이후 중단 지점이라 EXECUTE 로 복귀한다.
-      let phase: 'plan' | 'execute' = input.resumeContext ? 'execute' : 'plan';
+      // PLAN 게이트는 '새 대화의 첫 turn' 에만 건다. resume(계획 후 중단) 과 이전 history 가
+      // 실려오는 후속/부활 turn 은 EXECUTE 로 시작 — 매 turn PLAN 재진입(재계획) 방지.
+      let phase: 'plan' | 'execute' = 'plan';
 
       if (input.resumeContext) {
+        phase = 'execute';
         history.push(...input.resumeContext.architectureHistory);
         history.push({
           role: 'tool_result',
@@ -96,8 +98,10 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         for (const prev of input.history ?? []) {
           history.push({ role: prev.role, content: prev.content });
         }
+        // 이전 turn 이 실려있으면 계획은 이미 첫 turn 에 했다 → EXECUTE 로 시작.
+        if (history.length > 0) phase = 'execute';
 
-        const promptText = planPrompt ? `${input.prompt}\n\n${planPrompt}` : input.prompt;
+        const promptText = phase === 'plan' && planPrompt ? `${input.prompt}\n\n${planPrompt}` : input.prompt;
         const userContent = input.images && input.images.length > 0
           ? [
               { type: 'text' as const, text: promptText },

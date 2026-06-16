@@ -357,3 +357,42 @@ describe('ReAct resume', () => {
     expect(seenHistories[1].some(m => m.role === 'user' && m.content === 'keep going')).toBe(true);
   });
 });
+
+describe('ReAct within-turn compaction', () => {
+  const PLACEHOLDER = '[older tool output pruned to fit context]';
+  const compaction = { contextWindow: 2000, reserveTokens: 0, keepRecentTokens: 500, toolResultTruncateChars: 100 };
+  const big = 'x'.repeat(6000);
+
+  const makeLoopLLM = () => new MockLLMProvider([
+    { text: '', toolCalls: [{ id: 't1', name: 'search', arguments: {} }] },
+    { text: '', toolCalls: [{ id: 't2', name: 'search', arguments: {} }] },
+    { text: 'done' },
+  ]);
+  const makeTools = () => new Map([['search', async () => ({ type: 'text' as const, text: big })]]);
+
+  const placeholderInFinalHistory = (llm: MockLLMProvider): boolean => {
+    const finalHistory = llm.callLog[llm.callLog.length - 1].messages;
+    return finalHistory
+      .filter(m => m.role === 'tool_result')
+      .flatMap(m => m.content as { content: string }[])
+      .some(b => b.content === PLACEHOLDER);
+  };
+
+  it('compaction 옵션이 있으면 한 턴 안에서 오래된 tool_result 를 프루닝한다', async () => {
+    const llm = makeLoopLLM();
+    const services = makeServices(llm, makeTools());
+    const arch = createReactArchitecture({ compaction });
+    await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(placeholderInFinalHistory(llm)).toBe(true);
+  });
+
+  it('compaction 옵션이 없으면 프루닝하지 않는다 (기존 동작 유지)', async () => {
+    const llm = makeLoopLLM();
+    const services = makeServices(llm, makeTools());
+    const arch = createReactArchitecture();
+    await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(placeholderInFinalHistory(llm)).toBe(false);
+  });
+});

@@ -7,5 +7,6 @@
 
 export { createReactArchitecture } from './react.js';
 export type { ReactOptions } from './react.js';
+export type { LoopCompactionOptions } from './loop-helpers.js';
 export { createPlanExecuteArchitecture } from './plan-execute.js';
 export type { PlanExecuteOptions } from './plan-execute.js';

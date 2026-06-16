@@ -25,7 +25,9 @@ import {
   formatResultForLLM,
   imageResultForLLM,
   isErrorResult,
+  pruneLoopHistory,
   sanitizeToolPairsInPlace,
+  type LoopCompactionOptions,
 } from './loop-helpers.js';
 
 export interface ReactOptions {
@@ -37,6 +39,11 @@ export interface ReactOptions {
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  /**
+   * 한 턴 내부 history 압축. 지정 시 매 도구 라운드 후 오래된 큰 tool_result 를
+   * 결정적으로 프루닝한다. 미지정이면 비활성(기존 동작 유지).
+   */
+  compaction?: LoopCompactionOptions;
 }
 
 const DEFAULT_MAX_ITERATIONS = 25;
@@ -234,7 +241,8 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         });
         history.push(...toolImageMessages);
 
-        // 컴팩션 시도 + tool pair sanitization
+        // 한 턴 내부 history 프루닝(결정적) + 크로스턴 memory 컴팩션 + tool pair sanitization
+        if (options.compaction) pruneLoopHistory(history, options.compaction);
         await services.memory.compact();
         sanitizeToolPairsInPlace(history);
       }

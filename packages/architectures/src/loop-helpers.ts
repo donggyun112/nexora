@@ -119,6 +119,87 @@ export function sanitizeToolPairsInPlace(history: LLMMessage[]): void {
   }
 }
 
+/**
+ * 한 턴 내부 history 압축 옵션. 임계값은 토큰(문자/4 휴리스틱) 기준.
+ * 모두 선택 — 미지정이면 TwoStageCompactor 와 동일한 기본값.
+ */
+export interface LoopCompactionOptions {
+  /** 컨텍스트 윈도우 (토큰). 기본 200_000 */
+  contextWindow?: number;
+  /** 시스템 프롬프트 + 응답 예약 토큰. 기본 16_384 */
+  reserveTokens?: number;
+  /** 압축해도 건드리지 않을 최근 tail (토큰). 기본 20_000 */
+  keepRecentTokens?: number;
+  /** 이 길이보다 긴 tool_result content 만 프루닝 대상. 기본 4_000자 */
+  toolResultTruncateChars?: number;
+}
+
+const PRUNE_PLACEHOLDER = '[older tool output pruned to fit context]';
+const IMAGE_TOKEN_ESTIMATE = 1024;
+
+function estimateBlockTokens(content: LLMMessage['content']): number {
+  if (typeof content === 'string') return Math.ceil(content.length / 4);
+  let total = 0;
+  for (const b of content as LLMContentBlock[]) {
+    if (b.type === 'text') total += Math.ceil(b.text.length / 4);
+    else if (b.type === 'tool_call') total += Math.ceil(JSON.stringify(b.arguments).length / 4);
+    else if (b.type === 'tool_result') total += Math.ceil(b.content.length / 4);
+    else if (b.type === 'image') total += IMAGE_TOKEN_ESTIMATE;
+  }
+  return total;
+}
+
+function estimateHistoryTokens(history: LLMMessage[]): number {
+  return history.reduce((sum, m) => sum + estimateBlockTokens(m.content), 0);
+}
+
+/**
+ * 한 턴 내부에서 누적된 로컬 history 를 in-place 로 프루닝한다. LLM 호출 없는 결정적 동작.
+ *
+ * 추정 토큰이 (contextWindow - reserveTokens) 이하면 아무것도 안 하고 false.
+ * 초과하면 최근 keepRecentTokens 분량 tail 을 보호한 채, 오래된 것부터 큰 tool_result
+ * content 를 placeholder 로 치환해 임계 밑으로 내린다. 프루닝했으면 true.
+ *
+ * tool_result 의 id·블록 구조는 그대로 두고 content 문자열만 줄이므로 tool_call↔tool_result
+ * 짝은 항상 유효하다. placeholder 는 짧아 재호출 시 다시 대상이 되지 않는다(idempotent).
+ *
+ * 가장 최근 tool_result 가 유일한 후보면(= tail 보호 영역) 줄이지 않는다 — 최근 컨텍스트를
+ * 한 턴 내 안전보다 우선한다.
+ */
+export function pruneLoopHistory(history: LLMMessage[], opts: LoopCompactionOptions = {}): boolean {
+  const contextWindow = opts.contextWindow ?? 200_000;
+  const reserveTokens = opts.reserveTokens ?? 16_384;
+  const keepRecentTokens = opts.keepRecentTokens ?? 20_000;
+  const truncateChars = opts.toolResultTruncateChars ?? 4_000;
+  const threshold = contextWindow - reserveTokens;
+
+  if (estimateHistoryTokens(history) <= threshold) return false;
+
+  // 최근 tail 보호 경계: 끝에서부터 토큰을 누적해 keepRecentTokens 를 덮는 첫 index.
+  // [protectedFrom, end) 는 보호 — 최소한 마지막 메시지는 항상 보호된다.
+  let tailTokens = 0;
+  let protectedFrom = history.length;
+  for (let i = history.length - 1; i >= 0; i--) {
+    protectedFrom = i;
+    tailTokens += estimateBlockTokens(history[i].content);
+    if (tailTokens >= keepRecentTokens) break;
+  }
+
+  let pruned = false;
+  for (let i = 0; i < protectedFrom; i++) {
+    if (estimateHistoryTokens(history) <= threshold) break;
+    const msg = history[i];
+    if (msg.role !== 'tool_result' || !Array.isArray(msg.content)) continue;
+    for (const block of msg.content as LLMContentBlock[]) {
+      if (block.type === 'tool_result' && block.content.length > truncateChars) {
+        block.content = PRUNE_PLACEHOLDER;
+        pruned = true;
+      }
+    }
+  }
+  return pruned;
+}
+
 export function isErrorResult(result: unknown): boolean {
   if (!result || typeof result !== 'object') return false;
   return (result as { type?: string }).type === 'error';

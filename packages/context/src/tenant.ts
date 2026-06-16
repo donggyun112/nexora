@@ -39,7 +39,7 @@ const DEFAULT_LIMITS: ResourceLimits = {
   maxTokens: 8_192,
   model: 'claude-sonnet-4-5',
   thinkingLevel: 'low',
-  contextWindow: 200_000,
+  contextWindow: 256_000,
 };
 
 export class TenantConfigStore {

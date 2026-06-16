@@ -15,7 +15,7 @@ import type {
 } from '@nexora/contracts';
 
 // ─── 상수 ──────────────────────────────────────────────────────────────────
-const DEFAULT_CONTEXT_WINDOW = 200_000;
+const DEFAULT_CONTEXT_WINDOW = 256_000;
 const DEFAULT_RESERVE_TOKENS = 16_384;
 const DEFAULT_KEEP_RECENT_TOKENS = 20_000;
 const DEFAULT_TOOL_RESULT_TRUNCATE_CHARS = 4_000;

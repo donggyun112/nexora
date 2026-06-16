@@ -65,9 +65,15 @@ export function createMcpServerBridge(
             }],
           };
         }
-        // error
+        if (result.type === 'error') {
+          return {
+            content: [{ type: 'text', text: result.message }],
+            isError: true,
+          };
+        }
+        // suspend — MCP 컨텍스트는 HITL 중단을 이어갈 수 없다. pendingId 만 알리고 에러로 종료.
         return {
-          content: [{ type: 'text', text: result.message }],
+          content: [{ type: 'text', text: `Tool suspended (pendingId: ${result.pendingId}) — not resumable over MCP.` }],
           isError: true,
         };
       } catch (err) {

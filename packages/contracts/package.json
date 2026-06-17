@@ -22,5 +22,11 @@
   },
   "nexora": {
     "stability": "stable"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

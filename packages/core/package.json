@@ -16,7 +16,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.75.5",
+    "@earendil-works/pi-ai": "^0.79.4",
     "@nexora/contracts": "workspace:*",
     "ajv": "^8.18.0"
   },

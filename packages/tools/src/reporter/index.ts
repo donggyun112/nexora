@@ -1,5 +1,5 @@
 /**
- * @nexora/tools/reporter — typed activity events for outbound UIs.
+ * @dongkseo/tools/reporter — typed activity events for outbound UIs.
  */
 
 export {

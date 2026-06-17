@@ -14,8 +14,8 @@ import type {
   MessageEnvelope,
   WorkflowContract,
   TransportDescription,
-} from '@nexora/contracts';
-import { messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId } from '@dongkseo/contracts';
 
 /**
  * Programmable transport: each time the engine hits a topic, a scripted

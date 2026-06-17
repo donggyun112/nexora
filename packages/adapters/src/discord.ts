@@ -4,13 +4,13 @@
  * Implements the Adapter interface: Discord messages → InboundMessage →
  * MessageRouter → OutboundChunk → Discord reply.
  *
- * SDK independence: discord.js is NOT a dependency of @nexora/adapters.
+ * SDK independence: discord.js is NOT a dependency of @dongkseo/adapters.
  * Instead, the caller passes a `DiscordClientLike` interface. This keeps
  * the package light and lets users pin their own discord.js version.
  *
  * Usage:
  *   import { Client, GatewayIntentBits } from 'discord.js';
- *   import { DiscordAdapter } from '@nexora/adapters';
+ *   import { DiscordAdapter } from '@dongkseo/adapters';
  *
  *   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
  *   await client.login(process.env.DISCORD_TOKEN);
@@ -34,7 +34,7 @@ import type {
   InboundMessage,
   OutboundChunk,
   OutboundArtifact,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   buildSessionKey,
   type ChatType,

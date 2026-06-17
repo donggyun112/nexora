@@ -10,23 +10,23 @@
  *   curl localhost:3000/messages -d '{"content": "hello"}'
  */
 
-import { defineAgent, topic } from '@nexora/contracts';
-import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@nexora/core';
-import { createReactArchitecture } from '@nexora/architectures';
+import { defineAgent, topic } from '@dongkseo/contracts';
+import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@dongkseo/core';
+import { createReactArchitecture } from '@dongkseo/architectures';
 import {
   createReadTool, createGrepTool, createExecTool,
   createEditTool, createWriteTool, createDelegateTool,
   createKnowledgeTool, createHandraiseTool,
-} from '@nexora/tools';
-import { LocalTransport } from '@nexora/transport';
-import { InMemoryAgentRegistry } from '@nexora/registry';
-import { HttpAdapter } from '@nexora/adapters';
-import { GatewayRouter } from '@nexora/gateway';
+} from '@dongkseo/tools';
+import { LocalTransport } from '@dongkseo/transport';
+import { InMemoryAgentRegistry } from '@dongkseo/registry';
+import { HttpAdapter } from '@dongkseo/adapters';
+import { GatewayRouter } from '@dongkseo/gateway';
 
 import type {
   LLMProvider, LLMMessage, LLMOptions, LLMChunk, LLMResponse,
   ContextLoader, AgentContext, ToolDefinition,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 // ─── 1. Agent definitions ───────────────────────────────────────────────
 
@@ -90,7 +90,7 @@ function reply(content: string): LLMResponse {
 
 // ─── 3. Infrastructure ──────────────────────────────────────────────────
 
-import { PiAiProvider, FallbackLLMProvider } from '@nexora/core';
+import { PiAiProvider, FallbackLLMProvider } from '@dongkseo/core';
 
 function createLLM(): LLMProvider {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;

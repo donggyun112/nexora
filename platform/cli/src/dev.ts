@@ -1,5 +1,5 @@
 // @ts-nocheck — this file uses dynamic imports for workspace packages that
-// are NOT listed as dependencies of @nexora/cli (by design — the CLI is a
+// are NOT listed as dependencies of @dongkseo/cli (by design — the CLI is a
 // thin orchestrator, not a consumer of every Nexora package). TypeScript
 // can't resolve these at compile time, but they resolve fine at runtime
 // because the CLI runs inside the Nexora workspace where all packages are
@@ -37,19 +37,19 @@ export interface DevOptions {
 export async function runDev(options: DevOptions): Promise<void> {
   // Dynamic imports so the CLI package stays dependency-free at build time.
   // At runtime, these resolve from the workspace's node_modules.
-  const { LocalTransport } = await import('@nexora/transport' as string) as typeof import('@nexora/transport');
-  const { CoreContextLoader } = await import('@nexora/context' as string) as typeof import('@nexora/context');
+  const { LocalTransport } = await import('@dongkseo/transport' as string) as typeof import('@dongkseo/transport');
+  const { CoreContextLoader } = await import('@dongkseo/context' as string) as typeof import('@dongkseo/context');
   const {
     AgentRunner,
     CoreToolExecutor,
     bootstrapAgent,
     PiAiProvider,
-  } = await import('@nexora/core' as string) as typeof import('@nexora/core');
-  const { createReactArchitecture } = await import('@nexora/architectures' as string) as typeof import('@nexora/architectures');
-  const { createReadTool, createGrepTool, createWriteTool, createEditTool } = await import('@nexora/tools' as string) as typeof import('@nexora/tools');
-  const { HttpAdapter } = await import('@nexora/adapters' as string) as typeof import('@nexora/adapters');
-  const { GatewayRouter } = await import('@nexora/gateway' as string) as typeof import('@nexora/gateway');
-  const { topic } = await import('@nexora/contracts' as string) as typeof import('@nexora/contracts');
+  } = await import('@dongkseo/core' as string) as typeof import('@dongkseo/core');
+  const { createReactArchitecture } = await import('@dongkseo/architectures' as string) as typeof import('@dongkseo/architectures');
+  const { createReadTool, createGrepTool, createWriteTool, createEditTool } = await import('@dongkseo/tools' as string) as typeof import('@dongkseo/tools');
+  const { HttpAdapter } = await import('@dongkseo/adapters' as string) as typeof import('@dongkseo/adapters');
+  const { GatewayRouter } = await import('@dongkseo/gateway' as string) as typeof import('@dongkseo/gateway');
+  const { topic } = await import('@dongkseo/contracts' as string) as typeof import('@dongkseo/contracts');
 
   // ── Discover agents ────────────────────────────────────────────────────
   const agentsDir = path.resolve(options.agentsDir);
@@ -100,7 +100,7 @@ export async function runDev(options: DevOptions): Promise<void> {
 
     try {
       const configUrl = pathToFileURL(configPath).href;
-      const mod = await import(configUrl) as { default: import('@nexora/contracts').AgentCard };
+      const mod = await import(configUrl) as { default: import('@dongkseo/contracts').AgentCard };
       const card = mod.default;
 
       const running = await bootstrapAgent({
@@ -170,7 +170,7 @@ export async function runDev(options: DevOptions): Promise<void> {
 
   const gatewayRouter = new GatewayRouter({
     transport,
-    defaultTopic: defaultTopic as import('@nexora/contracts').TopicString,
+    defaultTopic: defaultTopic as import('@dongkseo/contracts').TopicString,
     timeoutMs: 120_000,
   });
 

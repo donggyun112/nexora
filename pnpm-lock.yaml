@@ -20,28 +20,28 @@ importers:
 
   examples/auto-work-flow:
     dependencies:
-      '@nexora/adapters':
+      '@dongkseo/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
-      '@nexora/architectures':
+      '@dongkseo/architectures':
         specifier: workspace:*
         version: link:../../packages/architectures
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@nexora/core':
+      '@dongkseo/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@nexora/gateway':
+      '@dongkseo/gateway':
         specifier: workspace:*
         version: link:../../platform/gateway
-      '@nexora/registry':
+      '@dongkseo/registry':
         specifier: workspace:*
         version: link:../../platform/registry
-      '@nexora/tools':
+      '@dongkseo/tools':
         specifier: workspace:*
         version: link:../../packages/tools
-      '@nexora/transport':
+      '@dongkseo/transport':
         specifier: workspace:*
         version: link:../../packages/transport
     devDependencies:
@@ -54,45 +54,45 @@ importers:
 
   examples/e2e-demo:
     dependencies:
+      '@dongkseo/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@dongkseo/architectures':
+        specifier: workspace:*
+        version: link:../../packages/architectures
+      '@dongkseo/context':
+        specifier: workspace:*
+        version: link:../../packages/context
+      '@dongkseo/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@dongkseo/conversation':
+        specifier: workspace:*
+        version: link:../../packages/conversation
+      '@dongkseo/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@dongkseo/gateway':
+        specifier: workspace:*
+        version: link:../../platform/gateway
+      '@dongkseo/registry':
+        specifier: workspace:*
+        version: link:../../platform/registry
+      '@dongkseo/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
+      '@dongkseo/store-json':
+        specifier: workspace:*
+        version: link:../../packages/store-json
+      '@dongkseo/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      '@dongkseo/transport':
+        specifier: workspace:*
+        version: link:../../packages/transport
       '@earendil-works/pi-ai':
         specifier: ^0.79.4
         version: 0.79.4(ws@8.21.0)(zod@4.4.3)
-      '@nexora/adapters':
-        specifier: workspace:*
-        version: link:../../packages/adapters
-      '@nexora/architectures':
-        specifier: workspace:*
-        version: link:../../packages/architectures
-      '@nexora/context':
-        specifier: workspace:*
-        version: link:../../packages/context
-      '@nexora/contracts':
-        specifier: workspace:*
-        version: link:../../packages/contracts
-      '@nexora/conversation':
-        specifier: workspace:*
-        version: link:../../packages/conversation
-      '@nexora/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@nexora/gateway':
-        specifier: workspace:*
-        version: link:../../platform/gateway
-      '@nexora/registry':
-        specifier: workspace:*
-        version: link:../../platform/registry
-      '@nexora/skills':
-        specifier: workspace:*
-        version: link:../../packages/skills
-      '@nexora/store-json':
-        specifier: workspace:*
-        version: link:../../packages/store-json
-      '@nexora/tools':
-        specifier: workspace:*
-        version: link:../../packages/tools
-      '@nexora/transport':
-        specifier: workspace:*
-        version: link:../../packages/transport
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -103,31 +103,31 @@ importers:
 
   examples/helpdesk:
     dependencies:
-      '@nexora/adapters':
+      '@dongkseo/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
-      '@nexora/architectures':
+      '@dongkseo/architectures':
         specifier: workspace:*
         version: link:../../packages/architectures
-      '@nexora/context':
+      '@dongkseo/context':
         specifier: workspace:*
         version: link:../../packages/context
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@nexora/core':
+      '@dongkseo/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@nexora/gateway':
+      '@dongkseo/gateway':
         specifier: workspace:*
         version: link:../../platform/gateway
-      '@nexora/store-json':
+      '@dongkseo/store-json':
         specifier: workspace:*
         version: link:../../packages/store-json
-      '@nexora/tools':
+      '@dongkseo/tools':
         specifier: workspace:*
         version: link:../../packages/tools
-      '@nexora/transport':
+      '@dongkseo/transport':
         specifier: workspace:*
         version: link:../../packages/transport
     devDependencies:
@@ -140,25 +140,25 @@ importers:
 
   examples/personal-assistant:
     dependencies:
-      '@nexora/adapters':
+      '@dongkseo/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
-      '@nexora/architectures':
+      '@dongkseo/architectures':
         specifier: workspace:*
         version: link:../../packages/architectures
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@nexora/conversation':
+      '@dongkseo/conversation':
         specifier: workspace:*
         version: link:../../packages/conversation
-      '@nexora/core':
+      '@dongkseo/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@nexora/tools':
+      '@dongkseo/tools':
         specifier: workspace:*
         version: link:../../packages/tools
-      '@nexora/transport':
+      '@dongkseo/transport':
         specifier: workspace:*
         version: link:../../packages/transport
     devDependencies:
@@ -196,10 +196,10 @@ importers:
 
   packages/adapters:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@nexora/tools':
+      '@dongkseo/tools':
         specifier: workspace:*
         version: link:../tools
     devDependencies:
@@ -212,7 +212,7 @@ importers:
 
   packages/architectures:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -225,7 +225,7 @@ importers:
 
   packages/context:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -250,10 +250,10 @@ importers:
 
   packages/conversation:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@nexora/tools':
+      '@dongkseo/tools':
         specifier: workspace:*
         version: link:../tools
     devDependencies:
@@ -266,12 +266,12 @@ importers:
 
   packages/core:
     dependencies:
+      '@dongkseo/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@earendil-works/pi-ai':
         specifier: ^0.79.4
         version: 0.79.4(ws@8.21.0)(zod@4.4.3)
-      '@nexora/contracts':
-        specifier: workspace:*
-        version: link:../contracts
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
@@ -285,13 +285,13 @@ importers:
 
   packages/fleet:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
 
   packages/orchestrator:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -304,7 +304,7 @@ importers:
 
   packages/otel:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
       '@opentelemetry/api':
@@ -320,7 +320,7 @@ importers:
 
   packages/skills:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -333,7 +333,7 @@ importers:
 
   packages/store:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -343,7 +343,7 @@ importers:
 
   packages/store-json:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -356,7 +356,7 @@ importers:
 
   packages/store-memory:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -369,7 +369,7 @@ importers:
 
   packages/store-pg:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
       postgres:
@@ -385,13 +385,13 @@ importers:
 
   packages/tools:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@nexora/skills':
+      '@dongkseo/skills':
         specifier: workspace:*
         version: link:../skills
-      '@nexora/store':
+      '@dongkseo/store':
         specifier: workspace:*
         version: link:../store
     devDependencies:
@@ -404,7 +404,7 @@ importers:
 
   packages/transport:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
@@ -426,29 +426,29 @@ importers:
 
   platform/gateway:
     dependencies:
-      '@nexora/adapters':
+      '@dongkseo/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@nexora/registry':
+      '@dongkseo/registry':
         specifier: workspace:*
         version: link:../registry
     devDependencies:
-      '@nexora/architectures':
+      '@dongkseo/architectures':
         specifier: workspace:*
         version: link:../../packages/architectures
-      '@nexora/context':
+      '@dongkseo/context':
         specifier: workspace:*
         version: link:../../packages/context
-      '@nexora/core':
+      '@dongkseo/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@nexora/tools':
+      '@dongkseo/tools':
         specifier: workspace:*
         version: link:../../packages/tools
-      '@nexora/transport':
+      '@dongkseo/transport':
         specifier: workspace:*
         version: link:../../packages/transport
       '@types/node':
@@ -460,7 +460,7 @@ importers:
 
   platform/registry:
     dependencies:
-      '@nexora/contracts':
+      '@dongkseo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
     devDependencies:

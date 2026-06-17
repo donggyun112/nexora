@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createSchemaValidator, SchemaValidationError } from '../schema.js';
-import type { AgentCard } from '@nexora/contracts';
+import type { AgentCard } from '@dongkseo/contracts';
 
 function cardWith(inputSchema?: unknown, outputSchema?: unknown): AgentCard {
   return {

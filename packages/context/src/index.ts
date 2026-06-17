@@ -1,5 +1,5 @@
 /**
- * @nexora/context — 테넌트/에이전트 컨텍스트 로딩.
+ * @dongkseo/context — 테넌트/에이전트 컨텍스트 로딩.
  *
  * - PersonaLoader: 에이전트별 페르소나
  * - SkillLoader: 스킬 메뉴 자동 생성

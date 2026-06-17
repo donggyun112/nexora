@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { AttachmentRef, TranscriptEntry, TranscriptStore } from '@nexora/contracts';
+import type { AttachmentRef, TranscriptEntry, TranscriptStore } from '@dongkseo/contracts';
 
 import type { Sql } from './pg-client.js';
 

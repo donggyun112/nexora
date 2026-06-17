@@ -17,7 +17,7 @@ import type {
   EventTransport,
   MessageEnvelope,
   TopicString,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   textResult,
   errorResult,
@@ -25,7 +25,7 @@ import {
   traceId,
   spanId,
   conversationId,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface PublishTopicToolOptions {
   transport: EventTransport;

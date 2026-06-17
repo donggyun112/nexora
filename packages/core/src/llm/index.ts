@@ -1,5 +1,5 @@
 /**
- * @nexora/core/llm — LLM Provider 구현체.
+ * @dongkseo/core/llm — LLM Provider 구현체.
  *
  * Primary: PiAiProvider — unified adapter for Anthropic, OpenAI, OpenRouter, and more.
  * Resilience: FallbackLLMProvider — tries multiple providers in order.

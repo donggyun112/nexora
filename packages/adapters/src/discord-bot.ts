@@ -17,7 +17,7 @@ import type {
   OutboundMessage,
   OutboundChunk,
   TopicString,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import { DiscordAdapter, type DiscordBotMessagePolicy, type DiscordClientLike } from './discord.js';
 
 export interface DiscordAgentBotOptions {
@@ -99,7 +99,7 @@ export async function startDiscordBot(options: DiscordAgentBotOptions): Promise<
 
   // Wire group chat: subscribe to group topic and use round-robin
   // agent selection for unmentioned messages. Full TurnManager integration
-  // requires @nexora/conversation — this provides a working fallback.
+  // requires @dongkseo/conversation — this provides a working fallback.
   if (team.transport.subscribe) {
     const agentTopics = team.cards.map(c => {
       const sub = c.subscribes[0];

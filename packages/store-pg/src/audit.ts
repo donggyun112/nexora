@@ -2,7 +2,7 @@
  * AuditStorePg — PostgreSQL-backed audit store.
  */
 
-import type { AuditStore, AuditEntry, AuditFilter, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { AuditStore, AuditEntry, AuditFilter, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 import type { Sql } from './pg-client.js';
 import { jsonParam } from './helpers.js';
 

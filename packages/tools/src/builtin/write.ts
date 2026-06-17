@@ -11,8 +11,8 @@
  */
 
 import type fsp from 'node:fs/promises';
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 import {
   openForWrite,
   PathOutsideWorkspaceError,

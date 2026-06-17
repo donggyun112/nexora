@@ -24,25 +24,25 @@
  *     -d '{"content": "What files are in packages/contracts/src?"}'
  */
 
-import { LocalTransport } from '@nexora/transport';
-import { CoreContextLoader } from '@nexora/context';
+import { LocalTransport } from '@dongkseo/transport';
+import { CoreContextLoader } from '@dongkseo/context';
 import {
   AgentRunner,
   CoreToolExecutor,
   bootstrapAgent,
   PiAiProvider,
-} from '@nexora/core';
-import { createReactArchitecture } from '@nexora/architectures';
+} from '@dongkseo/core';
+import { createReactArchitecture } from '@dongkseo/architectures';
 import {
   createReadTool,
   createGrepTool,
   ToolRegistry,
   assembleToolsWithPolicy,
-} from '@nexora/tools';
-import { HttpAdapter } from '@nexora/adapters';
-import { GatewayRouter } from '@nexora/gateway';
-import { defineAgent, topic } from '@nexora/contracts';
-import type { TopicString } from '@nexora/contracts';
+} from '@dongkseo/tools';
+import { HttpAdapter } from '@dongkseo/adapters';
+import { GatewayRouter } from '@dongkseo/gateway';
+import { defineAgent, topic } from '@dongkseo/contracts';
+import type { TopicString } from '@dongkseo/contracts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 

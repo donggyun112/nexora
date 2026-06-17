@@ -1,17 +1,17 @@
 /**
- * @nexora/registry — AgentCard registration and lookup.
+ * @dongkseo/registry — AgentCard registration and lookup.
  *
- * The abstract `AgentRegistry` contract lives in `@nexora/contracts` (so the
+ * The abstract `AgentRegistry` contract lives in `@dongkseo/contracts` (so the
  * core runtime can call it without a reverse dependency into this package).
  * This package provides the default in-memory implementation. Production
  * deployments can swap in a Redis/etcd-backed adapter by implementing the
  * same contract.
  */
 
-import type { AgentCard, AgentRegistry, TopicString } from '@nexora/contracts';
-import { matchTopic } from '@nexora/contracts';
+import type { AgentCard, AgentRegistry, TopicString } from '@dongkseo/contracts';
+import { matchTopic } from '@dongkseo/contracts';
 
-export type { AgentRegistry } from '@nexora/contracts';
+export type { AgentRegistry } from '@dongkseo/contracts';
 
 export class InMemoryAgentRegistry implements AgentRegistry {
   private readonly cards = new Map<string, AgentCard>();

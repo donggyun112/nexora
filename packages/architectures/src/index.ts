@@ -1,5 +1,5 @@
 /**
- * @nexora/architectures — 사고 패턴.
+ * @dongkseo/architectures — 사고 패턴.
  *
  * - react: ReAct (Reasoning + Acting) 루프
  * - plan-execute: PLAN phase(도구 게이팅으로 계획 강제) → EXECUTE phase. plan mode 공식화.

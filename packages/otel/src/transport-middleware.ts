@@ -15,7 +15,7 @@
  *
  * Usage:
  *   import { trace } from '@opentelemetry/api';
- *   import { OTelTransport } from '@nexora/otel';
+ *   import { OTelTransport } from '@dongkseo/otel';
  *
  *   const inner = new LocalTransport();
  *   const transport = new OTelTransport(inner, {
@@ -49,8 +49,8 @@ import type {
   MessageEnvelope,
   TopicString,
   TransportDescription,
-} from '@nexora/contracts';
-import { toW3CTraceId, toW3CSpanId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { toW3CTraceId, toW3CSpanId } from '@dongkseo/contracts';
 
 export interface OTelTransportOptions {
   /**

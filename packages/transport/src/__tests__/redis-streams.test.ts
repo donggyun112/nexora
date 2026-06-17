@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { RedisStreamsTransport } from '../redis-streams.js';
 import type { RedisStreamsLike } from '../redis-streams.js';
-import type { MessageEnvelope } from '@nexora/contracts';
+import type { MessageEnvelope } from '@dongkseo/contracts';
 
 // ─── FakeRedisStreams ──────────────────────────────────────────────────────
 

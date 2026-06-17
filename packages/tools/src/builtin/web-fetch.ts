@@ -11,8 +11,8 @@
  * web-search.ts 패턴과 동일하게 외부 의존성(summarizer, fetch)을 주입한다.
  */
 
-import type { ToolDefinition, ToolResult, ToolContext } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult, ToolContext } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 
 export interface WebFetchSummarizer {
   /**

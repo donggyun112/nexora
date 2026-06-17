@@ -30,8 +30,8 @@ import type {
   MessageEnvelope,
   TopicString,
   TransportDescription,
-} from '@nexora/contracts';
-import { matchTopic, messageId, traceId, spanId, conversationId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId, traceId, spanId, conversationId } from '@dongkseo/contracts';
 
 interface LogEntry {
   id: string;

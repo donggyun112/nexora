@@ -1,5 +1,5 @@
 /**
- * @nexora/tools — tool system.
+ * @dongkseo/tools — tool system.
  *
  * - registry: tool registration / filtering / assembly
  * - builtin: 8 stock tools (exec, read, grep, write, edit, knowledge,

@@ -23,12 +23,12 @@ import type {
   AgentLogger,
   WorkflowStateStore,
   WorkflowCheckpoint,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   assertDurable,
   traceId as newTraceId,
   conversationId as newConversationId,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface WorkflowEngineOptions {
   transport: EventTransport;

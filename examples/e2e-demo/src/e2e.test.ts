@@ -9,16 +9,16 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { defineAgent, topic } from '@nexora/contracts';
-import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@nexora/core';
-import { createReactArchitecture } from '@nexora/architectures';
-import { createReadTool, createGrepTool } from '@nexora/tools';
-import { LocalTransport } from '@nexora/transport';
-import { HttpAdapter } from '@nexora/adapters';
-import { GatewayRouter } from '@nexora/gateway';
+import { defineAgent, topic } from '@dongkseo/contracts';
+import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@dongkseo/core';
+import { createReactArchitecture } from '@dongkseo/architectures';
+import { createReadTool, createGrepTool } from '@dongkseo/tools';
+import { LocalTransport } from '@dongkseo/transport';
+import { HttpAdapter } from '@dongkseo/adapters';
+import { GatewayRouter } from '@dongkseo/gateway';
 import { SmartMockLLM } from './mock-llm.js';
-import type { ContextLoader, AgentContext } from '@nexora/contracts';
-import type { RunningAgent } from '@nexora/core';
+import type { ContextLoader, AgentContext } from '@dongkseo/contracts';
+import type { RunningAgent } from '@dongkseo/core';
 
 let http: HttpAdapter;
 let transport: LocalTransport;

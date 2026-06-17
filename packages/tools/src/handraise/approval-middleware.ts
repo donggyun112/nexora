@@ -28,8 +28,8 @@ import type {
   ToolResult,
   TopicString,
   MessageEnvelope,
-} from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 import type { ApprovalChoice, ApprovalRequest, ApprovalReply } from './approval.js';
 import type { ApprovalPolicyStore } from './approval-store.js';
 import type {
@@ -55,7 +55,7 @@ import type { HardlineRule } from './hardline.js';
 export type ApprovalMode = 'off' | 'ask' | 'block';
 
 /**
- * Structural subset of `@nexora/core`'s AgentMiddleware. Defined locally to
+ * Structural subset of `@dongkseo/core`'s AgentMiddleware. Defined locally to
  * avoid a `tools → core` package dependency (core already depends on tools
  * transitively via team.ts). The full middleware shape is structurally
  * compatible — callers can pass this to MiddlewarePipeline directly.

@@ -1,5 +1,5 @@
 {
-  "name": "@nexora/store-pg",
+  "name": "@dongkseo/store-pg",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@nexora/contracts": "workspace:*",
+    "@dongkseo/contracts": "workspace:*",
     "postgres": "^3.4.0"
   },
   "devDependencies": {

@@ -2,7 +2,7 @@
  * KnowledgeStorePg — PostgreSQL-backed knowledge store.
  */
 
-import type { KnowledgeStore, KnowledgeTopic, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { KnowledgeStore, KnowledgeTopic, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 import type { Sql } from './pg-client.js';
 
 export class KnowledgeStorePg implements KnowledgeStore, DescribableStore {

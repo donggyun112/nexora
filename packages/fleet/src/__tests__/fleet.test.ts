@@ -4,7 +4,7 @@ import type {
   OracleContext,
   Worker,
   WorkerInvocationRequest,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   FleetCoordinator,
   HttpWorkerInvoker,

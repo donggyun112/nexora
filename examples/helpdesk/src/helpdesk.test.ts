@@ -21,18 +21,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
-import { LocalTransport } from '@nexora/transport';
-import { CoreContextLoader } from '@nexora/context';
+import { LocalTransport } from '@dongkseo/transport';
+import { CoreContextLoader } from '@dongkseo/context';
 import {
   AgentRunner,
   CoreToolExecutor,
   bootstrapAgent,
-} from '@nexora/core';
-import { createReactArchitecture } from '@nexora/architectures';
-import { createReadTool, createGrepTool } from '@nexora/tools';
-import { HttpAdapter } from '@nexora/adapters';
-import { GatewayRouter } from '@nexora/gateway';
-import { defineAgent, topic } from '@nexora/contracts';
+} from '@dongkseo/core';
+import { createReactArchitecture } from '@dongkseo/architectures';
+import { createReadTool, createGrepTool } from '@dongkseo/tools';
+import { HttpAdapter } from '@dongkseo/adapters';
+import { GatewayRouter } from '@dongkseo/gateway';
+import { defineAgent, topic } from '@dongkseo/contracts';
 import type {
   LLMProvider,
   LLMMessage,
@@ -40,8 +40,8 @@ import type {
   LLMChunk,
   LLMResponse,
   TopicString,
-} from '@nexora/contracts';
-import type { RunningAgent } from '@nexora/core';
+} from '@dongkseo/contracts';
+import type { RunningAgent } from '@dongkseo/core';
 
 // ─── Mock LLM ──────────────────────────────────────────────────────────────
 

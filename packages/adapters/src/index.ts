@@ -1,5 +1,5 @@
 /**
- * @nexora/adapters — entry-point adapters.
+ * @dongkseo/adapters — entry-point adapters.
  *
  * - HttpAdapter: REST API (node:http, no Express)
  * - DiscordAdapter: Discord bot (SDK-independent, pass your own discord.js Client)

@@ -8,8 +8,8 @@ import type {
   TopicString,
   TransportDescription,
   ToolContext,
-} from '@nexora/contracts';
-import { matchTopic } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic } from '@dongkseo/contracts';
 
 class FakeTransport implements EventTransport {
   readonly published: MessageEnvelope[] = [];

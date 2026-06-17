@@ -24,8 +24,8 @@ import type {
   ApprovalReply,
   HandraiseInbox,
   PendingHandraise,
-} from '@nexora/tools';
-import { isApprovalRequest } from '@nexora/tools';
+} from '@dongkseo/tools';
+import { isApprovalRequest } from '@dongkseo/tools';
 
 const DEFAULT_CHOICES: ApprovalChoice[] = ['once', 'session', 'always', 'deny'];
 

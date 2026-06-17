@@ -25,7 +25,7 @@
  * first, others add when useful, and everyone else stays silent.
  */
 
-import type { LLMMessage } from '@nexora/contracts';
+import type { LLMMessage } from '@dongkseo/contracts';
 import { ConversationRoom, type RoomMessage, type RoomParticipant } from './room.js';
 import { evaluateAll, type EvaluationResult } from './evaluate.js';
 

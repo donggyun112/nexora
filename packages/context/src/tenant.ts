@@ -12,7 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ResourceLimits } from '@nexora/contracts';
+import type { ResourceLimits } from '@dongkseo/contracts';
 
 export interface TenantConfig {
   /** 테넌트 ID (디렉토리명과 일치) */

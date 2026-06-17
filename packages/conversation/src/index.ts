@@ -1,5 +1,5 @@
 /**
- * @nexora/conversation — multi-agent group conversation protocol.
+ * @dongkseo/conversation — multi-agent group conversation protocol.
  *
  * When multiple agents share a channel with a human, this package provides
  * the turn-taking protocol that makes them behave like people in a group

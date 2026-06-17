@@ -2,7 +2,7 @@
  * ContextStorePg — PostgreSQL-backed daily context store.
  */
 
-import type { ContextStore, DailyContext, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { ContextStore, DailyContext, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 import type { Sql } from './pg-client.js';
 import { jsonParam } from './helpers.js';
 

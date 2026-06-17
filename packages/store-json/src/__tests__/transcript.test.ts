@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { TranscriptStoreJson } from '../transcript.js';
-import type { AssistantTranscriptEntry, UserTranscriptEntry } from '@nexora/contracts';
+import type { AssistantTranscriptEntry, UserTranscriptEntry } from '@dongkseo/contracts';
 
 let tmpDir: string;
 

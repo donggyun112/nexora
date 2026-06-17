@@ -6,8 +6,8 @@
  * agent doesn't lose track of what it was doing.
  */
 
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 
 export interface TodoItem {
   id: string;

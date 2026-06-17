@@ -13,8 +13,8 @@ import type {
   TransportDescription,
   ToolDefinition,
   RequestOptions,
-} from '@nexora/contracts';
-import { matchTopic } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic } from '@dongkseo/contracts';
 
 class FakeTransport implements EventTransport {
   private readonly subs = new Map<number, { pattern: string; handler: (e: MessageEnvelope) => Promise<void> }>();

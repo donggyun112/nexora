@@ -18,7 +18,7 @@ import type {
   ExtensionContext,
   ExtensionRegistry,
   ToolDefinition,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export class InMemoryExtensionRegistry implements ExtensionRegistry {
   private readonly extensions = new Map<string, NexoraExtension>();

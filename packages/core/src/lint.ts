@@ -13,7 +13,7 @@
  *   5. Publishes declaration: every result topic must match card.publishes
  */
 
-import type { AgentCard, AgentLogger } from '@nexora/contracts';
+import type { AgentCard, AgentLogger } from '@dongkseo/contracts';
 
 export interface LintResult {
   errors: string[];

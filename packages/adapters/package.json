@@ -1,5 +1,5 @@
 {
-  "name": "@nexora/adapters",
+  "name": "@dongkseo/adapters",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,8 +16,8 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@nexora/contracts": "workspace:*",
-    "@nexora/tools": "workspace:*"
+    "@dongkseo/contracts": "workspace:*",
+    "@dongkseo/tools": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

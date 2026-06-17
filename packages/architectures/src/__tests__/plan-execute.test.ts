@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createPlanExecuteArchitecture } from '../plan-execute.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, RuntimeServices } from '@nexora/contracts';
+import type { AgentEvent, RuntimeServices } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];

@@ -9,8 +9,8 @@
  *   registry.registerAll(tools);
  */
 
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 import type { McpClientLike } from './types.js';
 
 export interface McpClientBridgeOptions {

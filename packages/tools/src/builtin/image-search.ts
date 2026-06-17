@@ -5,8 +5,8 @@
  * 결과는 이미지 생성 전 moodboard/reference 후보로 쓰기 쉬운 compact JSON으로 반환한다.
  */
 
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 
 export interface ImageSearchResult {
   title: string;

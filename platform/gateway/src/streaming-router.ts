@@ -20,7 +20,7 @@ import type {
   OutboundChunk,
   AgentRuntime,
   AgentEvent,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface StreamingGatewayRouterOptions {
   /** The non-streaming router for route() calls. */

@@ -1,5 +1,5 @@
 {
-  "name": "@nexora/store",
+  "name": "@dongkseo/store",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -15,7 +15,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@nexora/contracts": "workspace:*"
+    "@dongkseo/contracts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

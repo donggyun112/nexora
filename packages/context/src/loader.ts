@@ -18,8 +18,8 @@ import type {
   AgentContext,
   ResourceLimits,
   RuntimeContext,
-} from '@nexora/contracts';
-import { createTenantAgentScope } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { createTenantAgentScope } from '@dongkseo/contracts';
 import { PersonaLoader } from './persona.js';
 import { SkillLoader } from './skills.js';
 import { TenantConfigStore, DEFAULT_LIMITS } from './tenant.js';

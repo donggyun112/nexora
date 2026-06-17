@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { messageId } from '@nexora/contracts';
+import { messageId } from '@dongkseo/contracts';
 import type {
   SessionEntry,
   SessionTreeNode,
@@ -19,7 +19,7 @@ import type {
   AppendEntryInput,
   StoreBackendInfo,
   DescribableStore,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export class TreeConversationStoreJson implements TreeConversationStore, DescribableStore {
   private readonly dir: string;

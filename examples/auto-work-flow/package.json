@@ -10,14 +10,14 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@nexora/adapters": "workspace:*",
-    "@nexora/architectures": "workspace:*",
-    "@nexora/contracts": "workspace:*",
-    "@nexora/core": "workspace:*",
-    "@nexora/gateway": "workspace:*",
-    "@nexora/registry": "workspace:*",
-    "@nexora/tools": "workspace:*",
-    "@nexora/transport": "workspace:*"
+    "@dongkseo/adapters": "workspace:*",
+    "@dongkseo/architectures": "workspace:*",
+    "@dongkseo/contracts": "workspace:*",
+    "@dongkseo/core": "workspace:*",
+    "@dongkseo/gateway": "workspace:*",
+    "@dongkseo/registry": "workspace:*",
+    "@dongkseo/tools": "workspace:*",
+    "@dongkseo/transport": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

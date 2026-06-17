@@ -1,5 +1,5 @@
 /**
- * @nexora/gateway — 외부 진입점 ↔ 에이전트 시스템 사이의 라우터.
+ * @dongkseo/gateway — 외부 진입점 ↔ 에이전트 시스템 사이의 라우터.
  *
  * - GatewayRouter: InboundMessage → topic 발행 → 응답
  * - LocalRuntimeRouter: transport 없이 AgentRuntime 직접 호출 (단일 프로세스 + 스트리밍)

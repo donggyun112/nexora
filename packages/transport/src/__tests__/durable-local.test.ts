@@ -8,8 +8,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryDurableTransport } from '../durable-local.js';
-import type { MessageEnvelope } from '@nexora/contracts';
-import { messageId } from '@nexora/contracts';
+import type { MessageEnvelope } from '@dongkseo/contracts';
+import { messageId } from '@dongkseo/contracts';
 
 function delay(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));

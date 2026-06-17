@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createSkillManageTool } from '../builtin/skill-manage.js';
-import type { ToolContext } from '@nexora/contracts';
+import type { ToolContext } from '@dongkseo/contracts';
 
 const VALID_SKILL = `---
 name: test-skill

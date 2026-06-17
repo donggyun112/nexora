@@ -16,7 +16,7 @@ import type {
   MessageRouter,
   InboundMessage,
   OutboundChunk,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface HttpAdapterOptions {
   /** 바인드 호스트 (기본 '127.0.0.1') */

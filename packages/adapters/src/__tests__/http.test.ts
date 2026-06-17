@@ -5,7 +5,7 @@ import type {
   InboundMessage,
   OutboundMessage,
   OutboundChunk,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 let adapter: HttpAdapter;
 

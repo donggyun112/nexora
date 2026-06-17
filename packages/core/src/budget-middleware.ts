@@ -21,7 +21,7 @@
  *   });
  */
 
-import type { BudgetTracker, CostEvent, AgentLogger } from '@nexora/contracts';
+import type { BudgetTracker, CostEvent, AgentLogger } from '@dongkseo/contracts';
 import { estimateCostUsd } from './budget.js';
 
 interface BudgetMiddlewareContext {
@@ -79,7 +79,7 @@ export function createBudgetMiddleware(options: BudgetMiddlewareOptions): AgentM
     async beforeExecution(): Promise<void> {
       // Check ALL applicable scopes, not just tenant-agent.
       // A global policy with onExceed:'block' must also block.
-      const scopes: import('@nexora/contracts').BudgetScope[] = [
+      const scopes: import('@dongkseo/contracts').BudgetScope[] = [
         { type: 'global' },
         { type: 'tenant', tenantId },
         { type: 'agent', agentName },

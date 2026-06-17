@@ -10,7 +10,7 @@
  *   const filtered = registry.assemble({ allowed: ['exec'] });
  */
 
-import type { ToolDefinition } from '@nexora/contracts';
+import type { ToolDefinition } from '@dongkseo/contracts';
 
 export interface ToolFilter {
   /** 허용할 도구 이름 (지정 시 화이트리스트) */

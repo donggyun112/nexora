@@ -1,5 +1,5 @@
 /**
- * @nexora/tools/handraise — human-in-the-loop primitive.
+ * @dongkseo/tools/handraise — human-in-the-loop primitive.
  */
 
 export { HandraisePolicy, approveMatching, denyMatching } from './policy.js';

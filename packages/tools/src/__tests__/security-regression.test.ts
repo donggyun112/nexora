@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createExecTool } from '../builtin/index.js';
 import { openForRead, PathOutsideWorkspaceError } from '../builtin/safe-path.js';
-import type { ToolContext } from '@nexora/contracts';
+import type { ToolContext } from '@dongkseo/contracts';
 
 let tmpDir: string;
 

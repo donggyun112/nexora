@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ContextStore, DailyContext, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { ContextStore, DailyContext, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 
 export class ContextStoreJson implements ContextStore, DescribableStore {
   private readonly baseDir: string;

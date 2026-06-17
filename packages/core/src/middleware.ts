@@ -14,7 +14,7 @@ import type {
   LLMResponse,
   LLMUsage,
   BudgetScope,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 // 로그용 systemPrompt 요약 — 길면 잘라 길이 표시. (순수 로깅, 동작 영향 없음)
 function summarizeToolInput(value: string | undefined, max: number): string {

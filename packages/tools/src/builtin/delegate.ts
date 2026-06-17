@@ -23,7 +23,7 @@ import type {
   AgentEvent,
   TopicString,
   MessageEnvelope,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   textResult,
   errorResult,
@@ -31,7 +31,7 @@ import {
   traceId,
   spanId,
   conversationId,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import { createApprovalGateMiddleware } from '../handraise/approval-middleware.js';
 import type { ApprovalGateOptions } from '../handraise/approval-middleware.js';
 
@@ -369,7 +369,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
 async function executeSubagent(
   sa: Subagent,
   params: DelegateParams,
-  ctx: import('@nexora/contracts').ToolContext,
+  ctx: import('@dongkseo/contracts').ToolContext,
   runtimeFactory?: SubagentRuntimeFactory,
   onEvent?: (name: string, event: AgentEvent) => void,
 ): Promise<ToolResult> {

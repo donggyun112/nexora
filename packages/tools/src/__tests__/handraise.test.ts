@@ -29,8 +29,8 @@ import type {
   AgentRegistry,
   AgentCard,
   ToolContext,
-} from '@nexora/contracts';
-import { matchTopic, messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId } from '@dongkseo/contracts';
 
 // ─── Fake transport: wildcard subscribe, inline dispatch, replyTo matching ─
 

@@ -9,7 +9,7 @@
  *   - 또는 nextRunAt() 함수에 cron 라이브러리의 다음 실행 시각 계산을 위임
  */
 
-import type { AgentLogger } from '@nexora/contracts';
+import type { AgentLogger } from '@dongkseo/contracts';
 
 export interface CronJob {
   /** 작업 ID */

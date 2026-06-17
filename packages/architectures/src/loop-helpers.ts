@@ -11,7 +11,7 @@ import type {
   LLMResponse,
   RuntimeServices,
   ToolBatchResult,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export type ToolCall = NonNullable<LLMResponse['toolCalls']>[number];
 

@@ -1,5 +1,5 @@
 /**
- * @nexora/store-memory — Associative Memory Graph.
+ * @dongkseo/store-memory — Associative Memory Graph.
  *
  * Optional package. Adds N:M key-value graph memory with:
  * - 2-hop associative search (Newton → apple → fruit → strawberry)
@@ -11,7 +11,7 @@
  *
  * Usage:
  * ```typescript
- * import { MemoryGraph } from '@nexora/store-memory';
+ * import { MemoryGraph } from '@dongkseo/store-memory';
  *
  * const graph = new MemoryGraph({
  *   embedding: { embed: async (text) => openai.embeddings.create({ input: text, model: 'text-embedding-3-small' }).then(r => r.data[0].embedding) },

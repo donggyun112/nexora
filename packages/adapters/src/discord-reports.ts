@@ -24,13 +24,13 @@ import {
   type CompactReport,
   type BudgetReport,
   type ErrorReport,
-} from '@nexora/tools';
+} from '@dongkseo/tools';
 import type {
   EventTransport,
   Subscription,
   TopicString,
   MessageEnvelope,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 // ─── SDK-light interfaces ─────────────────────────────────────────────────
 

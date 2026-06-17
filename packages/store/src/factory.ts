@@ -15,7 +15,7 @@ import type {
   DescribableStore,
   StoreBackendInfo,
   AgentLogger,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface StoreProvider {
   conversation: ConversationStore;
@@ -81,7 +81,7 @@ export async function createStoreProvider(config: StoreConfig): Promise<StorePro
   switch (config.type) {
     case 'json': {
       const mod: { createJsonStoreProvider: (dataDir: string) => StoreProvider } =
-        await (import('@nexora/store-json' as string) as Promise<{ createJsonStoreProvider: (dataDir: string) => StoreProvider }>);
+        await (import('@dongkseo/store-json' as string) as Promise<{ createJsonStoreProvider: (dataDir: string) => StoreProvider }>);
       return mod.createJsonStoreProvider(config.dataDir);
     }
     case 'pg': {
@@ -89,7 +89,7 @@ export async function createStoreProvider(config: StoreConfig): Promise<StorePro
         createPgClient: (opts: { connectionString: string }) => Promise<{ sql: unknown }>;
         createPgStoreProvider: (sql: unknown) => StoreProvider;
         TreeConversationStorePg: new (sql: unknown) => TreeConversationStore;
-      } = await (import('@nexora/store-pg' as string) as Promise<{
+      } = await (import('@dongkseo/store-pg' as string) as Promise<{
         createPgClient: (opts: { connectionString: string }) => Promise<{ sql: unknown }>;
         createPgStoreProvider: (sql: unknown) => StoreProvider;
         TreeConversationStorePg: new (sql: unknown) => TreeConversationStore;

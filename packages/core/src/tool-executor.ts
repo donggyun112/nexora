@@ -12,7 +12,7 @@ import type {
   ToolExecutor,
   ToolDefinitionSummary,
   AgentLogger,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface ToolExecutorOptions {
   /** 등록할 도구 목록 */

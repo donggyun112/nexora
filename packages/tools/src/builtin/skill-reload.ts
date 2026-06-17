@@ -4,7 +4,7 @@
  * 봇 운용 중 새 스킬을 추가/삭제했을 때 봇 재시작 없이 LLM 메뉴 갱신용.
  * Hermes `reload_skills` 의 시그니처를 따라 added/removed 두 리스트로 응답.
  *
- * @nexora/skills 의 invalidateSkillMenuCache + snapshotSkills 와 짝.
+ * @dongkseo/skills 의 invalidateSkillMenuCache + snapshotSkills 와 짝.
  */
 
 import path from 'node:path';
@@ -12,13 +12,13 @@ import {
   type ToolDefinition,
   type ToolResult,
   type ToolContext,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   getLastSkillMenuSnapshot,
   invalidateSkillMenuCache,
   refreshSkillMenuSnapshot,
   snapshotSkills,
-} from '@nexora/skills';
+} from '@dongkseo/skills';
 
 export interface SkillReloadToolOptions {
   readonly agentSkillsDir: string;

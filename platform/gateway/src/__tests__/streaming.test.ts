@@ -12,7 +12,7 @@ import type {
   AgentRuntime,
   AgentInput,
   AgentEvent,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 function makeRuntime(events: AgentEvent[]): AgentRuntime {
   return {

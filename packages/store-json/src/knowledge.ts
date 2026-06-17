@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { KnowledgeStore, KnowledgeTopic, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { KnowledgeStore, KnowledgeTopic, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 
 function sanitizeName(name: string): string {
   if (name.includes('/') || name.includes('..')) {

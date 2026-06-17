@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CoreToolExecutor, formatToolResult } from '../tool-executor.js';
-import type { ToolDefinition, ToolContext, ToolResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolContext, ToolResult } from '@dongkseo/contracts';
 
 const mockContext: ToolContext = {
   tenantId: 'test',

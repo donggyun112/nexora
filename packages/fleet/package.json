@@ -1,5 +1,5 @@
 {
-  "name": "@nexora/fleet",
+  "name": "@dongkseo/fleet",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,7 +16,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@nexora/contracts": "workspace:*"
+    "@dongkseo/contracts": "workspace:*"
   },
   "nexora": {
     "stability": "advanced"

@@ -39,8 +39,8 @@ import type {
   MessageEnvelope,
   TopicString,
   TransportDescription,
-} from '@nexora/contracts';
-import { messageId, traceId, spanId, conversationId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId, traceId, spanId, conversationId } from '@dongkseo/contracts';
 
 /**
  * Minimal Redis client surface for stream operations.

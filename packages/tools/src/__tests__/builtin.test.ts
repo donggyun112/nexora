@@ -13,8 +13,8 @@ import {
   createImageSearchTool,
   createSkillReloadTool,
 } from '../builtin/index.js';
-import type { ToolContext, KnowledgeStore, ToolResult } from '@nexora/contracts';
-import { buildSkillMenu } from '@nexora/skills';
+import type { ToolContext, KnowledgeStore, ToolResult } from '@dongkseo/contracts';
+import { buildSkillMenu } from '@dongkseo/skills';
 
 let tmpDir: string;
 

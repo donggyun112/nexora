@@ -6,10 +6,10 @@
  * Master moderation uses a separate moderator persona, not the participant persona.
  */
 
-import type { AgentRuntime, AgentInput, LLMMessage, OutboundChunk } from '@nexora/contracts';
+import type { AgentRuntime, AgentInput, LLMMessage, OutboundChunk } from '@dongkseo/contracts';
 import { ConversationRoom } from './room.js';
 import { TurnManager } from './turn-manager.js';
-import type { MeetingManager, Meeting } from '@nexora/tools';
+import type { MeetingManager, Meeting } from '@dongkseo/tools';
 import { type MeetingPromptTemplates, DEFAULT_MEETING_PROMPTS, interpolate } from './meeting-prompts.js';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));

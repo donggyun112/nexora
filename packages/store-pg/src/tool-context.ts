@@ -9,7 +9,7 @@ import type {
   ToolContextRecord,
   StoreBackendInfo,
   DescribableStore,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import type { Sql } from './pg-client.js';
 import { jsonParam } from './helpers.js';
 

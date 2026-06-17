@@ -6,8 +6,8 @@
  * contract lets the engine checkpoint state between steps and resume
  * from the last checkpoint after a restart.
  *
- * Implementations live outside @nexora/contracts (in-memory in the
- * orchestrator package, file-based in @nexora/store-json, future
+ * Implementations live outside @dongkseo/contracts (in-memory in the
+ * orchestrator package, file-based in @dongkseo/store-json, future
  * Redis/Postgres in their own packages).
  */
 

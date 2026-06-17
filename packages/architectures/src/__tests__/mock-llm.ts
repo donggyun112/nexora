@@ -11,7 +11,7 @@ import type {
   LLMChunk,
   LLMResponse,
   RuntimeServices,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface MockResponse {
   text: string;

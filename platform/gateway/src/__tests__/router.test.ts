@@ -9,8 +9,8 @@ import type {
   AgentRuntime,
   AgentInput,
   AgentEvent,
-} from '@nexora/contracts';
-import { messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId } from '@dongkseo/contracts';
 
 class FakeTransport implements Transport {
   public requests: { topic: string; payload: unknown; options?: RequestOptions }[] = [];

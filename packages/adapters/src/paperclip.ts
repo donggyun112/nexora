@@ -32,7 +32,7 @@ import type {
   MessageRouter,
   InboundMessage,
   AgentCard,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 // ─── Paperclip API types (minimal) ────────────────────────────────────────
 

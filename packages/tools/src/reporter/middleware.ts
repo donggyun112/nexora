@@ -21,8 +21,8 @@ import type {
   MessageEnvelope,
   ToolDefinition,
   TopicString,
-} from '@nexora/contracts';
-import { messageId, spanId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId, spanId } from '@dongkseo/contracts';
 import {
   type ReportEvent,
   type ReportEnvelopePayload,
@@ -30,7 +30,7 @@ import {
   reportTopic,
 } from './events.js';
 
-/** Hook contexts (structurally compatible with @nexora/core middleware). */
+/** Hook contexts (structurally compatible with @dongkseo/core middleware). */
 interface ToolCtxLike {
   toolName: string;
   callId: string;

@@ -21,7 +21,7 @@ import type {
   AgentLogger,
   AgentRuntime,
   AgentEvent,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface IntentResolver {
   /** 입력 메시지를 보고 발행할 topic 결정 */

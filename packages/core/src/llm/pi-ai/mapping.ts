@@ -16,7 +16,7 @@ import type {
   LLMChunk,
   LLMContentBlock,
   LLMResponse,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import type {
   Message,
   AssistantMessage,

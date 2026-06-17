@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createWebFetchTool } from '../builtin/web-fetch.js';
-import type { ToolContext } from '@nexora/contracts';
+import type { ToolContext } from '@dongkseo/contracts';
 
 function makeContext(): ToolContext {
   return {

@@ -18,8 +18,8 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 import {
   openForRead,
   openForWrite,

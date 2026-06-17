@@ -27,7 +27,7 @@ import type {
   EventTransport,
   MessageEnvelope,
   Subscription,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface EphemeralResultListenerOptions {
   transport: EventTransport;

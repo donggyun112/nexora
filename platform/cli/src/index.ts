@@ -1,5 +1,5 @@
 /**
- * @nexora/cli — 프로그래매틱 API.
+ * @dongkseo/cli — 프로그래매틱 API.
  *
  * CLI 진입점은 src/cli.ts (bin: nexora).
  * 다른 도구에서 스캐폴딩을 호출하고 싶다면 여기서 import.

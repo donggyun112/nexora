@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { assembleToolsWithPolicy, resolveToolPolicy, ToolRegistry } from '../registry.js';
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
 
 function makeTool(name: string): ToolDefinition {
   return {

@@ -7,8 +7,8 @@
 
 import { execFile } from 'node:child_process';
 import path from 'node:path';
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 
 const MAX_LINES = 200;
 

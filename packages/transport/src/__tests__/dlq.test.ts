@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DLQTransport } from '../dlq.js';
 import { LocalTransport, createEnvelope } from '../local.js';
-import type { MessageEnvelope } from '@nexora/contracts';
+import type { MessageEnvelope } from '@dongkseo/contracts';
 
 function delay(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));

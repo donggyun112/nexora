@@ -10,7 +10,7 @@ import { stream as piStream, complete as piComplete, getModel } from '@earendil-
 import type { KnownProvider } from '@earendil-works/pi-ai';
 import type {
   LLMProvider, LLMMessage, LLMOptions, LLMChunk, LLMResponse,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   toPiContext, toPiOptions, fromPiChunk, fromPiAssistantMessage,
 } from './mapping.js';

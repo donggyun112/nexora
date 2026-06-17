@@ -13,7 +13,7 @@
  *   - Cap at 80 tokens to keep latency < 500ms
  */
 
-import type { LLMProvider, LLMMessage } from '@nexora/contracts';
+import type { LLMProvider, LLMMessage } from '@dongkseo/contracts';
 import type { RoomMessage, RoomParticipant } from './room.js';
 
 export interface EvaluationResult {

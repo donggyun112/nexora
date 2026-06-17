@@ -9,7 +9,7 @@ import type {
   LLMOptions,
   LLMChunk,
   LLMResponse,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export class SmartMockLLM implements LLMProvider {
   async *stream(messages: LLMMessage[], options?: LLMOptions): AsyncGenerator<LLMChunk> {

@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ScheduleStore, ScheduledJob, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { ScheduleStore, ScheduledJob, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 
 export class ScheduleStoreJson implements ScheduleStore, DescribableStore {
   private readonly dir: string;

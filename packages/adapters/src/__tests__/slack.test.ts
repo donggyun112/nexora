@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SlackAdapter } from '../slack.js';
 import type { SlackClientLike, SlackMessageEvent } from '../slack.js';
-import type { MessageRouter, InboundMessage, OutboundMessage } from '@nexora/contracts';
+import type { MessageRouter, InboundMessage, OutboundMessage } from '@dongkseo/contracts';
 
 function makeFakeClient(): SlackClientLike & {
   fire: (event: SlackMessageEvent) => Promise<void>;

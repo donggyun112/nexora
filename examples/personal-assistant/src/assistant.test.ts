@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ConversationRoom, TurnManager } from '@nexora/conversation';
-import { HttpAdapter } from '@nexora/adapters';
-import { defineAgent, topic } from '@nexora/contracts';
+import { ConversationRoom, TurnManager } from '@dongkseo/conversation';
+import { HttpAdapter } from '@dongkseo/adapters';
+import { defineAgent, topic } from '@dongkseo/contracts';
 import type {
   LLMProvider,
   LLMMessage,
@@ -16,7 +16,7 @@ import type {
   InboundMessage,
   OutboundMessage,
   OutboundChunk,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 class MockAssistantLLM implements LLMProvider {
   async *stream(): AsyncGenerator<LLMChunk> {

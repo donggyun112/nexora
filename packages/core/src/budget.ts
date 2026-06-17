@@ -19,7 +19,7 @@ import type {
   BudgetStatus,
   CostEvent,
   ModelUsage,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export class InMemoryBudgetTracker implements BudgetTracker {
   private readonly policies: BudgetPolicy[] = [];

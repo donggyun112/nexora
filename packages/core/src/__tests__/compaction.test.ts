@@ -8,7 +8,7 @@ import {
   findCutPoint,
 } from '../compaction.js';
 import { MockLLMProvider } from './mock-llm.js';
-import type { ChatMessage } from '@nexora/contracts';
+import type { ChatMessage } from '@dongkseo/contracts';
 
 describe('compaction utilities', () => {
   it('estimateTokens uses chars/4', () => {

@@ -16,8 +16,8 @@ import type {
   RequestOptions,
   TopicString,
   TransportDescription,
-} from '@nexora/contracts';
-import { matchTopic, messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId } from '@dongkseo/contracts';
 
 // ─── Fake OTel tracer that captures spans in memory ───────────────────────
 

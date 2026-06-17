@@ -5,7 +5,7 @@
  * 사용자가 SDK Server에 connect() 하는 형태.
  */
 
-import type { ToolDefinition, ToolContext } from '@nexora/contracts';
+import type { ToolDefinition, ToolContext } from '@dongkseo/contracts';
 import type { McpToolDescriptor, McpCallResult } from './types.js';
 
 export interface McpServerBridge {

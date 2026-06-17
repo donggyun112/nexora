@@ -10,7 +10,7 @@ import type {
   LLMOptions,
   LLMChunk,
   LLMResponse,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface MockResponse {
   /** 최종 텍스트 */

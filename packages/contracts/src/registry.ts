@@ -1,12 +1,12 @@
 /**
  * AgentRegistry — abstract contract for registering agent cards.
  *
- * The in-memory implementation lives in @nexora/registry. Production
+ * The in-memory implementation lives in @dongkseo/registry. Production
  * deployments can provide a Redis/etcd-backed implementation behind this
  * interface without touching agent code.
  *
- * The contract lives in @nexora/contracts (not in @nexora/registry) so
- * @nexora/core can call `registry.register(card)` during bootstrap without
+ * The contract lives in @dongkseo/contracts (not in @dongkseo/registry) so
+ * @dongkseo/core can call `registry.register(card)` during bootstrap without
  * creating a circular dependency from the core runtime into the platform layer.
  */
 

@@ -2,7 +2,7 @@
  * ScheduleStorePg — PostgreSQL-backed schedule store.
  */
 
-import type { ScheduleStore, ScheduledJob, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { ScheduleStore, ScheduledJob, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 import type { Sql } from './pg-client.js';
 import { jsonParam } from './helpers.js';
 

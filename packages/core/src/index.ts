@@ -1,5 +1,5 @@
 /**
- * @nexora/core — 에이전트 런타임 코어.
+ * @dongkseo/core — 에이전트 런타임 코어.
  *
  * LLM Provider, Tool Executor, Memory + Compaction, Middleware, AgentRunner.
  */

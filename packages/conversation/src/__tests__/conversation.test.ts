@@ -15,7 +15,7 @@ import type {
   LLMChunk,
   LLMResponse,
   AgentCard,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 // ─── Mock LLM that returns scripted evaluate + respond ────────────────────
 

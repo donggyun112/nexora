@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { AuditStore, AuditEntry, AuditFilter, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { AuditStore, AuditEntry, AuditFilter, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 
 export class AuditStoreJson implements AuditStore, DescribableStore {
   private readonly dir: string;

@@ -15,7 +15,7 @@ import type {
   ToolContextRecord,
   StoreBackendInfo,
   DescribableStore,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export class ToolContextStoreJson implements ToolContextStore, DescribableStore {
   private readonly baseDir: string;

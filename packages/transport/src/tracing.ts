@@ -13,8 +13,8 @@ import type {
   RequestOptions,
   TopicString,
   TransportDescription,
-} from '@nexora/contracts';
-import { spanId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { spanId } from '@dongkseo/contracts';
 
 export interface TraceContext {
   traceId: string;

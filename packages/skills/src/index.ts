@@ -1,5 +1,5 @@
 /**
- * @nexora/skills — Self-learning skills system.
+ * @dongkseo/skills — Self-learning skills system.
  *
  * Skills are procedural knowledge packages (YAML frontmatter + Markdown body)
  * that agents can discover, use, and create at runtime.

@@ -13,7 +13,7 @@ import type {
   WorkerInvoker,
   WorkerRegistration,
   WorkerRegistry,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export type {
   BroadcastMode,
@@ -24,7 +24,7 @@ export type {
   WorkerInvoker,
   WorkerRegistration,
   WorkerRegistry,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export class InMemoryWorkerRegistry implements WorkerRegistry {
   private readonly workers = new Map<string, Worker>();

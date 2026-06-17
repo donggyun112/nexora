@@ -8,8 +8,8 @@ import type {
   MessageEnvelope,
   WorkflowContract,
   TransportDescription,
-} from '@nexora/contracts';
-import { messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId } from '@dongkseo/contracts';
 
 class StubTransport implements Transport {
   /** topic → handler returning the payload that should be sent back as reply */

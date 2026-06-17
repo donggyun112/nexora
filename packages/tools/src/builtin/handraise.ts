@@ -48,8 +48,8 @@ import type {
   AgentRegistry,
   TopicString,
   MessageEnvelope,
-} from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 import type { HandraisePolicy } from '../handraise/policy.js';
 
 export type HandraiseRecipient =

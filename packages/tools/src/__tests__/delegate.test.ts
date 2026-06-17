@@ -11,8 +11,8 @@ import type {
   AgentRegistry,
   AgentCard,
   ToolContext,
-} from '@nexora/contracts';
-import { matchTopic, messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId } from '@dongkseo/contracts';
 
 class FakeTransport implements EventTransport {
   private readonly subs = new Map<number, { pattern: string; handler: (e: MessageEnvelope) => Promise<void> }>();

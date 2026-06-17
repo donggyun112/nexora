@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { pruneLoopHistory, sanitizeToolPairsInPlace } from '../loop-helpers.js';
-import type { LLMMessage } from '@nexora/contracts';
+import type { LLMMessage } from '@dongkseo/contracts';
 
 // chars/4 토큰 휴리스틱 기준으로 작은 임계값을 써서 픽스처를 가볍게 유지한다.
 // threshold(tokens) = contextWindow - reserveTokens.

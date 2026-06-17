@@ -8,7 +8,7 @@ import {
   reportTopic,
   type ReportEvent,
   type ReportEnvelopePayload,
-} from '@nexora/tools';
+} from '@dongkseo/tools';
 import type {
   EventTransport,
   MessageEnvelope,
@@ -16,8 +16,8 @@ import type {
   TopicString,
   TransportDescription,
   RequestOptions,
-} from '@nexora/contracts';
-import { matchTopic, messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId } from '@dongkseo/contracts';
 
 class FakeTransport implements EventTransport {
   private readonly subs = new Map<number, { pattern: string; handler: (e: MessageEnvelope) => Promise<void> }>();

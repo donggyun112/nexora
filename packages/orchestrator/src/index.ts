@@ -1,5 +1,5 @@
 /**
- * @nexora/orchestrator — 워크플로우 + 스케줄러.
+ * @dongkseo/orchestrator — 워크플로우 + 스케줄러.
  *
  * - WorkflowEngine: WorkflowContract 실행 (transport request/reply 기반)
  * - CronScheduler: 주기/일회성 작업 스케줄러 (외부 cron lib 비의존)

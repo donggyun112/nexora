@@ -17,8 +17,8 @@ import type {
   MessageEnvelope,
   Subscription,
   TopicString,
-} from '@nexora/contracts';
-import { messageId, spanId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId, spanId } from '@dongkseo/contracts';
 
 export interface PendingHandraise {
   /** Internal id for answering (distinct from envelope.id). */

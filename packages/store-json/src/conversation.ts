@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { ConversationStore, ChatMessage, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
+import type { ConversationStore, ChatMessage, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
 
 export class ConversationStoreJson implements ConversationStore, DescribableStore {
   private readonly dir: string;

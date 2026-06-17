@@ -10,8 +10,8 @@ import type {
   ToolDefinition,
   ToolContext,
   ToolResult,
-} from '@nexora/contracts';
-import { suspendResult } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { suspendResult } from '@dongkseo/contracts';
 import { MockLLMProvider } from './mock-llm.js';
 
 const mockContext: ToolContext = {

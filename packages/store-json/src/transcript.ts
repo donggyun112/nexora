@@ -21,7 +21,7 @@ import type {
   AttachmentRef,
   StoreBackendInfo,
   DescribableStore,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 const FLUSH_INTERVAL_MS = 25;
 const MAX_CHUNK_BYTES = 64 * 1024;

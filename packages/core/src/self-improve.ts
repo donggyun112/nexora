@@ -34,7 +34,7 @@ import type {
   AgentLogger,
   LLMProvider,
   LLMUsage,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 // ─── Constants ─────────────────────────────────────────────────────────
 

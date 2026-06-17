@@ -12,7 +12,7 @@
  * feeds messages into the Room and posts agent responses out.
  */
 
-import type { AgentCard, LLMProvider, ConversationStore, ChatMessage, AgentRuntime } from '@nexora/contracts';
+import type { AgentCard, LLMProvider, ConversationStore, ChatMessage, AgentRuntime } from '@dongkseo/contracts';
 
 /** Default max messages before oldest are evicted. */
 const DEFAULT_MAX_HISTORY = 1000;

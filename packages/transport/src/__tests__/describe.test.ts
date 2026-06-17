@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { assertDurable } from '@nexora/contracts';
+import { assertDurable } from '@dongkseo/contracts';
 import type { RedisLike } from '../redis.js';
 import { LocalTransport } from '../local.js';
 import { RedisTransport } from '../redis.js';

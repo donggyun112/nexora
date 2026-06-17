@@ -8,8 +8,8 @@
  * 참고: knowledge.tool.ts (auto-work-flow)
  */
 
-import type { ToolDefinition, ToolResult, KnowledgeStore } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult, KnowledgeStore } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 
 export function createKnowledgeTool(store: KnowledgeStore): ToolDefinition {
   return {

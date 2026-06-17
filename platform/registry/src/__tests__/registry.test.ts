@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryAgentRegistry } from '../index.js';
-import { topic, type AgentCard } from '@nexora/contracts';
+import { topic, type AgentCard } from '@dongkseo/contracts';
 
 function card(name: string, overrides: Partial<AgentCard> = {}): AgentCard {
   return {

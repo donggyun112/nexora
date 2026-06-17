@@ -5,8 +5,8 @@
  * 기본 구현 없음 — 사용자가 SearchBackend를 제공해야 함.
  */
 
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 
 export interface SearchResult {
   title: string;

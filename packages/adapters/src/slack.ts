@@ -6,7 +6,7 @@
  *
  * Usage:
  *   import { App } from '@slack/bolt';
- *   import { SlackAdapter } from '@nexora/adapters';
+ *   import { SlackAdapter } from '@dongkseo/adapters';
  *
  *   const app = new App({ token: '...', signingSecret: '...' });
  *   const adapter = new SlackAdapter({
@@ -25,7 +25,7 @@ import type {
   MessageRouter,
   InboundMessage,
   OutboundChunk,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface SlackMessageEvent {
   text: string;

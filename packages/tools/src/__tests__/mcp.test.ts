@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mcpClientToTools, createMcpServerBridge } from '../mcp/index.js';
 import type { McpClientLike } from '../mcp/types.js';
-import type { ToolDefinition, ToolContext, ToolResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolContext, ToolResult } from '@dongkseo/contracts';
 
 function makeMockClient(): McpClientLike {
   return {

@@ -2,7 +2,7 @@
  * TreeConversationStorePg — PostgreSQL-backed session tree with branching.
  */
 
-import { messageId } from '@nexora/contracts';
+import { messageId } from '@dongkseo/contracts';
 import type {
   SessionEntry,
   SessionTreeNode,
@@ -10,7 +10,7 @@ import type {
   AppendEntryInput,
   StoreBackendInfo,
   DescribableStore,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import type { Sql } from './pg-client.js';
 import { jsonParam } from './helpers.js';
 

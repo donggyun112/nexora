@@ -8,7 +8,7 @@
  * wiring anything extra.
  */
 
-import type { WorkflowStateStore, WorkflowCheckpoint } from '@nexora/contracts';
+import type { WorkflowStateStore, WorkflowCheckpoint } from '@dongkseo/contracts';
 
 export class InMemoryWorkflowStateStore implements WorkflowStateStore {
   private readonly checkpoints = new Map<string, WorkflowCheckpoint>();

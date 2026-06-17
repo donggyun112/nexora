@@ -19,7 +19,7 @@
  */
 
 import Ajv, { type ValidateFunction, type ErrorObject } from 'ajv';
-import type { AgentCard } from '@nexora/contracts';
+import type { AgentCard } from '@dongkseo/contracts';
 
 export class SchemaValidationError extends Error {
   readonly errors: ErrorObject[];

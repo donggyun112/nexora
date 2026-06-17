@@ -1,5 +1,5 @@
 /**
- * @nexora/store-json — JSON 파일 기반 store 구현체.
+ * @dongkseo/store-json — JSON 파일 기반 store 구현체.
  */
 
 export { ConversationStoreJson } from './conversation.js';

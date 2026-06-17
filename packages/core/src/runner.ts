@@ -21,7 +21,7 @@ import type {
   ToolResult,
   LLMMessage,
   LLMOptions,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   MiddlewarePipeline,
   type AgentMiddleware,

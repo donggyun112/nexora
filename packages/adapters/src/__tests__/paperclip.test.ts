@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PaperclipAdapter } from '../paperclip.js';
-import type { MessageRouter, InboundMessage, OutboundMessage } from '@nexora/contracts';
-import { defineAgent, topic } from '@nexora/contracts';
+import type { MessageRouter, InboundMessage, OutboundMessage } from '@dongkseo/contracts';
+import { defineAgent, topic } from '@dongkseo/contracts';
 import { createServer, type Server } from 'node:http';
 
 // ─── Fake Paperclip server ─────────────────────────────────────────────────

@@ -6,13 +6,13 @@
  * TurnManager handles normal turn-taking. Oracle handles meeting discussion.
  */
 
-import { defineAgent, topic } from '@nexora/contracts';
-import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider } from '@nexora/contracts';
-import { FallbackLLMProvider, PiAiProvider, AgentRunner, CoreToolExecutor } from '@nexora/core';
-import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@nexora/conversation';
-import { MeetingManager, createMeetingTools, createReadTool, createGrepTool, createWebSearchTool, createBraveBackend } from '@nexora/tools';
-import { createReactArchitecture } from '@nexora/architectures';
-import { HttpAdapter } from '@nexora/adapters';
+import { defineAgent, topic } from '@dongkseo/contracts';
+import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk, LLMProvider } from '@dongkseo/contracts';
+import { FallbackLLMProvider, PiAiProvider, AgentRunner, CoreToolExecutor } from '@dongkseo/core';
+import { ConversationRoom, TurnManager, MeetingOrchestrator } from '@dongkseo/conversation';
+import { MeetingManager, createMeetingTools, createReadTool, createGrepTool, createWebSearchTool, createBraveBackend } from '@dongkseo/tools';
+import { createReactArchitecture } from '@dongkseo/architectures';
+import { HttpAdapter } from '@dongkseo/adapters';
 import { SmartMockLLM } from './mock-llm.js';
 
 // ─── 1. Agents ──────────────────────────────────────────────────────────

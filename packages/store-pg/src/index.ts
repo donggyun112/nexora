@@ -1,8 +1,8 @@
 /**
- * @nexora/store-pg — PostgreSQL + Redis production store implementations.
+ * @dongkseo/store-pg — PostgreSQL + Redis production store implementations.
  *
  * All 6 core stores + session tree + distributed rate limiter + budget tracker.
- * Drop-in replacements for @nexora/store-json with production characteristics:
+ * Drop-in replacements for @dongkseo/store-json with production characteristics:
  * - Durable (survives restart)
  * - Multi-process safe (concurrent access)
  * - Distributed (Redis-backed shared state)

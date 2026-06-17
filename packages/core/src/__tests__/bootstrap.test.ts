@@ -24,8 +24,8 @@ import type {
   RuntimeServices,
   AgentInput,
   ToolContext,
-} from '@nexora/contracts';
-import { matchTopic, messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId } from '@dongkseo/contracts';
 import { MockLLMProvider } from './mock-llm.js';
 
 class InlineTransport implements EventTransport {

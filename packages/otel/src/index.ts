@@ -1,5 +1,5 @@
 /**
- * @nexora/otel — OpenTelemetry integration for Nexora.
+ * @dongkseo/otel — OpenTelemetry integration for Nexora.
  *
  * Two integration points:
  *   - OTelTransport: wraps EventTransport to emit spans on publish/subscribe/request

@@ -1,5 +1,5 @@
 {
-  "name": "@nexora/gateway",
+  "name": "@dongkseo/gateway",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,16 +16,16 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@nexora/adapters": "workspace:*",
-    "@nexora/contracts": "workspace:*",
-    "@nexora/registry": "workspace:*"
+    "@dongkseo/adapters": "workspace:*",
+    "@dongkseo/contracts": "workspace:*",
+    "@dongkseo/registry": "workspace:*"
   },
   "devDependencies": {
-    "@nexora/architectures": "workspace:*",
-    "@nexora/context": "workspace:*",
-    "@nexora/core": "workspace:*",
-    "@nexora/tools": "workspace:*",
-    "@nexora/transport": "workspace:*",
+    "@dongkseo/architectures": "workspace:*",
+    "@dongkseo/context": "workspace:*",
+    "@dongkseo/core": "workspace:*",
+    "@dongkseo/tools": "workspace:*",
+    "@dongkseo/transport": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   },

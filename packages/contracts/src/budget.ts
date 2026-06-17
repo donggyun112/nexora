@@ -71,7 +71,7 @@ export interface BudgetStatus {
 /**
  * BudgetTracker — accumulates cost events and checks policies.
  *
- * Implementations: InMemoryBudgetTracker (in @nexora/core), persistent
+ * Implementations: InMemoryBudgetTracker (in @dongkseo/core), persistent
  * variants backed by Store.
  */
 export interface BudgetTracker {

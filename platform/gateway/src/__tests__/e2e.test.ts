@@ -21,10 +21,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { HttpAdapter } from '@nexora/adapters';
-import { LocalTransport } from '@nexora/transport';
-import { CoreContextLoader } from '@nexora/context';
-import { AgentRunner, CoreToolExecutor, bootstrapAgent } from '@nexora/core';
+import { HttpAdapter } from '@dongkseo/adapters';
+import { LocalTransport } from '@dongkseo/transport';
+import { CoreContextLoader } from '@dongkseo/context';
+import { AgentRunner, CoreToolExecutor, bootstrapAgent } from '@dongkseo/core';
 import type {
   LLMProvider,
   LLMMessage,
@@ -38,7 +38,7 @@ import type {
   ToolContext,
   AgentCard,
   TopicString,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import { GatewayRouter } from '../router.js';
 
 let tmpDir: string;

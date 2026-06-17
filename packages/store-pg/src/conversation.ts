@@ -4,8 +4,8 @@
  * Production-grade: durable, multi-process safe, survives restarts.
  */
 
-import type { ConversationStore, ChatMessage, StoreBackendInfo, DescribableStore } from '@nexora/contracts';
-import { messageId } from '@nexora/contracts';
+import type { ConversationStore, ChatMessage, StoreBackendInfo, DescribableStore } from '@dongkseo/contracts';
+import { messageId } from '@dongkseo/contracts';
 import type { Sql } from './pg-client.js';
 
 export class ConversationStorePg implements ConversationStore, DescribableStore {

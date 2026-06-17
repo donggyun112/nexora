@@ -30,7 +30,7 @@ describe('scaffoldAgent', () => {
 
     const index = fs.readFileSync(path.join(result.outDir, 'index.ts'), 'utf-8');
     expect(index).toContain('startDevAgent');
-    expect(index).toContain("from '@nexora/core'");
+    expect(index).toContain("from '@dongkseo/core'");
   });
 
   it('respects --arch and --tools options', async () => {

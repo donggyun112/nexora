@@ -11,12 +11,12 @@
  *   pnpm build && node dist/main.js
  */
 
-import { ConversationRoom, TurnManager } from '@nexora/conversation';
-import { PiAiProvider, CoreToolExecutor, InMemoryBudgetTracker } from '@nexora/core';
-import { createReadTool, createGrepTool } from '@nexora/tools';
-import { defineAgent, topic } from '@nexora/contracts';
-import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
-import { HttpAdapter } from '@nexora/adapters';
+import { ConversationRoom, TurnManager } from '@dongkseo/conversation';
+import { PiAiProvider, CoreToolExecutor, InMemoryBudgetTracker } from '@dongkseo/core';
+import { createReadTool, createGrepTool } from '@dongkseo/tools';
+import { defineAgent, topic } from '@dongkseo/contracts';
+import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@dongkseo/contracts';
+import { HttpAdapter } from '@dongkseo/adapters';
 
 // ── Agent definition ───────────────────────────────────────────────────────
 

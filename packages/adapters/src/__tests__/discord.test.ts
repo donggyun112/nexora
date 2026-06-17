@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DiscordAdapter } from '../discord.js';
 import type { DiscordAdapterOptions, DiscordClientLike, DiscordMessageLike } from '../discord.js';
-import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@nexora/contracts';
+import type { MessageRouter, InboundMessage, OutboundMessage, OutboundChunk } from '@dongkseo/contracts';
 
 function makeFakeClient(): DiscordClientLike & { fire: (msg: DiscordMessageLike) => void } {
   const handlers: ((msg: DiscordMessageLike) => void)[] = [];

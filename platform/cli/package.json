@@ -1,5 +1,5 @@
 {
-  "name": "@nexora/cli",
+  "name": "@dongkseo/cli",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",

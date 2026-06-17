@@ -19,7 +19,7 @@ import type {
   RuntimeServices,
   LLMMessage,
   LLMResponse,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import {
   executeToolCalls,
   formatResultForLLM,

@@ -44,7 +44,7 @@ export function jobId(): string {
 
 // ─── W3C TraceContext compatible IDs ───────────────────────────────────────
 // OTel requires 32-hex traceId and 16-hex spanId (no prefix, no dashes).
-// These are used by @nexora/otel to bridge Nexora traces into W3C format.
+// These are used by @dongkseo/otel to bridge Nexora traces into W3C format.
 
 import { randomBytes } from 'node:crypto';
 

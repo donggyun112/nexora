@@ -12,7 +12,7 @@ import type {
   LLMProvider,
   LLMMessage,
   LLMContentBlock,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 // ─── 상수 ──────────────────────────────────────────────────────────────────
 const DEFAULT_CONTEXT_WINDOW = 256_000;

@@ -24,8 +24,8 @@ import type {
   TopicString,
   TransportDescription,
   AgentLogger,
-} from '@nexora/contracts';
-import { messageId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId } from '@dongkseo/contracts';
 
 export interface DLQTransportOptions {
   /** The inner transport to wrap. */

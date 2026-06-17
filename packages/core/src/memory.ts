@@ -9,7 +9,7 @@ import type {
   MemoryProvider,
   ChatMessage,
   ConversationStore,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 import type { Compactor } from './compaction.js';
 
 export interface CoreMemoryProviderOptions {

@@ -26,7 +26,7 @@ export interface ApprovalRecord {
 /**
  * Pluggable persistence for tenant-permanent records. Default implementation
  * keeps everything in memory; callers wanting durability can pass a backend
- * that writes to @nexora/store.
+ * that writes to @dongkseo/store.
  */
 export interface ApprovalPolicyStore {
   /** Look up the cached decision for (tenant, session, key). */

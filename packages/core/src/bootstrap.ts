@@ -25,8 +25,8 @@ import type {
   MessageEnvelope,
   AgentLogger,
   TopicString,
-} from '@nexora/contracts';
-import { messageId, spanId, matchTopic } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { messageId, spanId, matchTopic } from '@dongkseo/contracts';
 import { createSchemaValidator, SchemaValidationError } from './schema.js';
 import { enforceLint } from './lint.js';
 

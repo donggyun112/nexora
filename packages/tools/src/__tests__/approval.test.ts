@@ -20,8 +20,8 @@ import type {
   Subscription,
   TopicString,
   TransportDescription,
-} from '@nexora/contracts';
-import { matchTopic, messageId, textResult } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId, textResult } from '@dongkseo/contracts';
 
 class FakeTransport implements EventTransport {
   private readonly subs = new Map<number, { pattern: string; handler: (e: MessageEnvelope) => Promise<void> }>();

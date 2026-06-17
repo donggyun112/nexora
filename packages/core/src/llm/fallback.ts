@@ -17,7 +17,7 @@ import type {
   LLMOptions,
   LLMChunk,
   LLMResponse,
-} from '@nexora/contracts';
+} from '@dongkseo/contracts';
 
 export interface FallbackProviderEntry {
   /** 사용자 표시용 이름 */

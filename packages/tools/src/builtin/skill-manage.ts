@@ -15,8 +15,8 @@
  * Based on Hermes skill_manager_tool.py.
  */
 
-import type { ToolDefinition, ToolResult } from '@nexora/contracts';
-import { textResult, errorResult } from '@nexora/contracts';
+import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { textResult, errorResult } from '@dongkseo/contracts';
 
 export interface SkillManageToolOptions {
   /**

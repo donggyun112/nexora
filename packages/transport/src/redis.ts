@@ -27,8 +27,8 @@ import type {
   MessageEnvelope,
   TopicString,
   TransportDescription,
-} from '@nexora/contracts';
-import { matchTopic, messageId, traceId, spanId, conversationId } from '@nexora/contracts';
+} from '@dongkseo/contracts';
+import { matchTopic, messageId, traceId, spanId, conversationId } from '@dongkseo/contracts';
 
 /**
  * Redis 클라이언트가 구현해야 할 최소 인터페이스.

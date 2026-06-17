@@ -1,5 +1,5 @@
 /**
- * @nexora/transport — agent-to-agent event communication.
+ * @dongkseo/transport — agent-to-agent event communication.
  *
  * - LocalTransport: in-memory EventTransport (at-most-once, dev/test)
  * - RedisTransport: Redis PUBSUB EventTransport (at-most-once, distributed)

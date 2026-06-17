@@ -100,7 +100,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
         ...(pkg.devDependencies as Record<string, string> | undefined) ?? {},
       };
 
-      const required = ['@nexora/contracts', '@nexora/core'];
+      const required = ['@dongkseo/contracts', '@dongkseo/core'];
       for (const dep of required) {
         checks.push({
           name: `dep:${dep}`,

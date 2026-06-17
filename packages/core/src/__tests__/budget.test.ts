@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryBudgetTracker, estimateCostUsd } from '../budget.js';
 import { createBudgetMiddleware, BudgetExceededError } from '../budget-middleware.js';
-import type { CostEvent, BudgetPolicy } from '@nexora/contracts';
+import type { CostEvent, BudgetPolicy } from '@dongkseo/contracts';
 
 function makeEvent(overrides: Partial<CostEvent> = {}): CostEvent {
   return {

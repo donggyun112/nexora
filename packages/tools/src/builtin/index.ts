@@ -63,3 +63,5 @@ export type { PublishTopicToolOptions } from './publish-topic.js';
 
 export { createEphemeralResultListener } from './ephemeral-result-listener.js';
 export type { EphemeralResultListenerOptions } from './ephemeral-result-listener.js';
+
+export { createSubmitRelayTool } from './submit-relay.js';

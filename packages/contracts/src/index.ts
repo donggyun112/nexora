@@ -259,3 +259,5 @@ export type {
   TranscriptStore,
   AttachmentRef,
 } from './transcript.js';
+
+export type { ChannelAdapter, ChannelThreadsCapability } from './channel-adapter.js';

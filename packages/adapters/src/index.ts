@@ -71,3 +71,5 @@ export type {
   SlackClientLike,
   SlackMessageEvent,
 } from './slack.js';
+
+export { resolveCodexApiKey } from './codex-auth.js';

@@ -118,7 +118,7 @@ describe('TenantConfigStore', () => {
     const merged = store.mergedLimits('tenant-A');
     expect(merged.model).toBe('claude-haiku-4-5');
     expect(merged.maxTokens).toBe(4096);
-    expect(merged.contextWindow).toBe(200_000); // default
+    expect(merged.contextWindow).toBe(256_000); // default
 
     expect(store.allowedTools('tenant-A', 'dev-agent')).toEqual(['read', 'grep']);
     expect(store.allowedTools('tenant-A', 'other-agent')).toBeNull();

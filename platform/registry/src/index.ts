@@ -42,3 +42,23 @@ export class InMemoryAgentRegistry implements AgentRegistry {
     );
   }
 }
+
+// --- lifted from in7 (generic capability routing mechanism) ---
+export { checkInputContract, formatContractError } from './capability-input-contract.js';
+export type {
+  InputContractProperty,
+  InputContract,
+  InputContractCheckResult,
+} from './capability-input-contract.js';
+export { createCapabilityRegistry } from './capability-registry.js';
+export type {
+  CapabilityId,
+  StrategyId,
+  StrategyEntry,
+  HintRouterResult,
+  HintRouter,
+  CapabilityEntry,
+  ResolveInput,
+  ResolveResult,
+  CapabilityRegistry,
+} from './capability-registry.js';

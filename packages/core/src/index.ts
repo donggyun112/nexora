@@ -97,3 +97,17 @@ export type {
   ImprovementLoopOptions,
   SafeSkillWriterOptions,
 } from './self-improve.js';
+
+// --- lifted from in7-marketing-poc (generic runtime primitives) ---
+export { KeyedSerializer } from './keyed-serializer.js';
+export { RotatingKeyProvider } from './rotating-key-provider.js';
+export { ThinkingLlmProvider, parseThinkingLevel } from './thinking-provider.js';
+export type { ThinkingLevel } from './thinking-provider.js';
+export {
+  normalizePublicHttpUrl,
+  isPublicHost,
+  assertHostResolvesPublic,
+  safeFetchImageBytes,
+} from './url-safety.js';
+export type { SafeFetchOptions, SafeFetchResult } from './url-safety.js';
+

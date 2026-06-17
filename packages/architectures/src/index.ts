@@ -10,3 +10,6 @@ export type { ReactOptions } from './react.js';
 export type { LoopCompactionOptions } from './loop-helpers.js';
 export { createPlanExecuteArchitecture } from './plan-execute.js';
 export type { PlanExecuteOptions } from './plan-execute.js';
+
+export { resolveArchitecture, isSupportedArchitecture, SUPPORTED_ARCHITECTURES } from './resolve.js';
+export type { SupportedArchitecture, ArchitectureBuildContext } from './resolve.js';

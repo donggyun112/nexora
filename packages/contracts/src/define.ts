@@ -54,6 +54,12 @@ export interface AgentDefinition {
   /** ReAct 최대 반복 수 — architecture 기본값 override */
   maxIterations?: number;
 
+  /** 같은 conversationId 의 turn 을 single-writer 로 직렬화 (여러 드라이버가 한 대화를 구동하는 에이전트용). */
+  serializeTurnsByConversation?: boolean;
+
+  /** 한 턴 내부에서 누적되는 로컬 history 를 결정적으로 프루닝 (react 아키텍처 전용 opt-in). */
+  withinTurnCompaction?: boolean;
+
   /** 리소스 제한 */
   limits?: AgentLimits;
 }
@@ -79,6 +85,8 @@ export function defineAgent(def: AgentDefinition): AgentCard {
     mode: def.mode,
     mainSkill: def.mainSkill,
     maxIterations: def.maxIterations,
+    serializeTurnsByConversation: def.serializeTurnsByConversation,
+    withinTurnCompaction: def.withinTurnCompaction,
     limits: def.limits,
   };
 }

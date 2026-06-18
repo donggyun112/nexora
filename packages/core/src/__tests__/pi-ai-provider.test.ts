@@ -6,8 +6,8 @@ vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@earendil-works/pi-ai')>();
   return {
     ...actual,
-    stream: vi.fn(),
-    complete: vi.fn(),
+    streamSimple: vi.fn(),
+    completeSimple: vi.fn(),
     getModel: vi.fn(() => ({
       id: 'mock',
       name: 'mock',
@@ -39,10 +39,10 @@ const baseAsstMsg = (over: Partial<{
 } as never);
 
 describe('PiAiProvider.complete', () => {
-  beforeEach(() => { vi.mocked(piAi.complete).mockReset(); });
+  beforeEach(() => { vi.mocked(piAi.completeSimple).mockReset(); });
 
   it('returns content and tool calls from pi-ai assistant message', async () => {
-    vi.mocked(piAi.complete).mockResolvedValueOnce(baseAsstMsg({
+    vi.mocked(piAi.completeSimple).mockResolvedValueOnce(baseAsstMsg({
       content: [
         { type: 'text', text: 'hello' },
         { type: 'toolCall', id: 'c1', name: 'search', arguments: { q: 'x' } },
@@ -62,7 +62,7 @@ describe('PiAiProvider.complete', () => {
   it('propagates AbortSignal to pi-ai options', async () => {
     const ac = new AbortController();
     let capturedSignal: AbortSignal | undefined;
-    vi.mocked(piAi.complete).mockImplementationOnce((_m, _c, opts) => {
+    vi.mocked(piAi.completeSimple).mockImplementationOnce((_m, _c, opts) => {
       capturedSignal = (opts as { signal?: AbortSignal })?.signal;
       return Promise.resolve(baseAsstMsg({ content: [{ type: 'text', text: '' }] }));
     });
@@ -74,7 +74,7 @@ describe('PiAiProvider.complete', () => {
 
   it('forwards apiKey/sessionId/cacheRetention when constructor sets them', async () => {
     let capturedOpts: Record<string, unknown> | undefined;
-    vi.mocked(piAi.complete).mockImplementationOnce((_m, _c, opts) => {
+    vi.mocked(piAi.completeSimple).mockImplementationOnce((_m, _c, opts) => {
       capturedOpts = opts as Record<string, unknown>;
       return Promise.resolve(baseAsstMsg({ content: [] }));
     });
@@ -91,12 +91,12 @@ describe('PiAiProvider.complete', () => {
 
 describe('PiAiProvider error propagation', () => {
   beforeEach(() => {
-    vi.mocked(piAi.complete).mockReset();
-    vi.mocked(piAi.stream).mockReset();
+    vi.mocked(piAi.completeSimple).mockReset();
+    vi.mocked(piAi.streamSimple).mockReset();
   });
 
   it('complete() throws when pi-ai returns stopReason error', async () => {
-    vi.mocked(piAi.complete).mockResolvedValueOnce({
+    vi.mocked(piAi.completeSimple).mockResolvedValueOnce({
       role: 'assistant', content: [], stopReason: 'error',
       errorMessage: 'rate limited',
       usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
@@ -121,7 +121,7 @@ describe('PiAiProvider error propagation', () => {
         },
       } as never;
     }
-    vi.mocked(piAi.stream).mockReturnValueOnce(fakeEvents() as never);
+    vi.mocked(piAi.streamSimple).mockReturnValueOnce(fakeEvents() as never);
 
     const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o-mini' });
     const collected: unknown[] = [];
@@ -136,7 +136,7 @@ describe('PiAiProvider error propagation', () => {
 });
 
 describe('PiAiProvider.stream', () => {
-  beforeEach(() => { vi.mocked(piAi.stream).mockReset(); });
+  beforeEach(() => { vi.mocked(piAi.streamSimple).mockReset(); });
 
   it('yields text_delta and done chunks', async () => {
     async function* fakeEvents() {
@@ -151,7 +151,7 @@ describe('PiAiProvider.stream', () => {
         message: baseAsstMsg({ content: [{ type: 'text', text: 'hi' }] }),
       } as piAi.AssistantMessageEvent;
     }
-    vi.mocked(piAi.stream).mockReturnValueOnce(fakeEvents() as never);
+    vi.mocked(piAi.streamSimple).mockReturnValueOnce(fakeEvents() as never);
 
     const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o-mini' });
     const chunks = [];
@@ -177,7 +177,7 @@ describe('PiAiProvider.stream', () => {
         }),
       } as piAi.AssistantMessageEvent;
     }
-    vi.mocked(piAi.stream).mockReturnValueOnce(fakeEvents() as never);
+    vi.mocked(piAi.streamSimple).mockReturnValueOnce(fakeEvents() as never);
 
     const p = new PiAiProvider({ provider: 'openai', model: 'gpt-4o-mini' });
     const chunks = [];
@@ -190,13 +190,13 @@ describe('PiAiProvider.stream', () => {
 
 describe('PiAiProvider per-call model override', () => {
   beforeEach(() => {
-    vi.mocked(piAi.complete).mockReset();
+    vi.mocked(piAi.completeSimple).mockReset();
     vi.mocked(piAi.getModel).mockReset();
   });
 
   it('complete() uses options.model when provided, defaults to constructor model otherwise', async () => {
     const capturedModels: unknown[] = [];
-    vi.mocked(piAi.complete).mockImplementation(async (model: unknown) => {
+    vi.mocked(piAi.completeSimple).mockImplementation(async (model: unknown) => {
       capturedModels.push(model);
       return {
         role: 'assistant', content: [{ type: 'text', text: 'ok' }],
@@ -225,7 +225,7 @@ describe('PiAiProvider per-call model override', () => {
   });
 
   it('caches model resolutions across calls', async () => {
-    vi.mocked(piAi.complete).mockResolvedValue({
+    vi.mocked(piAi.completeSimple).mockResolvedValue({
       role: 'assistant', content: [{ type: 'text', text: 'ok' }],
       stopReason: 'stop',
       usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
@@ -247,7 +247,7 @@ describe('PiAiProvider per-call model override', () => {
   it('response.model reflects the override when used', async () => {
     vi.mocked(piAi.getModel).mockImplementation((_p: unknown, name: unknown) =>
       ({ id: name, api: 'openai-completions', provider: 'openai' } as never));
-    vi.mocked(piAi.complete).mockResolvedValue({
+    vi.mocked(piAi.completeSimple).mockResolvedValue({
       role: 'assistant', content: [{ type: 'text', text: 'hi' }],
       stopReason: 'stop',
       usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
@@ -270,7 +270,7 @@ describe('PiAiProvider per-call model override', () => {
       if (name === 'gpt-4o-mini') return modelB;
       throw new Error(`unknown ${name}`);
     });
-    vi.mocked(piAi.stream).mockImplementation((model: unknown) => {
+    vi.mocked(piAi.streamSimple).mockImplementation((model: unknown) => {
       capturedModels.push(model);
       async function* events() {
         yield { type: 'text_delta', delta: 'ok', contentIndex: 0, partial: {} } as never;
@@ -304,7 +304,7 @@ describe('PiAiProvider per-call model override', () => {
       if (name === 'gpt-4o') return { id: 'gpt-4o', api: 'openai-completions', provider: 'openai' } as never;
       return undefined as never;
     });
-    vi.mocked(piAi.complete).mockResolvedValue({
+    vi.mocked(piAi.completeSimple).mockResolvedValue({
       role: 'assistant', content: [], stopReason: 'stop',
       usage: { input: 0, output: 0, cost: { input: 0, output: 0, total: 0 } },
       api: 'openai-completions', provider: 'openai', model: 'm', timestamp: 0,

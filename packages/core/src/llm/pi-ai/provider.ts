@@ -6,7 +6,11 @@
  * GitHub Copilot and OpenAI Codex).
  */
 
-import { stream as piStream, complete as piComplete, getModel } from '@earendil-works/pi-ai';
+// Use the *Simple entrypoints: they map the high-level `reasoning` level to each
+// provider's native thinking request (anthropic effort/budget, openai/codex
+// reasoningEffort + summary). The plain stream/complete entrypoints skip that
+// mapping, so reasoning is dropped and thinking never surfaces (esp. openai-codex).
+import { streamSimple as piStream, completeSimple as piComplete, getModel } from '@earendil-works/pi-ai';
 import type { KnownProvider } from '@earendil-works/pi-ai';
 import type {
   LLMProvider, LLMMessage, LLMOptions, LLMChunk, LLMResponse,

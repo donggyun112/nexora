@@ -148,6 +148,12 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         }
 
         lastContent = response.content;
+
+        // 사고(thinking) — 텍스트보다 먼저 흘려 위쪽에 표시
+        if (response.thinking) {
+          yield { type: 'thinking', content: response.thinking };
+        }
+
         if (response.content) {
           yield { type: 'text', text: response.content };
         }

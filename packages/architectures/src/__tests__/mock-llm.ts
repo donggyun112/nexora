@@ -16,6 +16,7 @@ import type {
 export interface MockResponse {
   text: string;
   toolCalls?: { id: string; name: string; arguments: unknown }[];
+  thinking?: string;
   throwError?: string;
 }
 
@@ -52,6 +53,7 @@ export class MockLLMProvider implements LLMProvider {
       model: 'mock',
       stopReason: r.toolCalls?.length ? 'tool_use' : 'end_turn',
       toolCalls: r.toolCalls,
+      thinking: r.thinking,
     };
   }
 }

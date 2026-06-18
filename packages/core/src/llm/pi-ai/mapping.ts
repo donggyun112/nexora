@@ -162,6 +162,10 @@ export function toPiOptions(options: LLMOptions | undefined): {
   if (options.maxTokens !== undefined) out.maxTokens = options.maxTokens;
   if (options.temperature !== undefined) out.temperature = options.temperature;
   if (options.thinkingLevel && options.thinkingLevel !== 'off') {
+    // High-level reasoning level. The provider is driven through pi-ai's *Simple
+    // entrypoints (streamSimple/completeSimple), which map this to each provider's
+    // native thinking request (anthropic effort/budget, openai/codex reasoningEffort
+    // + summary). The non-simple entrypoints skip that mapping and drop reasoning.
     out.reasoning = options.thinkingLevel as 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   }
   return out;
@@ -235,10 +239,12 @@ export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
   }
 
   const textParts: string[] = [];
+  const thinkingParts: string[] = [];
   const toolCalls: { id: string; name: string; arguments: unknown }[] = [];
 
   for (const block of msg.content) {
     if (block.type === 'text') textParts.push(block.text);
+    else if (block.type === 'thinking') thinkingParts.push(block.thinking);
     else if (block.type === 'toolCall') {
       toolCalls.push({ id: block.id, name: block.name, arguments: block.arguments });
     }
@@ -253,6 +259,7 @@ export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
 
   return {
     content: textParts.join(''),
+    thinking: thinkingParts.join('') || undefined,
     model: '',
     stopReason: piToStopReason(msg.stopReason),
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,

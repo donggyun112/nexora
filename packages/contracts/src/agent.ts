@@ -192,6 +192,8 @@ export interface LLMUsage {
 
 export interface LLMResponse {
   content: string;
+  /** Reasoning/thinking text, when thinkingLevel is on and the provider returns it. */
+  thinking?: string;
   model: string;
   stopReason: string;
   toolCalls?: { id: string; name: string; arguments: unknown }[];

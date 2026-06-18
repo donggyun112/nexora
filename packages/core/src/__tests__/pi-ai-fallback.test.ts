@@ -6,8 +6,8 @@ vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@earendil-works/pi-ai')>();
   return {
     ...actual,
-    stream: vi.fn(),
-    complete: vi.fn(),
+    streamSimple: vi.fn(),
+    completeSimple: vi.fn(),
     getModel: vi.fn(() => ({
       id: 'mock', name: 'mock',
       api: 'openai-completions' as const,
@@ -33,10 +33,10 @@ const asstMsg = (text: string): piAi.AssistantMessage => ({
 } as never);
 
 describe('FallbackLLMProvider + PiAiProvider', () => {
-  beforeEach(() => { vi.mocked(piAi.complete).mockReset(); });
+  beforeEach(() => { vi.mocked(piAi.completeSimple).mockReset(); });
 
   it('falls back to second pi-ai provider on first failure', async () => {
-    vi.mocked(piAi.complete)
+    vi.mocked(piAi.completeSimple)
       .mockRejectedValueOnce(new Error('rate limit'))
       .mockResolvedValueOnce(asstMsg('rescued'));
 
@@ -56,7 +56,7 @@ describe('FallbackLLMProvider + PiAiProvider', () => {
   });
 
   it('uses primary when it succeeds (no secondary call)', async () => {
-    vi.mocked(piAi.complete).mockResolvedValueOnce(asstMsg('primary worked'));
+    vi.mocked(piAi.completeSimple).mockResolvedValueOnce(asstMsg('primary worked'));
 
     const primary = new PiAiProvider({ provider: 'openai', model: 'gpt-4o' });
     const secondary = new PiAiProvider({ provider: 'openai', model: 'gpt-4o-mini' });
@@ -69,6 +69,6 @@ describe('FallbackLLMProvider + PiAiProvider', () => {
     });
     const r = await fallback.complete([{ role: 'user', content: 'hi' }]);
     expect(r.content).toBe('primary worked');
-    expect(vi.mocked(piAi.complete)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(piAi.completeSimple)).toHaveBeenCalledTimes(1);
   });
 });

@@ -56,6 +56,24 @@ describe('PlanExecuteArchitecture — plan-mode gating', () => {
     expect(events.some(e => e.type === 'done')).toBe(true);
   });
 
+  it('surfaces response.thinking as a thinking event, before the text', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'planning now', thinking: 'let me scout the landscape first' },
+    ]);
+    const services = servicesWithToolList(llm, new Map(), ['web_search', 'submit_research_plan', 'submit_keywords']);
+
+    const arch = createPlanExecuteArchitecture({
+      exitPlanTool: 'submit_research_plan',
+      executePhaseTools: ['submit_keywords'],
+    });
+    const events = await collect(arch.loop(services, { prompt: 'go' }));
+
+    const thinkingIdx = events.findIndex(e => e.type === 'thinking' && e.content === 'let me scout the landscape first');
+    const textIdx = events.findIndex(e => e.type === 'text');
+    expect(thinkingIdx).toBeGreaterThanOrEqual(0);
+    expect(textIdx).toBeGreaterThan(thinkingIdx); // thinking surfaces above the text
+  });
+
   it('injects the plan instruction into the first user turn', async () => {
     const llm = new MockLLMProvider([{ text: 'thinking about plan' }]);
     const services = servicesWithToolList(llm, new Map(), ['web_search', 'submit_research_plan', 'submit_keywords']);

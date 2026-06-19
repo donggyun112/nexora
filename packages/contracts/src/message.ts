@@ -47,8 +47,8 @@ export interface MessageMetadata {
   /** 이 메시지가 응답하는 원본 메시지 ID */
   replyTo?: string;
 
-  /** 테넌트 ID */
-  tenantId: string;
+  /** 테넌트 ID. 생략 시 단일 테넌트(DEFAULT_TENANT)로 동작. @dongkseo/tenancy가 주입. */
+  tenantId?: string;
 
   /** 발신자 (에이전트 인스턴스 ID, 라우팅 목적이 아닌 추적 목적) */
   sourceInstanceId?: string;

@@ -14,7 +14,7 @@
 export interface CostEvent {
   /** Which agent incurred the cost */
   agentName: string;
-  /** Tenant the cost belongs to */
+  /** Tenant the cost belongs to (resolved; DEFAULT_TENANT when single-tenant) */
   tenantId: string;
   /** LLM model used */
   model: string;

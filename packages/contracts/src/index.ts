@@ -172,7 +172,7 @@ export type {
   ContextLoader,
   TenantAgentScope,
 } from './context.js';
-export { createTenantAgentScope, tenantAgentScopeKey } from './context.js';
+export { createTenantAgentScope, tenantAgentScopeKey, DEFAULT_TENANT } from './context.js';
 
 export type {
   Adapter,

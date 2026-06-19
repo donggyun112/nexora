@@ -83,7 +83,7 @@ export class TracingTransport implements EventTransport {
         spanId: spanId(), // 새 span — 핸들러는 새 작업 단위
         parentSpanId: envelope.metadata.spanId,
         conversationId: envelope.metadata.conversationId,
-        tenantId: envelope.metadata.tenantId,
+        tenantId: envelope.metadata.tenantId ?? 'default',
       };
       await traceStorage.run(ctx, async () => {
         await handler(envelope);

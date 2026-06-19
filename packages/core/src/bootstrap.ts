@@ -26,7 +26,7 @@ import type {
   AgentLogger,
   TopicString,
 } from '@dongkseo/contracts';
-import { messageId, spanId, matchTopic } from '@dongkseo/contracts';
+import { messageId, spanId, matchTopic, DEFAULT_TENANT } from '@dongkseo/contracts';
 import { createSchemaValidator, SchemaValidationError } from './schema.js';
 import { enforceLint } from './lint.js';
 
@@ -244,7 +244,9 @@ async function handleMessage(args: {
     logger,
   } = args;
 
-  const tenantId = envelope.metadata.tenantId;
+  // Resolve the tenant once at the bootstrap boundary. Absent on the wire =
+  // single-tenant: everything downstream (context, tools, budget) sees a concrete id.
+  const tenantId = envelope.metadata.tenantId ?? DEFAULT_TENANT;
 
   try {
     // Enforce delegation depth limit if the message carries delegation metadata.

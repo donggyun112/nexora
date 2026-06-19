@@ -125,3 +125,7 @@ export type {
   DrivePiOptions,
   DrivePiResult,
 } from './pi-headless.js';
+
+// Multica `pi` protocol_family model discovery (`<cmd> --list-models`).
+export { listAvailableModels } from './pi-models.js';
+export type { ListAvailableModelsOptions } from './pi-models.js';

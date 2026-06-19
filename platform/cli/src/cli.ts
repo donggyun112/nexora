@@ -9,6 +9,7 @@
 
 import { scaffoldAgent } from './scaffold.js';
 import { runDev } from './dev.js';
+import { runHeadless, runListModels } from './headless.js';
 import { exportPackage, importPackage } from './portability.js';
 import { runDoctor, viewDlq, viewBudget, viewHandraises } from './ops.js';
 
@@ -52,6 +53,24 @@ function parseArgs(argv: string[]): ParsedArgs {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+
+  // Model discovery for the Multica `pi` backend: `nexora --list-models`
+  // emits one `provider/model` id per stdout line.
+  if (argv.includes('--list-models')) {
+    await runListModels();
+    return;
+  }
+
+  // Headless / one-shot mode (Multica `pi` protocol_family backend).
+  // Multica spawns `nexora -p --mode json --session <path> ... "<prompt>"` and
+  // parses one JSON event per stdout line. This convention (single-dash `-p`,
+  // prompt as the trailing positional) does not fit the generic
+  // `command subcommand` parser below, so it is dispatched first.
+  if (argv.includes('-p') || argv.includes('--print')) {
+    await runHeadless(argv);
+    return;
+  }
+
   const args = parseArgs(argv);
 
   if (!args.command || args.command === 'help' || args.flags.help) {

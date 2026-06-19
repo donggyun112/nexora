@@ -243,11 +243,12 @@ describe('fromPiAssistantMessage', () => {
     expect(r.stopReason).toBe('tool_use');
   });
 
-  it('reports cacheRead usage when available', () => {
+  it('reports cacheRead usage as the token count, not the cost', () => {
     const r = fromPiAssistantMessage(makeMsg({
       usage: {
         input: 10, output: 5,
-        cost: { input: 0, output: 0, total: 0, cacheRead: 100 },
+        cacheRead: 100, // token count — what cachedTokens must report
+        cost: { input: 0, output: 0, total: 0, cacheRead: 0.0033 }, // USD — must NOT leak in
       } as never,
     }));
     expect(r.usage?.cachedTokens).toBe(100);

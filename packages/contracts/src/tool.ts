@@ -60,7 +60,7 @@ export interface ToolDefinition {
 }
 
 export interface ToolContext {
-  /** 현재 테넌트 ID */
+  /** 현재 테넌트 ID (bootstrap에서 resolve된 구체값; 단일 테넌트면 DEFAULT_TENANT). */
   tenantId: string;
 
   /** Shared tenant-agent scope for policy, audit, and store namespaces. */

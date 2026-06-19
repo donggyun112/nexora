@@ -2,6 +2,7 @@ import type { CapabilityRef } from './capability.js';
 import type { NexoraSyscall } from './syscall.js';
 
 export interface OracleContext {
+  /** bootstrap에서 resolve된 구체값 (단일 테넌트면 DEFAULT_TENANT). */
   tenantId: string;
   conversationId: string;
   traceId: string;

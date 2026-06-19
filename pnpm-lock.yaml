@@ -386,6 +386,22 @@ importers:
         specifier: ^5.8.0
         version: 5.9.3
 
+  packages/tenancy:
+    dependencies:
+      '@dongkseo/context':
+        specifier: workspace:*
+        version: link:../context
+      '@dongkseo/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.8.0
+        version: 5.9.3
+
   packages/tools:
     dependencies:
       '@dongkseo/contracts':

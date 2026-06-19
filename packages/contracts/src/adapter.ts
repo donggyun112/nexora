@@ -51,8 +51,8 @@ export interface InboundMessage {
   /** 이전 대화 히스토리 (스토어 미사용 시 진입점이 직접 주입) */
   history?: ChatMessage[];
 
-  /** 테넌트 ID (Gateway가 해석해서 주입) */
-  tenantId: string;
+  /** 테넌트 ID (Gateway/tenancy가 해석해서 주입). 생략 시 단일 테넌트. */
+  tenantId?: string;
 
   /** 대화 ID (스레드 기반 연속 대화 추적) */
   conversationId?: string;

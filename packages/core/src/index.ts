@@ -111,3 +111,17 @@ export {
 } from './url-safety.js';
 export type { SafeFetchOptions, SafeFetchResult } from './url-safety.js';
 
+
+// Multica `pi` protocol_family adapter (headless one-shot agent execution).
+export {
+  agentEventToPiWire,
+  createPiMapState,
+  drivePi,
+} from './pi-headless.js';
+export type {
+  PiUsage,
+  PiWireEvent,
+  PiMapState,
+  DrivePiOptions,
+  DrivePiResult,
+} from './pi-headless.js';

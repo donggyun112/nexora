@@ -8,7 +8,7 @@
  */
 
 export interface AgentContext {
-  /** 테넌트 ID */
+  /** 테넌트 ID (ContextLoader가 resolve한 구체값; 단일 테넌트면 DEFAULT_TENANT). */
   tenantId: string;
 
   /**
@@ -77,19 +77,23 @@ export interface TenantAgentScope {
   namespace: string;
 }
 
+/** Default tenant id used when an app does not install @dongkseo/tenancy. */
+export const DEFAULT_TENANT = 'default';
+
 export function createTenantAgentScope(
-  tenantId: string,
+  tenantId: string | undefined,
   agentName: string,
 ): TenantAgentScope {
+  const resolved = tenantId ?? DEFAULT_TENANT;
   return {
-    tenantId,
+    tenantId: resolved,
     agentName,
-    namespace: tenantAgentScopeKey({ tenantId, agentName }),
+    namespace: tenantAgentScopeKey({ tenantId: resolved, agentName }),
   };
 }
 
-export function tenantAgentScopeKey(scope: Pick<TenantAgentScope, 'tenantId' | 'agentName'>): string {
-  return `${sanitizeScopePart(scope.tenantId)}:${sanitizeScopePart(scope.agentName)}`;
+export function tenantAgentScopeKey(scope: { tenantId?: string; agentName: string }): string {
+  return `${sanitizeScopePart(scope.tenantId ?? DEFAULT_TENANT)}:${sanitizeScopePart(scope.agentName)}`;
 }
 
 function sanitizeScopePart(value: string): string {
@@ -102,5 +106,5 @@ function sanitizeScopePart(value: string): string {
  * context 패키지에서 구현.
  */
 export interface ContextLoader {
-  load(tenantId: string, agentName: string, overrides?: Partial<AgentContext>): Promise<AgentContext>;
+  load(tenantId: string | undefined, agentName: string, overrides?: Partial<AgentContext>): Promise<AgentContext>;
 }

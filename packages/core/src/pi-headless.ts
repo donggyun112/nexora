@@ -91,7 +91,18 @@ export function agentEventToPiWire(ev: AgentEvent, state: PiMapState): PiWireEve
           assistantMessageEvent: { type: 'text_delta', delta: ev.content },
         });
       }
-      out.push({ type: 'turn_end', message: { usage: { ...ZERO_USAGE } } });
+      // Map the architecture's real token usage (when the provider reported it)
+      // into the pi wire shape so Multica's ReportTaskUsage records actual cost.
+      const usage: PiUsage = ev.usage
+        ? {
+            input: ev.usage.promptTokens ?? 0,
+            output: ev.usage.completionTokens ?? 0,
+            cacheRead: ev.usage.cachedTokens ?? 0,
+            cacheWrite: 0,
+            totalTokens: (ev.usage.promptTokens ?? 0) + (ev.usage.completionTokens ?? 0),
+          }
+        : { ...ZERO_USAGE };
+      out.push({ type: 'turn_end', message: { usage } });
       state.sawTurnEnd = true;
       return out;
     }

@@ -82,6 +82,23 @@ describe('agentEventToPiWire', () => {
     ];
     expect(mapStream(events)).toEqual([]);
   });
+
+  it('maps done.usage to turn_end usage (real tokens)', () => {
+    const out = mapStream([
+      { type: 'done', content: 'hi', toolCalls: [], usage: { promptTokens: 1234, completionTokens: 567, cachedTokens: 89 } },
+    ]);
+    const turnEnd = out.find((e) => e.type === 'turn_end');
+    expect(turnEnd).toMatchObject({
+      type: 'turn_end',
+      message: { usage: { input: 1234, output: 567, cacheRead: 89, cacheWrite: 0, totalTokens: 1801 } },
+    });
+  });
+
+  it('falls back to zero usage when done carries none', () => {
+    const out = mapStream([{ type: 'done', content: 'x', toolCalls: [] }]);
+    const turnEnd = out.find((e) => e.type === 'turn_end') as { message: { usage: { totalTokens: number } } };
+    expect(turnEnd.message.usage.totalTokens).toBe(0);
+  });
 });
 
 describe('drivePi', () => {

@@ -100,6 +100,10 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 
       const allToolCalls: { name: string; input: unknown }[] = [];
       let lastContent = '';
+      // 턴 전체 토큰 usage 누적 — done 이벤트로 표면화한다(pi 드라이버·Multica
+      // usage 회계가 provider 실 토큰을 받게). provider 가 usage 를 안 주면 undefined.
+      const turnUsage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
+      let sawUsage = false;
 
       // 실행 중 주입(steer)된 user 메시지를 history + memory 에 도착순으로 합류시킨다.
       // tool_result 뒤 user 메시지는 toolImageMessages 와 동일한 시퀀스라 안전.
@@ -139,6 +143,13 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 
         lastContent = response.content;
 
+        if (response.usage) {
+          turnUsage.promptTokens += response.usage.promptTokens ?? 0;
+          turnUsage.completionTokens += response.usage.completionTokens ?? 0;
+          turnUsage.cachedTokens += response.usage.cachedTokens ?? 0;
+          sawUsage = true;
+        }
+
         // 사고(thinking) — 텍스트보다 먼저 흘려 위쪽에 표시
         if (response.thinking) {
           yield { type: 'thinking', content: response.thinking };
@@ -160,6 +171,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
             type: 'done',
             content: response.content,
             toolCalls: allToolCalls,
+            usage: sawUsage ? turnUsage : undefined,
           };
           return;
         }
@@ -257,6 +269,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         type: 'done',
         content: lastContent || '(max iterations reached)',
         toolCalls: allToolCalls,
+        usage: sawUsage ? turnUsage : undefined,
       };
     },
   };

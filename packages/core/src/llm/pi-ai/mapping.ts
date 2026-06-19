@@ -250,11 +250,12 @@ export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
     }
   }
 
-  const cost = (msg.usage as { cost?: { cacheRead?: number } }).cost;
+  // cachedTokens must be the cache-read TOKEN count (msg.usage.cacheRead), not
+  // msg.usage.cost.cacheRead which is the USD cost of those reads.
   const usage = {
     promptTokens: msg.usage.input,
     completionTokens: msg.usage.output,
-    cachedTokens: cost?.cacheRead ?? 0,
+    cachedTokens: (msg.usage as { cacheRead?: number }).cacheRead ?? 0,
   };
 
   return {

@@ -633,7 +633,10 @@ describe('DiscordAdapter', () => {
     const router: MessageRouter = {
       async route() { return { content: 'ok' }; },
       async routeStream(_msg, onChunk) {
-        // Let setThinking debounce fire before tool_call.
+        // Emit a real thinking chunk; the thinking reaction must only appear
+        // in response to one, not speculatively at turn start.
+        onChunk({ type: 'thinking', content: 'pondering' });
+        // Let the setThinking debounce fire before tool_call.
         await new Promise((r) => setTimeout(r, 20));
         onChunk({ type: 'tool_call', name: 'exec' });
         await new Promise((r) => setTimeout(r, 20));

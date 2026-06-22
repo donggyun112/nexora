@@ -655,8 +655,10 @@ export class DiscordAdapter implements Adapter {
       // Some channels don't allow typing — ignore.
     }
 
+    // Create the per-turn reaction controller. It applies the bot-ack emoji
+    // (🤖) on its own; the 🧠 thinking reaction is only added when a real
+    // `thinking` chunk arrives below, not speculatively at turn start.
     const status = this.createStatusController(discordMsg);
-    status?.setThinking();
 
     let sawError = false;
     try {

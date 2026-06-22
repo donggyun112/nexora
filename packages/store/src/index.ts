@@ -20,6 +20,8 @@ export type {
   ToolCallRecord,
   ToolResultRecord,
   ToolContextRecord,
+  SuspendedTurnStore,
+  SuspendedTurnState,
 } from '@dongkseo/contracts';
 
 export { createStoreProvider, warnDevStores } from './factory.js';

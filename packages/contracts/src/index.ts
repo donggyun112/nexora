@@ -205,6 +205,11 @@ export type {
 } from './workflow-state.js';
 
 export type {
+  SuspendedTurnStore,
+  SuspendedTurnState,
+} from './suspended-turn.js';
+
+export type {
   CostEvent,
   BudgetPolicy,
   BudgetScope,

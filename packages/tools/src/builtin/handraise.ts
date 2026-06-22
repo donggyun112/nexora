@@ -49,7 +49,7 @@ import type {
   TopicString,
   MessageEnvelope,
 } from '@dongkseo/contracts';
-import { textResult, errorResult } from '@dongkseo/contracts';
+import { textResult, errorResult, suspendResult, messageId, traceId, spanId, conversationId } from '@dongkseo/contracts';
 import type { HandraisePolicy } from '../handraise/policy.js';
 
 export type HandraiseRecipient =
@@ -88,6 +88,8 @@ export interface HandraiseRequestPayload {
   answerSchema?: Record<string, unknown>;
   /** Tool call id — echoed back in the reply so the caller can correlate. */
   callId: string;
+  /** Suspend/resume correlation id (= the question envelope id) for human recipients. */
+  pendingId?: string;
 }
 
 export interface HandraiseReplyPayload {
@@ -135,7 +137,7 @@ export function createHandraiseTool(options: HandraiseToolOptions): ToolDefiniti
         },
         timeoutMs: {
           type: 'number',
-          description: `Maximum time to wait for an answer in milliseconds. Default ${defaultTimeoutMs}.`,
+          description: `Maximum time to wait for an answer in milliseconds, for agent-to-agent (capability/topic) recipients only. Default ${defaultTimeoutMs}. Ignored for human recipients, which suspend the turn and wait indefinitely.`,
         },
       },
       required: ['question', 'recipient'],
@@ -192,6 +194,35 @@ export function createHandraiseTool(options: HandraiseToolOptions): ToolDefiniti
         timeoutMs,
       });
 
+      // Human recipients SUSPEND the turn rather than blocking on a timeout —
+      // a person can take arbitrarily long to answer. Publish the question
+      // (the HandraiseInbox / adapter renders it via onPending) with the
+      // envelope id == pendingId, so the eventual reply's `metadata.replyTo`
+      // (set by HandraiseInbox.answer to entry.envelope.id) correlates straight
+      // back to this pending turn. Then end the turn; the runtime resumes when
+      // the answer arrives — with no wall-clock deadline.
+      if (params.recipient.type === 'human') {
+        const pendingId = messageId();
+        const questionEnvelope: MessageEnvelope = {
+          id: pendingId,
+          topic: topic as TopicString,
+          type: 'request',
+          payload: { ...requestPayload, pendingId },
+          metadata: {
+            traceId: traceId(),
+            spanId: spanId(),
+            conversationId: conversationId(),
+            tenantId: ctx.tenantId,
+            timestamp: Date.now(),
+          },
+        };
+        await transport.publish(questionEnvelope);
+        return suspendResult(pendingId);
+      }
+
+      // Agent-to-agent recipients (capability / topic) keep the blocking
+      // request/reply with a finite timeout — a machine responder is expected,
+      // so a deadline is the correct failure signal.
       let reply: MessageEnvelope;
       try {
         reply = await transport.request(topic as TopicString, requestPayload, {

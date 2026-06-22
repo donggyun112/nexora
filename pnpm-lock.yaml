@@ -35,6 +35,9 @@ importers:
       '@dongkseo/gateway':
         specifier: workspace:*
         version: link:../../platform/gateway
+      '@dongkseo/orchestrator':
+        specifier: workspace:*
+        version: link:../../packages/orchestrator
       '@dongkseo/registry':
         specifier: workspace:*
         version: link:../../platform/registry

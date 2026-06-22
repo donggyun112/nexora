@@ -138,6 +138,7 @@ export class GatewayRouter implements MessageRouter {
       requesterId: message.userId,
       requesterName: message.displayName,
       images: message.images,
+      files: message.files,
       history: message.history,
       channelId: message.channelId,
     };
@@ -173,6 +174,7 @@ export class LocalRuntimeRouter implements MessageRouter {
     for await (const event of runtime.execute({
       prompt: message.content,
       images: message.images?.map(i => ({ type: 'image', data: i.data, mimeType: i.mimeType })),
+      files: message.files?.map(f => ({ ...f, type: 'file' as const })),
     })) {
       if (event.type === 'done') lastContent = event.content;
       if (event.type === 'error') throw new Error(event.message);
@@ -188,6 +190,7 @@ export class LocalRuntimeRouter implements MessageRouter {
     for await (const event of runtime.execute({
       prompt: message.content,
       images: message.images?.map(i => ({ type: 'image', data: i.data, mimeType: i.mimeType })),
+      files: message.files?.map(f => ({ ...f, type: 'file' as const })),
     })) {
       const chunk = mapEventToChunk(event);
       if (chunk) onChunk(chunk);

@@ -126,6 +126,7 @@ export type {
   AgentInput,
   ChatMessage,
   ImageContent,
+  FileContent,
   AgentEvent,
   ToolCallSummary,
   AgentRuntime,

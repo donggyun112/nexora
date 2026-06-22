@@ -27,6 +27,7 @@ import {
   isErrorResult,
   pruneLoopHistory,
   sanitizeToolPairsInPlace,
+  userContentForInput,
   type LoopCompactionOptions,
 } from './loop-helpers.js';
 
@@ -84,16 +85,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         }
 
         // 2. 현재 사용자 입력
-        const userContent = input.images && input.images.length > 0
-          ? [
-              { type: 'text' as const, text: input.prompt },
-              ...input.images.map(img => ({
-                type: 'image' as const,
-                data: img.data,
-                mimeType: img.mimeType,
-              })),
-            ]
-          : input.prompt;
+        const userContent = userContentForInput(input);
         history.push({ role: 'user', content: userContent });
         await services.memory.append({ role: 'user', content: input.prompt });
       }

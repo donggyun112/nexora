@@ -10,12 +10,14 @@
  * 인증/테넌트 해석은 외부에서 주입한 `resolveTenant` 함수가 담당.
  */
 
+import { Buffer } from 'node:buffer';
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import type {
   Adapter,
   MessageRouter,
   InboundMessage,
   OutboundChunk,
+  FileContent,
 } from '@dongkseo/contracts';
 
 export interface HttpAdapterOptions {
@@ -28,7 +30,25 @@ export interface HttpAdapterOptions {
    * 인증 실패 시 null 반환.
    */
   resolveTenant?: (req: IncomingMessage) => Promise<string | null> | string | null;
+  /** Maximum accepted input files per request. Default: 10. */
+  maxFiles?: number;
+  /** Maximum decoded bytes per input file. Default: 10 MiB. */
+  maxFileBytes?: number;
+  /** Maximum decoded bytes across all input files. Default: 25 MiB. */
+  maxTotalFileBytes?: number;
 }
+
+interface InputFileLimits {
+  maxFiles: number;
+  maxFileBytes: number;
+  maxTotalFileBytes: number;
+}
+
+const DEFAULT_INPUT_FILE_LIMITS: InputFileLimits = {
+  maxFiles: 10,
+  maxFileBytes: 10 * 1024 * 1024,
+  maxTotalFileBytes: 25 * 1024 * 1024,
+};
 
 export class HttpAdapter implements Adapter {
   readonly name = 'http';
@@ -37,11 +57,17 @@ export class HttpAdapter implements Adapter {
   private readonly host: string;
   private readonly desiredPort: number;
   private readonly resolveTenant: NonNullable<HttpAdapterOptions['resolveTenant']>;
+  private readonly fileLimits: InputFileLimits;
 
   constructor(options: HttpAdapterOptions = {}) {
     this.host = options.host ?? '127.0.0.1';
     this.desiredPort = options.port ?? 0;
     this.resolveTenant = options.resolveTenant ?? (() => 'default');
+    this.fileLimits = {
+      maxFiles: options.maxFiles ?? DEFAULT_INPUT_FILE_LIMITS.maxFiles,
+      maxFileBytes: options.maxFileBytes ?? DEFAULT_INPUT_FILE_LIMITS.maxFileBytes,
+      maxTotalFileBytes: options.maxTotalFileBytes ?? DEFAULT_INPUT_FILE_LIMITS.maxTotalFileBytes,
+    };
   }
 
   async start(router: MessageRouter): Promise<void> {
@@ -118,7 +144,7 @@ export class HttpAdapter implements Adapter {
       }
 
       const body = await readJsonBody(req);
-      const inbound = normalizeInbound(body, tenantId);
+      const inbound = normalizeInbound(body, tenantId, this.fileLimits);
       const out = await router.route(inbound);
       this.sendJson(res, 200, out);
     } catch (err) {
@@ -161,7 +187,7 @@ export class HttpAdapter implements Adapter {
       }
 
       const body = await readJsonBody(req);
-      const inbound = normalizeInbound(body, tenantId);
+      const inbound = normalizeInbound(body, tenantId, this.fileLimits);
 
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -214,9 +240,16 @@ function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 function normalizeInbound(
   body: Record<string, unknown>,
   tenantId: string,
+  fileLimits: InputFileLimits = DEFAULT_INPUT_FILE_LIMITS,
 ): InboundMessage {
   const content = typeof body.content === 'string' ? body.content : '';
-  if (!content) throw new Error('content is required');
+  const files = normalizeInputFiles(body.files, fileLimits);
+  const images = Array.isArray(body.images)
+    ? body.images.filter(isImage)
+    : undefined;
+  if (!content && !files?.length && !images?.length) {
+    throw new Error('content, images, or files is required');
+  }
 
   return {
     platform: 'http',
@@ -224,15 +257,100 @@ function normalizeInbound(
     userId: typeof body.userId === 'string' ? body.userId : 'anonymous',
     displayName: typeof body.displayName === 'string' ? body.displayName : 'http-user',
     content,
-    images: Array.isArray(body.images)
-      ? body.images.filter(isImage)
-      : undefined,
+    images,
+    files,
     history: Array.isArray(body.history)
       ? body.history.filter(isChatMessage)
       : undefined,
     tenantId,
     conversationId: typeof body.conversationId === 'string' ? body.conversationId : undefined,
   };
+}
+
+function normalizeInputFiles(
+  value: unknown,
+  limits: InputFileLimits,
+): FileContent[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error('files must be an array');
+  if (value.length > limits.maxFiles) {
+    throw new Error(`too many files: max ${limits.maxFiles}`);
+  }
+
+  const files: FileContent[] = [];
+  let totalBytes = 0;
+  for (let i = 0; i < value.length; i++) {
+    const file = normalizeInputFile(value[i], i);
+    const size = file.size ?? 0;
+    if (size > limits.maxFileBytes) {
+      throw new Error(`files[${i}] exceeds max file size ${limits.maxFileBytes} bytes`);
+    }
+    totalBytes += size;
+    if (totalBytes > limits.maxTotalFileBytes) {
+      throw new Error(`files exceed max total size ${limits.maxTotalFileBytes} bytes`);
+    }
+    files.push(file);
+  }
+  return files.length > 0 ? files : undefined;
+}
+
+function normalizeInputFile(value: unknown, index: number): FileContent {
+  if (!value || typeof value !== 'object') {
+    throw new Error(`files[${index}] must be an object`);
+  }
+  const raw = value as {
+    name?: unknown;
+    data?: unknown;
+    mimeType?: unknown;
+    mediaType?: unknown;
+  };
+  if (typeof raw.data !== 'string') {
+    throw new Error(`files[${index}].data must be a base64 string`);
+  }
+
+  const parsed = normalizeBase64(raw.data, `files[${index}].data`);
+  const mimeTypeInput = typeof raw.mimeType === 'string'
+    ? raw.mimeType
+    : typeof raw.mediaType === 'string'
+      ? raw.mediaType
+      : parsed.mimeType;
+  const mimeType = normalizeMimeType(mimeTypeInput, index);
+  const name = typeof raw.name === 'string' ? safeInputFilename(raw.name) : undefined;
+
+  return {
+    type: 'file',
+    data: parsed.data,
+    mimeType,
+    ...(name ? { name } : {}),
+    size: parsed.size,
+  };
+}
+
+function normalizeBase64(data: string, field: string): { data: string; size: number; mimeType?: string } {
+  const trimmed = data.trim();
+  const dataUrl = /^data:([^;,]+);base64,(.+)$/i.exec(trimmed);
+  const mimeType = dataUrl?.[1];
+  const base64 = (dataUrl ? dataUrl[2] : trimmed).replace(/\s+/g, '');
+  if (base64.length > 0 && (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64) || base64.length % 4 === 1)) {
+    throw new Error(`${field} is not valid base64`);
+  }
+  const buffer = Buffer.from(base64, 'base64');
+  return { data: base64, size: buffer.length, ...(mimeType ? { mimeType } : {}) };
+}
+
+function normalizeMimeType(value: string | undefined, index: number): string {
+  if (!value) throw new Error(`files[${index}].mimeType is required`);
+  const mimeType = value.toLowerCase().split(';', 1)[0]?.trim() ?? '';
+  if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mimeType)) {
+    throw new Error(`files[${index}].mimeType is invalid`);
+  }
+  return mimeType;
+}
+
+function safeInputFilename(name: string): string | undefined {
+  const base = name.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!base) return undefined;
+  return base.slice(0, 200);
 }
 
 function isRateLimitError(err: unknown): boolean {

@@ -181,6 +181,7 @@ export async function start${camel}(options: Start${camel}Options) {
       const payload = env.payload as {
         prompt?: string;
         images?: { data: string; mimeType: string }[];
+        files?: { name?: string; data: string; mimeType: string; size?: number }[];
         history?: { role: 'user' | 'assistant'; content: string }[];
       };
       return {
@@ -190,6 +191,7 @@ export async function start${camel}(options: Start${camel}Options) {
           data: i.data,
           mimeType: i.mimeType,
         })),
+        files: payload.files?.map(f => ({ type: 'file' as const, ...f })),
         history: payload.history,
       };
     },

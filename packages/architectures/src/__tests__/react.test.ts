@@ -83,6 +83,29 @@ describe('ReactArchitecture', () => {
     }
   });
 
+  it('inlines text input files into the user prompt', async () => {
+    const llm = new MockLLMProvider([{ text: 'ok' }]);
+    const services = makeServices(llm, new Map());
+
+    const arch = createReactArchitecture();
+    await collect(arch.loop(services as unknown as RuntimeServices, {
+      prompt: 'summarize',
+      files: [{
+        type: 'file',
+        name: 'note.txt',
+        mimeType: 'text/plain',
+        data: Buffer.from('hello from file').toString('base64'),
+        size: 15,
+      }],
+    }));
+
+    const userMessage = llm.callLog[0].messages.find(m => m.role === 'user');
+    expect(typeof userMessage?.content).toBe('string');
+    expect(userMessage?.content).toContain('summarize');
+    expect(userMessage?.content).toContain('Attached files:');
+    expect(userMessage?.content).toContain('hello from file');
+  });
+
   it('runs multiple tool calls in one round', async () => {
     const llm = new MockLLMProvider([
       {

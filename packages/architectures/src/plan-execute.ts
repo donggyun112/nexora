@@ -29,6 +29,7 @@ import {
   imageResultForLLM,
   isErrorResult,
   sanitizeToolPairsInPlace,
+  userContentForInput,
 } from './loop-helpers.js';
 
 export interface PlanExecuteOptions {
@@ -102,12 +103,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         if (history.length > 0) phase = 'execute';
 
         const promptText = phase === 'plan' && planPrompt ? `${input.prompt}\n\n${planPrompt}` : input.prompt;
-        const userContent = input.images && input.images.length > 0
-          ? [
-              { type: 'text' as const, text: promptText },
-              ...input.images.map(img => ({ type: 'image' as const, data: img.data, mimeType: img.mimeType })),
-            ]
-          : promptText;
+        const userContent = userContentForInput(input, promptText);
         history.push({ role: 'user', content: userContent });
         await services.memory.append({ role: 'user', content: input.prompt });
       }

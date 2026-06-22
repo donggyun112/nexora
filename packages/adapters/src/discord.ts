@@ -28,12 +28,15 @@
  *   - Hermes-style session-key isolation (DM, group, thread rules)
  */
 
+import { Buffer } from 'node:buffer';
+
 import type {
   Adapter,
   MessageRouter,
   InboundMessage,
   OutboundChunk,
   OutboundArtifact,
+  FileContent,
 } from '@dongkseo/contracts';
 import {
   buildSessionKey,
@@ -55,7 +58,7 @@ export interface DiscordMessageLike {
   channelId: string;
   guildId: string | null;
   mentions: { users: Map<string, { id: string; username: string; bot?: boolean }> };
-  attachments?: { size: number; keys?: () => Iterable<string> };
+  attachments?: DiscordAttachmentCollectionLike;
   reply: (content: DiscordSendPayload) => Promise<unknown>;
   channel: {
     sendTyping: () => Promise<unknown>;
@@ -85,6 +88,21 @@ export interface DiscordMessageLike {
    * transitioning between phases.
    */
   removeOwnReaction?: (emoji: string) => Promise<unknown>;
+}
+
+export interface DiscordAttachmentLike {
+  name?: string | null;
+  contentType?: string | null;
+  size?: number | null;
+  url?: string | null;
+  proxyURL?: string | null;
+  data?: Buffer | Uint8Array | ArrayBuffer | string;
+}
+
+export interface DiscordAttachmentCollectionLike {
+  size: number;
+  keys?: () => Iterable<string>;
+  values?: () => Iterable<DiscordAttachmentLike>;
 }
 
 export type DiscordSendPayload = string | DiscordMessagePayload;
@@ -200,12 +218,31 @@ export interface DiscordAdapterOptions extends SessionKeyOptions {
    * Defaults to 1500ms. Set to 0 to disable.
    */
   messageDebounceMs?: number;
+  /** Maximum accepted input files per message. Default: 10. */
+  maxFiles?: number;
+  /** Maximum decoded bytes per input file. Default: 10 MiB. */
+  maxFileBytes?: number;
+  /** Maximum decoded bytes across all input files. Default: 25 MiB. */
+  maxTotalFileBytes?: number;
+  /** Override attachment download behavior for tests or custom Discord wrappers. */
+  fetchAttachment?: (url: string) => Promise<Buffer | Uint8Array | ArrayBuffer>;
 }
 
 const DEFAULT_MAX_MESSAGE_LENGTH = 1900;
 const DEFAULT_MESSAGE_DEBOUNCE_MS = 1500;
 const MESSAGE_DEDUP_TTL_MS = 10 * 60 * 1000;
 const MESSAGE_DEDUP_MAX_ENTRIES = 5000;
+const DEFAULT_INPUT_FILE_LIMITS = {
+  maxFiles: 10,
+  maxFileBytes: 10 * 1024 * 1024,
+  maxTotalFileBytes: 25 * 1024 * 1024,
+};
+
+interface InputFileLimits {
+  maxFiles: number;
+  maxFileBytes: number;
+  maxTotalFileBytes: number;
+}
 
 interface PendingDiscordTurn {
   message: DiscordMessageLike;
@@ -238,6 +275,8 @@ export class DiscordAdapter implements Adapter {
   private readonly onUnauthorized: NonNullable<DiscordAdapterOptions['onUnauthorized']> | null;
   private readonly statusReactionOptions: StatusReactionOptions | null;
   private readonly messageDebounceMs: number;
+  private readonly fileLimits: InputFileLimits;
+  private readonly fetchAttachment: NonNullable<DiscordAdapterOptions['fetchAttachment']>;
   private handler: ((msg: DiscordMessageLike) => void) | null = null;
   private readonly seenMessages = new Map<string, { fingerprint: string; seenAt: number }>();
   private readonly debounceBuffers = new Map<string, DebounceBuffer>();
@@ -281,6 +320,12 @@ export class DiscordAdapter implements Adapter {
       0,
       Math.trunc(options.messageDebounceMs ?? DEFAULT_MESSAGE_DEBOUNCE_MS),
     );
+    this.fileLimits = {
+      maxFiles: options.maxFiles ?? DEFAULT_INPUT_FILE_LIMITS.maxFiles,
+      maxFileBytes: options.maxFileBytes ?? DEFAULT_INPUT_FILE_LIMITS.maxFileBytes,
+      maxTotalFileBytes: options.maxTotalFileBytes ?? DEFAULT_INPUT_FILE_LIMITS.maxTotalFileBytes,
+    };
+    this.fetchAttachment = options.fetchAttachment ?? fetchAttachmentBytes;
   }
 
   async start(router: MessageRouter): Promise<void> {
@@ -289,8 +334,8 @@ export class DiscordAdapter implements Adapter {
     this.handler = (message: DiscordMessageLike) => {
       if (this.shouldDropBotAuthoredMessage(message)) return;
       if (this.isDuplicateMessageEvent(message)) return;
-      // Ignore empty messages.
-      if (!message.content.trim()) return;
+      // Ignore empty messages unless they carry files.
+      if (!message.content.trim() && !hasAttachments(message)) return;
 
       const tenantId = this.resolveTenant(message.guildId);
       if (tenantId === null) return; // guild not configured
@@ -615,12 +660,14 @@ export class DiscordAdapter implements Adapter {
 
     let sawError = false;
     try {
+      const files = await this.filesFromAttachments(discordMsg);
+      const routedInbound = files?.length ? { ...inbound, files } : inbound;
       // Use streaming if the router supports it, so we can send incremental
       // messages. If the response is short enough, routeStream will call
       // onChunk with type='done' immediately.
       const chunks: Array<string | DiscordMessagePayload> = [];
 
-      await router.routeStream(inbound, (chunk: OutboundChunk) => {
+      await router.routeStream(routedInbound, (chunk: OutboundChunk) => {
         if (chunk.type === 'text') {
           chunks.push(chunk.text);
         } else if (chunk.type === 'artifact') {
@@ -656,6 +703,55 @@ export class DiscordAdapter implements Adapter {
       }
       await status?.setError();
     }
+  }
+
+  private async filesFromAttachments(
+    discordMsg: DiscordMessageLike,
+  ): Promise<FileContent[] | undefined> {
+    const attachments = [...(discordMsg.attachments?.values?.() ?? [])];
+    if (attachments.length === 0) return undefined;
+    if (attachments.length > this.fileLimits.maxFiles) {
+      throw new Error(`too many files: max ${this.fileLimits.maxFiles}`);
+    }
+
+    const files: FileContent[] = [];
+    let totalBytes = 0;
+    for (let i = 0; i < attachments.length; i++) {
+      const attachment = attachments[i];
+      const declaredSize = typeof attachment.size === 'number' ? attachment.size : undefined;
+      if (declaredSize !== undefined && declaredSize > this.fileLimits.maxFileBytes) {
+        throw new Error(`attachment ${i + 1} exceeds max file size ${this.fileLimits.maxFileBytes} bytes`);
+      }
+
+      const bytes = await this.attachmentBytes(attachment);
+      if (bytes.length > this.fileLimits.maxFileBytes) {
+        throw new Error(`attachment ${i + 1} exceeds max file size ${this.fileLimits.maxFileBytes} bytes`);
+      }
+      totalBytes += bytes.length;
+      if (totalBytes > this.fileLimits.maxTotalFileBytes) {
+        throw new Error(`attachments exceed max total size ${this.fileLimits.maxTotalFileBytes} bytes`);
+      }
+
+      const name = typeof attachment.name === 'string'
+        ? safeInputFilename(attachment.name)
+        : undefined;
+      files.push({
+        type: 'file',
+        data: bytes.toString('base64'),
+        mimeType: normalizeAttachmentMimeType(attachment.contentType),
+        ...(name ? { name } : {}),
+        size: bytes.length,
+      });
+    }
+
+    return files.length > 0 ? files : undefined;
+  }
+
+  private async attachmentBytes(attachment: DiscordAttachmentLike): Promise<Buffer> {
+    if (attachment.data !== undefined) return bufferFromAttachmentData(attachment.data);
+    const url = attachment.url ?? attachment.proxyURL;
+    if (!url) throw new Error('Discord attachment is missing a downloadable URL');
+    return bufferFromAttachmentData(await this.fetchAttachment(url));
   }
 
   private createStatusController(
@@ -756,6 +852,38 @@ function decodeAttachment(data: string): Buffer | null {
   if (!b64) return null;
   const buffer = Buffer.from(b64, 'base64');
   return buffer.length > 0 ? buffer : null;
+}
+
+async function fetchAttachmentBytes(url: string): Promise<Buffer> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`failed to fetch Discord attachment: HTTP ${response.status}`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+function bufferFromAttachmentData(data: Buffer | Uint8Array | ArrayBuffer | string): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (typeof data === 'string') {
+    const raw = data.trim();
+    const match = /^data:[^;]+;base64,(.+)$/i.exec(raw);
+    return Buffer.from((match?.[1] ?? raw).replace(/\s+/g, ''), 'base64');
+  }
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+}
+
+function normalizeAttachmentMimeType(value: string | null | undefined): string {
+  const mimeType = value?.toLowerCase().split(';', 1)[0]?.trim() || 'application/octet-stream';
+  return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mimeType)
+    ? mimeType
+    : 'application/octet-stream';
+}
+
+function safeInputFilename(name: string): string | undefined {
+  const base = name.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!base) return undefined;
+  return base.slice(0, 200);
 }
 
 function safeFilename(name: string, mimeType: string): string {

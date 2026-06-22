@@ -86,6 +86,33 @@ describe('GatewayRouter', () => {
     expect(resolver).toHaveBeenCalled();
   });
 
+  it('forwards files in transport payloads', async () => {
+    const transport = new FakeTransport(() => ({ content: 'ok' }));
+    const router = new GatewayRouter({
+      transport,
+      defaultTopic: 'chat.requested' as TopicString,
+    });
+    const file = {
+      type: 'file' as const,
+      name: 'note.txt',
+      mimeType: 'text/plain',
+      data: Buffer.from('hello').toString('base64'),
+      size: 5,
+    };
+
+    await router.route({
+      platform: 'http',
+      channelId: 'ch',
+      userId: 'u',
+      displayName: 'd',
+      content: 'see file',
+      files: [file],
+      tenantId: 'default',
+    });
+
+    expect((transport.requests[0].payload as { files?: unknown }).files).toEqual([file]);
+  });
+
   it('formats error payloads', async () => {
     const transport = new FakeTransport(() => ({ error: 'something broke' }));
     const router = new GatewayRouter({
@@ -131,6 +158,38 @@ describe('LocalRuntimeRouter', () => {
       tenantId: 'default',
     });
     expect(out.content).toBe('final');
+  });
+
+  it('passes files into local runtime input', async () => {
+    let captured: AgentInput | undefined;
+    const router = new LocalRuntimeRouter({
+      createRuntime: () => ({
+        async *execute(input: AgentInput) {
+          captured = input;
+          yield { type: 'done' as const, content: 'ok', toolCalls: [] };
+        },
+        abort: () => {},
+      }),
+    });
+    const file = {
+      type: 'file' as const,
+      name: 'note.txt',
+      mimeType: 'text/plain',
+      data: Buffer.from('hello').toString('base64'),
+      size: 5,
+    };
+
+    await router.route({
+      platform: 'http',
+      channelId: 'ch',
+      userId: 'u',
+      displayName: 'd',
+      content: 'q',
+      files: [file],
+      tenantId: 'default',
+    });
+
+    expect(captured?.files).toEqual([file]);
   });
 
   it('streams events as outbound chunks', async () => {

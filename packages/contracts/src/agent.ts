@@ -15,6 +15,8 @@ export interface AgentInput {
   /** 이미지 첨부 */
   images?: ImageContent[];
 
+  files?: FileContent[];
+
   /** 이전 대화 히스토리 */
   history?: ChatMessage[];
 
@@ -43,6 +45,14 @@ export interface ImageContent {
   type: 'image';
   data: string;
   mimeType: string;
+}
+
+export interface FileContent {
+  type: 'file';
+  data: string;
+  mimeType: string;
+  name?: string;
+  size?: number;
 }
 
 /**

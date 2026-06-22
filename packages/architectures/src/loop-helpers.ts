@@ -5,7 +5,9 @@
  * 공유한다. 한 곳에서 고치면 두 아키텍처 모두 반영된다.
  */
 
+import { Buffer } from 'node:buffer';
 import type {
+  AgentInput,
   LLMContentBlock,
   LLMMessage,
   LLMResponse,
@@ -136,6 +138,150 @@ export interface LoopCompactionOptions {
 
 const PRUNE_PLACEHOLDER = '[older tool output pruned to fit context]';
 const IMAGE_TOKEN_ESTIMATE = 1024;
+const MAX_INLINE_FILE_CHARS = 64_000;
+const TEXT_FILE_MIME_TYPES = new Set([
+  'application/javascript',
+  'application/json',
+  'application/ld+json',
+  'application/sql',
+  'application/typescript',
+  'application/x-javascript',
+  'application/x-ndjson',
+  'application/xml',
+  'application/yaml',
+  'text/csv',
+  'text/html',
+  'text/markdown',
+  'text/plain',
+  'text/xml',
+  'text/yaml',
+]);
+const TEXT_FILE_EXTENSIONS = new Set([
+  '.c',
+  '.cc',
+  '.conf',
+  '.cpp',
+  '.cs',
+  '.css',
+  '.csv',
+  '.go',
+  '.h',
+  '.html',
+  '.java',
+  '.js',
+  '.json',
+  '.jsx',
+  '.kt',
+  '.log',
+  '.md',
+  '.php',
+  '.py',
+  '.rb',
+  '.rs',
+  '.sql',
+  '.swift',
+  '.toml',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.xml',
+  '.yaml',
+  '.yml',
+]);
+
+export function userContentForInput(
+  input: AgentInput,
+  promptText = input.prompt,
+): string | LLMContentBlock[] {
+  const text = appendInputFileSummaries(promptText, input.files);
+  const imageBlocks: Extract<LLMContentBlock, { type: 'image' }>[] = [];
+
+  for (const img of input.images ?? []) {
+    imageBlocks.push({ type: 'image', data: img.data, mimeType: img.mimeType });
+  }
+  for (const file of input.files ?? []) {
+    if (isImageMime(file.mimeType)) {
+      imageBlocks.push({ type: 'image', data: file.data, mimeType: file.mimeType });
+    }
+  }
+
+  if (imageBlocks.length === 0) return text;
+  return [{ type: 'text', text }, ...imageBlocks];
+}
+
+function appendInputFileSummaries(
+  promptText: string,
+  files: AgentInput['files'] | undefined,
+): string {
+  if (!files?.length) return promptText;
+
+  const parts: string[] = ['Attached files:'];
+  for (const file of files) {
+    const label = fileLabel(file);
+    if (isImageMime(file.mimeType)) {
+      parts.push(`- ${label}: image attached as visual context.`);
+      continue;
+    }
+
+    if (!isTextLikeFile(file)) {
+      parts.push(`- ${label}: binary content not inlined.`);
+      continue;
+    }
+
+    const text = decodeFileText(file.data);
+    if (text === null) {
+      parts.push(`- ${label}: text-like file could not be decoded as UTF-8.`);
+      continue;
+    }
+
+    parts.push(`--- ${label} ---\n${truncateInlineFileText(text)}\n--- end ${label} ---`);
+  }
+
+  const attachmentText = parts.join('\n\n');
+  return promptText ? `${promptText}\n\n${attachmentText}` : attachmentText;
+}
+
+function fileLabel(file: NonNullable<AgentInput['files']>[number]): string {
+  const name = file.name ? `"${file.name}"` : 'unnamed file';
+  const size = typeof file.size === 'number' ? `, ${file.size} bytes` : '';
+  return `${name} (${file.mimeType}${size})`;
+}
+
+function isImageMime(mimeType: string): boolean {
+  return mimeType.toLowerCase().startsWith('image/');
+}
+
+function isTextLikeFile(file: NonNullable<AgentInput['files']>[number]): boolean {
+  const mimeType = file.mimeType.toLowerCase().split(';', 1)[0]?.trim() ?? '';
+  if (mimeType.startsWith('text/')) return true;
+  if (TEXT_FILE_MIME_TYPES.has(mimeType)) return true;
+  const name = file.name?.toLowerCase() ?? '';
+  return [...TEXT_FILE_EXTENSIONS].some(ext => name.endsWith(ext));
+}
+
+function decodeFileText(data: string): string | null {
+  try {
+    const base64 = stripDataUrlPrefix(data).replace(/\s+/g, '');
+    const buffer = Buffer.from(base64, 'base64');
+    if (buffer.includes(0)) return null;
+    const text = buffer.toString('utf-8');
+    const replacementChars = text.match(/\uFFFD/g)?.length ?? 0;
+    if (replacementChars > Math.max(3, Math.floor(text.length * 0.01))) return null;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+function stripDataUrlPrefix(data: string): string {
+  const match = /^data:[^;]+;base64,(.+)$/i.exec(data.trim());
+  return match ? match[1] : data;
+}
+
+function truncateInlineFileText(text: string): string {
+  if (text.length <= MAX_INLINE_FILE_CHARS) return text;
+  return `${text.slice(0, MAX_INLINE_FILE_CHARS)}\n[truncated ${text.length - MAX_INLINE_FILE_CHARS} chars]`;
+}
 
 function estimateBlockTokens(content: LLMMessage['content']): number {
   if (typeof content === 'string') return Math.ceil(content.length / 4);

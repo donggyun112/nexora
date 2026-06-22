@@ -176,6 +176,9 @@ for (const card of [coder, reviewer, pm]) {
         images: Array.isArray(p?.images)
           ? p.images.map((i: { data: string; mimeType: string }) => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
           : undefined,
+        files: Array.isArray(p?.files)
+          ? p.files.map((f: { name?: string; data: string; mimeType: string; size?: number }) => ({ type: 'file' as const, ...f }))
+          : undefined,
         history: p?.history,
       };
     },

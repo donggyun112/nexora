@@ -76,6 +76,44 @@ describe('DiscordAdapter', () => {
     await adapter.stop();
   });
 
+  it('routes Discord attachments as inbound files', async () => {
+    const client = makeFakeClient();
+    const adapter = makeAdapter({ client });
+
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const fakeMsg = makeFakeMessage('', {
+      attachments: {
+        size: 1,
+        keys: () => ['file-1'],
+        values: () => [{
+          name: '../note.txt',
+          contentType: 'text/plain; charset=utf-8',
+          size: 5,
+          data: Buffer.from('hello'),
+        }],
+      },
+    });
+    client.fire(fakeMsg);
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0].content).toBe('');
+    expect(captured[0].files).toEqual([{
+      type: 'file',
+      name: 'note.txt',
+      mimeType: 'text/plain',
+      data: Buffer.from('hello').toString('base64'),
+      size: 5,
+    }]);
+    expect(fakeMsg.reply).toHaveBeenCalledWith('ok');
+    await adapter.stop();
+  });
+
   it('renders outbound artifacts as Discord attachments', async () => {
     const client = makeFakeClient();
     const adapter = makeAdapter({ client });

@@ -126,11 +126,13 @@ const running = await bootstrapAgent({
     const payload = env.payload as {
       prompt?: string;
       images?: { data: string; mimeType: string }[];
+      files?: { name?: string; data: string; mimeType: string; size?: number }[];
       history?: { role: 'user' | 'assistant'; content: string }[];
     };
     return {
       prompt: payload.prompt ?? '',
       images: payload.images?.map(i => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType })),
+      files: payload.files?.map(f => ({ type: 'file' as const, ...f })),
       history: payload.history,
     };
   },

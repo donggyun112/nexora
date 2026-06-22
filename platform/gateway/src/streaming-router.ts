@@ -57,6 +57,7 @@ export class StreamingGatewayRouter implements MessageRouter {
     for await (const event of runtime.execute({
       prompt: message.content,
       images: message.images?.map(i => ({ type: 'image', data: i.data, mimeType: i.mimeType })),
+      files: message.files?.map(f => ({ ...f, type: 'file' as const })),
     })) {
       const chunk = mapEvent(event);
       if (chunk) onChunk(chunk);

@@ -66,6 +66,64 @@ describe('HttpAdapter', () => {
     expect(captured[0].tenantId).toBe('default');
   });
 
+  it('normalizes JSON file inputs before routing', async () => {
+    adapter = new HttpAdapter();
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const data = Buffer.from('hello').toString('base64');
+    const result = await postJson(adapter.port()!, '/messages', {
+      content: 'read this',
+      files: [{ name: '../note.txt', mimeType: 'text/plain; charset=utf-8', data }],
+    });
+
+    expect(result.status).toBe(200);
+    expect(captured[0].files).toEqual([{
+      type: 'file',
+      name: 'note.txt',
+      mimeType: 'text/plain',
+      data,
+      size: 5,
+    }]);
+  });
+
+  it('accepts file-only requests', async () => {
+    adapter = new HttpAdapter();
+    const captured: InboundMessage[] = [];
+    await adapter.start(makeRouter(async (msg) => {
+      captured.push(msg);
+      return { content: 'ok' };
+    }));
+
+    const result = await postJson(adapter.port()!, '/messages', {
+      files: [{
+        name: 'readme.md',
+        mimeType: 'text/markdown',
+        data: Buffer.from('# Title').toString('base64'),
+      }],
+    });
+
+    expect(result.status).toBe(200);
+    expect(captured[0].content).toBe('');
+    expect(captured[0].files?.[0].name).toBe('readme.md');
+  });
+
+  it('rejects invalid file data', async () => {
+    adapter = new HttpAdapter();
+    await adapter.start(makeRouter(async () => ({ content: 'ok' })));
+
+    const result = await postJson(adapter.port()!, '/messages', {
+      content: 'bad file',
+      files: [{ name: 'bad.txt', mimeType: 'text/plain', data: 'not base64!' }],
+    });
+
+    expect(result.status).toBe(400);
+    expect((result.body as { error: string }).error).toContain('base64');
+  });
+
   it('rejects requests when resolveTenant returns null', async () => {
     adapter = new HttpAdapter({
       resolveTenant: (req) => req.headers.authorization === 'Bearer secret' ? 'tenant-A' : null,

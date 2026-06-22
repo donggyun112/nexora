@@ -198,6 +198,8 @@ export interface LLMUsage {
   completionTokens: number;
   /** Tokens served from prompt cache (Anthropic). 0 if not applicable. */
   cachedTokens?: number;
+  /** Tokens written to prompt cache / cache creation (Anthropic). 0 if not applicable. */
+  cacheWriteTokens?: number;
 }
 
 export interface LLMResponse {

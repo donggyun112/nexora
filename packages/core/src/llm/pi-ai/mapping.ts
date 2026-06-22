@@ -256,6 +256,8 @@ export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
     promptTokens: msg.usage.input,
     completionTokens: msg.usage.output,
     cachedTokens: (msg.usage as { cacheRead?: number }).cacheRead ?? 0,
+    // cacheWrite already includes the cacheWrite1h subset, so do not add them.
+    cacheWriteTokens: (msg.usage as { cacheWrite?: number }).cacheWrite ?? 0,
   };
 
   return {

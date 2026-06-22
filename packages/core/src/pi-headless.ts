@@ -60,7 +60,7 @@ export function createPiMapState(): PiMapState {
  * carrying the full text does not re-emit content already streamed delta by
  * delta.
  */
-export function agentEventToPiWire(ev: AgentEvent, state: PiMapState): PiWireEvent[] {
+export function agentEventToPiWire(ev: AgentEvent, state: PiMapState, configuredModel?: string): PiWireEvent[] {
   switch (ev.type) {
     case 'text': {
       if (ev.text.length === 0) return [];
@@ -98,11 +98,11 @@ export function agentEventToPiWire(ev: AgentEvent, state: PiMapState): PiWireEve
             input: ev.usage.promptTokens ?? 0,
             output: ev.usage.completionTokens ?? 0,
             cacheRead: ev.usage.cachedTokens ?? 0,
-            cacheWrite: 0,
+            cacheWrite: ev.usage.cacheWriteTokens ?? 0,
             totalTokens: (ev.usage.promptTokens ?? 0) + (ev.usage.completionTokens ?? 0),
           }
         : { ...ZERO_USAGE };
-      out.push({ type: 'turn_end', message: { usage, ...(ev.model ? { model: ev.model } : {}) } });
+      out.push({ type: 'turn_end', message: { usage, ...((ev.model ?? configuredModel) ? { model: ev.model ?? configuredModel } : {}) } });
       state.sawTurnEnd = true;
       return out;
     }
@@ -142,6 +142,13 @@ export interface DrivePiOptions {
   write?: (line: string) => void;
   /** Optional second sink for the same lines (e.g. the `--session` file). */
   appendSession?: (line: string) => void;
+  /**
+   * Model id configured for this runtime (from the daemon's `--model`). Used as
+   * the fallback when an AgentEvent does not carry `model` (e.g. the
+   * plan-execute architecture, or the defensive terminal turn_end), so every
+   * `turn_end` reports a model and Multica never records usage as "unknown".
+   */
+  model?: string;
 }
 
 export interface DrivePiResult {
@@ -171,7 +178,7 @@ export async function drivePi(opts: DrivePiOptions): Promise<DrivePiResult> {
 
   try {
     for await (const ev of opts.run()) {
-      for (const wire of agentEventToPiWire(ev, state)) {
+      for (const wire of agentEventToPiWire(ev, state, opts.model)) {
         emit(wire);
         if (wire.type === 'error') result = { status: 'failed', error: wire.message };
       }
@@ -186,7 +193,7 @@ export async function drivePi(opts: DrivePiOptions): Promise<DrivePiResult> {
   // `error`. If the stream completed cleanly without either, synthesize a
   // terminal turn_end so Multica does not treat the task as still running.
   if (result.status === 'completed' && !state.sawTurnEnd) {
-    emit({ type: 'turn_end', message: { usage: { ...ZERO_USAGE } } });
+    emit({ type: 'turn_end', message: { usage: { ...ZERO_USAGE }, ...(opts.model ? { model: opts.model } : {}) } });
   }
 
   return result;

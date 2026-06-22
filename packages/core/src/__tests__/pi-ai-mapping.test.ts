@@ -228,7 +228,7 @@ describe('fromPiAssistantMessage', () => {
     }));
     expect(r.content).toBe('hello');
     expect(r.stopReason).toBe('end_turn');
-    expect(r.usage).toEqual({ promptTokens: 10, completionTokens: 5, cachedTokens: 0 });
+    expect(r.usage).toEqual({ promptTokens: 10, completionTokens: 5, cachedTokens: 0, cacheWriteTokens: 0 });
   });
 
   it('extracts tool calls and maps stopReason toolUse to tool_use', () => {
@@ -243,15 +243,17 @@ describe('fromPiAssistantMessage', () => {
     expect(r.stopReason).toBe('tool_use');
   });
 
-  it('reports cacheRead usage as the token count, not the cost', () => {
+  it('reports cacheRead/cacheWrite usage as the token count, not the cost', () => {
     const r = fromPiAssistantMessage(makeMsg({
       usage: {
         input: 10, output: 5,
         cacheRead: 100, // token count — what cachedTokens must report
+        cacheWrite: 50, // token count — what cacheWriteTokens must report
         cost: { input: 0, output: 0, total: 0, cacheRead: 0.0033 }, // USD — must NOT leak in
       } as never,
     }));
     expect(r.usage?.cachedTokens).toBe(100);
+    expect(r.usage?.cacheWriteTokens).toBe(50);
   });
 
   it('omits toolCalls when none present', () => {

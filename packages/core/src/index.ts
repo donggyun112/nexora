@@ -101,7 +101,7 @@ export type {
 // --- lifted from in7-marketing-poc (generic runtime primitives) ---
 export { KeyedSerializer } from './keyed-serializer.js';
 export { RotatingKeyProvider } from './rotating-key-provider.js';
-export { ThinkingLlmProvider, parseThinkingLevel } from './thinking-provider.js';
+export { ThinkingLlmProvider, parseThinkingLevel, isTransientLlmError } from './thinking-provider.js';
 export type { ThinkingLevel } from './thinking-provider.js';
 export {
   normalizePublicHttpUrl,

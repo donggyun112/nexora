@@ -80,7 +80,7 @@ function retryAfterSeconds(err: unknown): string | null {
 
 // status 가 있으면 그게 authoritative — non-transient(400/401/403/404/422 등)은
 // 재시도하지 않는다(context-overflow·auth·invalid request 는 재시도 무의미).
-function isTransientLlmError(err: unknown): boolean {
+export function isTransientLlmError(err: unknown): boolean {
   if (err == null) return false;
   // pi-ai surfaces upstream failures (overload, dropped stream, SDK parse error)
   // as stopReason='error' with the status dropped — mapping.ts marks them so we

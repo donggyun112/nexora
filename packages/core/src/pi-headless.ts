@@ -36,7 +36,7 @@ export type PiWireEvent =
     }
   | { type: 'tool_execution_start'; toolCallId: string; toolName: string; args: unknown }
   | { type: 'tool_execution_end'; toolCallId: string; result: unknown; isError: boolean }
-  | { type: 'turn_end'; message: { usage: PiUsage } }
+  | { type: 'turn_end'; message: { usage: PiUsage; model?: string } }
   | { type: 'error'; message: string }
   | { type: 'auto_retry_end'; success: boolean; finalError?: string };
 
@@ -102,7 +102,7 @@ export function agentEventToPiWire(ev: AgentEvent, state: PiMapState): PiWireEve
             totalTokens: (ev.usage.promptTokens ?? 0) + (ev.usage.completionTokens ?? 0),
           }
         : { ...ZERO_USAGE };
-      out.push({ type: 'turn_end', message: { usage } });
+      out.push({ type: 'turn_end', message: { usage, ...(ev.model ? { model: ev.model } : {}) } });
       state.sawTurnEnd = true;
       return out;
     }

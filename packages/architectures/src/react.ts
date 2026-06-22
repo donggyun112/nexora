@@ -172,6 +172,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
             content: response.content,
             toolCalls: allToolCalls,
             usage: sawUsage ? turnUsage : undefined,
+            model: options.model,
           };
           return;
         }
@@ -270,6 +271,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         content: lastContent || '(max iterations reached)',
         toolCalls: allToolCalls,
         usage: sawUsage ? turnUsage : undefined,
+        model: options.model,
       };
     },
   };

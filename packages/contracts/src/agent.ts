@@ -179,7 +179,7 @@ export type LLMChunk =
   | { type: 'thinking_delta'; delta: string }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; delta: string }
-  | { type: 'done'; content: string; stopReason: string };
+  | { type: 'done'; content: string; stopReason: string; usage?: LLMUsage };
 
 export interface LLMOptions {
   model?: string;

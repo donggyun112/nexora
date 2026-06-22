@@ -31,6 +31,7 @@ import {
   sanitizeToolPairsInPlace,
   userContentForInput,
 } from './loop-helpers.js';
+import { streamLlm } from './stream-llm.js';
 
 export interface PlanExecuteOptions {
   systemPrompt?: string;
@@ -128,14 +129,17 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         let response: LLMResponse;
         try {
-          response = await services.llm.complete(history, {
-            systemPrompt: options.systemPrompt,
-            model: options.model,
-            maxTokens: options.maxTokens,
-            temperature: options.temperature,
-            signal: services.signal,
-            tools: toolsForPhase(services, phase),
-          });
+          response = yield* streamLlm(
+            services.llm.stream(history, {
+              systemPrompt: options.systemPrompt,
+              model: options.model,
+              maxTokens: options.maxTokens,
+              temperature: options.temperature,
+              signal: services.signal,
+              tools: toolsForPhase(services, phase),
+            }),
+            options.model ?? '',
+          );
         } catch (err) {
           if (services.signal.aborted) return;
           const message = err instanceof Error ? err.message : String(err);
@@ -145,14 +149,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         lastContent = response.content;
 
-        // 사고(thinking) — 텍스트보다 먼저 흘려 위쪽에 표시
-        if (response.thinking) {
-          yield { type: 'thinking', content: response.thinking };
-        }
-
-        if (response.content) {
-          yield { type: 'text', text: response.content };
-        }
+        // thinking/text 는 streamLlm 이 델타로 이미 방출 — 여기서 재방출하지 않는다.
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
           history.push({ role: 'assistant', content: response.content });

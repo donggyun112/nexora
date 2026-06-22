@@ -30,6 +30,7 @@ import {
   userContentForInput,
   type LoopCompactionOptions,
 } from './loop-helpers.js';
+import { streamLlm } from './stream-llm.js';
 
 export interface ReactOptions {
   /** 시스템 프롬프트 */
@@ -118,14 +119,17 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 
         let response: LLMResponse;
         try {
-          response = await services.llm.complete(history, {
-            systemPrompt: options.systemPrompt,
-            model: options.model,
-            maxTokens: options.maxTokens,
-            temperature: options.temperature,
-            signal: services.signal,
-            tools: services.tools.list().map(t => ({ name: t.name, description: t.description, parameters: t.parameters })),
-          });
+          response = yield* streamLlm(
+            services.llm.stream(history, {
+              systemPrompt: options.systemPrompt,
+              model: options.model,
+              maxTokens: options.maxTokens,
+              temperature: options.temperature,
+              signal: services.signal,
+              tools: services.tools.list().map(t => ({ name: t.name, description: t.description, parameters: t.parameters })),
+            }),
+            options.model ?? '',
+          );
         } catch (err) {
           if (services.signal.aborted) return;
           const message = err instanceof Error ? err.message : String(err);
@@ -142,15 +146,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
           sawUsage = true;
         }
 
-        // 사고(thinking) — 텍스트보다 먼저 흘려 위쪽에 표시
-        if (response.thinking) {
-          yield { type: 'thinking', content: response.thinking };
-        }
-
-        // 텍스트 응답
-        if (response.content) {
-          yield { type: 'text', text: response.content };
-        }
+        // thinking/text 는 streamLlm 이 델타로 이미 방출 — 여기서 재방출하지 않는다.
 
         // 도구 호출이 없으면 종료 — 단, 종료 직전 주입된 steer 가 있으면 끝내지 않고 이어간다.
         if (!response.toolCalls || response.toolCalls.length === 0) {

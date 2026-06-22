@@ -40,7 +40,12 @@ export class MockLLMProvider implements LLMProvider {
     this.callLog.push({ messages, options });
     const r = this.next();
     if (r.throwError) throw new Error(r.throwError);
+    if (r.thinking) yield { type: 'thinking_delta', delta: r.thinking };
     if (r.text) yield { type: 'text_delta', delta: r.text };
+    for (const tc of r.toolCalls ?? []) {
+      yield { type: 'tool_call_start', id: tc.id, name: tc.name };
+      yield { type: 'tool_call_delta', id: tc.id, delta: JSON.stringify(tc.arguments ?? {}) };
+    }
     yield { type: 'done', content: r.text, stopReason: r.toolCalls?.length ? 'tool_use' : 'end_turn' };
   }
 

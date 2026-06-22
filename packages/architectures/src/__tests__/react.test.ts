@@ -354,10 +354,10 @@ describe('ReAct resume', () => {
   it('absorbs a mid-run steered message and continues instead of finishing', async () => {
     const llm = new MockLLMProvider([{ text: 'first' }, { text: 'second after steer' }]);
     const seenHistories: LLMMessage[][] = [];
-    const origComplete = llm.complete.bind(llm);
-    (llm as any).complete = async (history: LLMMessage[], opts: unknown) => {
+    const origStream = llm.stream.bind(llm);
+    (llm as any).stream = (history: LLMMessage[], opts: unknown) => {
       seenHistories.push([...history]);
-      return origComplete(history, opts as any);
+      return origStream(history, opts as any);
     };
 
     // drainSteers 호출 순서: iter0-top(빈) → iter0-pre-done(steer) → iter1-top(빈) → iter1-pre-done(빈).

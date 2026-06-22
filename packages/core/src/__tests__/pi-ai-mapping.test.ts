@@ -382,7 +382,7 @@ describe('fromPiChunk', () => {
       } as AssistantMessageEvent,
       newState(),
     );
-    expect(r).toEqual({ type: 'done', content: 'final', stopReason: 'end_turn' });
+    expect(r).toEqual({ type: 'done', content: 'final', stopReason: 'end_turn', usage: { promptTokens: 0, completionTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 } });
   });
 
   it('returns undefined for events that have no Nexora equivalent', () => {

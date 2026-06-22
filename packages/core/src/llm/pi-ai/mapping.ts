@@ -16,6 +16,7 @@ import type {
   LLMChunk,
   LLMContentBlock,
   LLMResponse,
+  LLMUsage,
 } from '@dongkseo/contracts';
 import type {
   Message,
@@ -198,7 +199,12 @@ export function fromPiChunk(
         .filter(b => b.type === 'text')
         .map(b => (b as { type: 'text'; text: string }).text)
         .join('');
-      return { type: 'done', content: text, stopReason: piToStopReason(event.message.stopReason) };
+      return {
+        type: 'done',
+        content: text,
+        stopReason: piToStopReason(event.message.stopReason),
+        ...(event.message.usage ? { usage: toLLMUsage(event.message.usage) } : {}),
+      };
     }
     case 'error': {
       const errEvent = event as unknown as { reason: 'aborted' | 'error'; error: AssistantMessage & { errorMessage?: string } };
@@ -217,6 +223,18 @@ function piToStopReason(reason: string): string {
   if (reason === 'stop') return 'end_turn';
   if (reason === 'aborted') return 'aborted';
   return reason;
+}
+
+// cachedTokens must be the cache-read TOKEN count (usage.cacheRead), not
+// usage.cost.cacheRead which is the USD cost of those reads.
+function toLLMUsage(usage: AssistantMessage['usage']): LLMUsage {
+  return {
+    promptTokens: usage.input,
+    completionTokens: usage.output,
+    cachedTokens: (usage as { cacheRead?: number }).cacheRead ?? 0,
+    // cacheWrite already includes the cacheWrite1h subset, so do not add them.
+    cacheWriteTokens: (usage as { cacheWrite?: number }).cacheWrite ?? 0,
+  };
 }
 
 export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
@@ -250,15 +268,7 @@ export function fromPiAssistantMessage(msg: AssistantMessage): LLMResponse {
     }
   }
 
-  // cachedTokens must be the cache-read TOKEN count (msg.usage.cacheRead), not
-  // msg.usage.cost.cacheRead which is the USD cost of those reads.
-  const usage = {
-    promptTokens: msg.usage.input,
-    completionTokens: msg.usage.output,
-    cachedTokens: (msg.usage as { cacheRead?: number }).cacheRead ?? 0,
-    // cacheWrite already includes the cacheWrite1h subset, so do not add them.
-    cacheWriteTokens: (msg.usage as { cacheWrite?: number }).cacheWrite ?? 0,
-  };
+  const usage = toLLMUsage(msg.usage);
 
   return {
     content: textParts.join(''),

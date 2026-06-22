@@ -158,7 +158,7 @@ describe('PiAiProvider.stream', () => {
     for await (const c of p.stream([{ role: 'user', content: 'hi' }])) chunks.push(c);
 
     expect(chunks).toContainEqual({ type: 'text_delta', delta: 'hi' });
-    expect(chunks.at(-1)).toEqual({ type: 'done', content: 'hi', stopReason: 'end_turn' });
+    expect(chunks.at(-1)).toEqual({ type: 'done', content: 'hi', stopReason: 'end_turn', usage: { promptTokens: 20, completionTokens: 5, cachedTokens: 0, cacheWriteTokens: 0 } });
   });
 
   it('streams tool calls — emits tool_call_start then tool_call_delta with correct id', async () => {

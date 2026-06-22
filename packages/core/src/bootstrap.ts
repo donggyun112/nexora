@@ -25,8 +25,12 @@ import type {
   MessageEnvelope,
   AgentLogger,
   TopicString,
+  RuntimeServices,
+  ToolResult,
+  SuspendedTurnStore,
+  SuspendedTurnState,
 } from '@dongkseo/contracts';
-import { messageId, spanId, matchTopic, DEFAULT_TENANT } from '@dongkseo/contracts';
+import { messageId, spanId, matchTopic, DEFAULT_TENANT, textResult } from '@dongkseo/contracts';
 import { createSchemaValidator, SchemaValidationError } from './schema.js';
 import { enforceLint } from './lint.js';
 
@@ -53,6 +57,12 @@ export interface AgentBootstrapOptions {
   createRuntime: (args: {
     context: AgentContext;
     envelope: MessageEnvelope;
+    /**
+     * Suspend hook to forward into the AgentRunner. Wired by bootstrap so a
+     * `handraise(human)` suspend persists the turn's `architectureHistory`.
+     * Apps that want suspend/resume must pass this into `new AgentRunner({...})`.
+     */
+    onSuspend?: RuntimeServices['onSuspend'];
   }) => AgentRuntime | Promise<AgentRuntime>;
   /**
    * Convert an incoming MessageEnvelope into the agent's domain-specific
@@ -98,6 +108,20 @@ export interface AgentBootstrapOptions {
   validateSchemas?: boolean;
   /** Logger for framework-level events (boot, shutdown, lint warnings). */
   logger?: AgentLogger;
+  /**
+   * Store for parked `handraise(human)` turns. When provided, bootstrap wires
+   * an `onSuspend` that persists the suspended turn, subscribes to handraise
+   * replies, and resumes the turn when the human answers (no wall-clock
+   * timeout). Omit to disable suspend/resume (suspended turns simply park
+   * without persistence/resume).
+   */
+  suspendedTurnStore?: SuspendedTurnStore;
+  /**
+   * Topic pattern to listen on for handraise answers. Default
+   * `handraise.human.*.answered` (matches every channel). Only used when
+   * `suspendedTurnStore` is set.
+   */
+  handraiseReplyTopic?: string;
 }
 
 export interface RunningAgent {
@@ -129,6 +153,8 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
     buildResultPayload,
     strictPublishLint = false,
     tenantId: scopedTenantId,
+    suspendedTurnStore,
+    handraiseReplyTopic = 'handraise.human.*.answered',
   } = options;
   const logger = options.logger ?? NOOP_LOGGER;
 
@@ -184,6 +210,7 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
         validateInput,
         validateOutput,
         logger,
+        suspendedTurnStore,
       });
       inFlight.add(work);
       try {
@@ -193,6 +220,33 @@ export async function bootstrapAgent(options: AgentBootstrapOptions): Promise<Ru
       }
     });
     subscriptions.push(sub);
+  }
+
+  // Handraise resume listener: when a human answers a parked turn, rebuild and
+  // re-run it. Only active when a suspended-turn store is configured.
+  if (suspendedTurnStore) {
+    const replySub = transport.subscribe(handraiseReplyTopic as TopicString, async (replyEnv) => {
+      const work = resumeHandraiseTurn({
+        replyEnv,
+        store: suspendedTurnStore,
+        card,
+        contextLoader,
+        transport,
+        createRuntime,
+        toAgentInput,
+        buildResultPayload,
+        validateOutput,
+        logger,
+      });
+      inFlight.add(work);
+      try {
+        await work;
+      } finally {
+        inFlight.delete(work);
+      }
+    });
+    subscriptions.push(replySub);
+    logger.info(`Agent ${card.name} listening for handraise replies`, { topic: handraiseReplyTopic });
   }
 
   logger.info(`Agent ${card.name} bootstrapped`, {
@@ -232,6 +286,7 @@ async function handleMessage(args: {
   validateInput: (payload: unknown) => void;
   validateOutput: (payload: unknown) => void;
   logger: AgentLogger;
+  suspendedTurnStore?: SuspendedTurnStore;
 }): Promise<void> {
   const {
     envelope,
@@ -312,7 +367,32 @@ async function handleMessage(args: {
     }
 
     const context = await contextLoader.load(tenantId, card.name);
-    const runtime = await createRuntime({ context, envelope });
+
+    // Compute the result topic up-front so the suspend hook can persist it —
+    // a resumed turn must publish its eventual result to the same topic.
+    const resultTopic = args.resultTopicFor
+      ? args.resultTopicFor(envelope)
+      : (card.publishes[0] ?? `${envelope.topic}.completed`);
+
+    // When a suspended-turn store is configured, persist the turn on suspend so
+    // it can be resumed once the human answers. architectureHistory flows ONLY
+    // through onSuspend (not the event stream), so capture it here.
+    const onSuspend: RuntimeServices['onSuspend'] | undefined = args.suspendedTurnStore
+      ? async ({ pendingId, toolCallId, architectureHistory }) => {
+          await args.suspendedTurnStore!.save({
+            pendingId,
+            toolCallId,
+            architectureHistory,
+            envelope,
+            resultTopic,
+            tenantId,
+            createdAt: Date.now(),
+            status: 'awaiting',
+          });
+        }
+      : undefined;
+
+    const runtime = await createRuntime({ context, envelope, onSuspend });
 
     const input = await toAgentInput(envelope);
 
@@ -321,9 +401,20 @@ async function handleMessage(args: {
       events.push(event);
     }
 
-    const resultTopic = args.resultTopicFor
-      ? args.resultTopicFor(envelope)
-      : (card.publishes[0] ?? `${envelope.topic}.completed`);
+    // If the turn suspended (e.g. handraise asked a human), do NOT publish a
+    // result — the question is out and the turn is parked. It resumes via the
+    // handraise reply listener when the answer arrives.
+    const suspendedEv = events.find(e => e.type === 'suspended') as
+      | Extract<AgentEvent, { type: 'suspended' }>
+      | undefined;
+    if (suspendedEv) {
+      logger.info(`Agent ${card.name} suspended`, {
+        topic: envelope.topic,
+        pendingId: suspendedEv.pendingId,
+        persisted: args.suspendedTurnStore !== undefined,
+      });
+      return;
+    }
 
     // Publishes lint: the chosen result topic MUST match one of the card's
     // declared publishes patterns. Catches drift between the AgentCard and
@@ -354,27 +445,14 @@ async function handleMessage(args: {
       throw err;
     }
 
-    const reply: MessageEnvelope = {
-      id: messageId(),
-      topic: resultTopic,
-      type: 'result',
+    await publishAgentResult({
+      transport,
+      card,
+      sourceEnvelope: envelope,
+      resultTopic,
       payload,
-      metadata: {
-        traceId: envelope.metadata.traceId,
-        spanId: spanId(),
-        parentSpanId: envelope.metadata.spanId,
-        conversationId: envelope.metadata.conversationId,
-        replyTo: envelope.id,
-        tenantId,
-        sourceInstanceId: card.name,
-        timestamp: Date.now(),
-      },
-    };
-
-    await transport.publish(reply);
-
-    // Mirror reply to _replyStream if present
-    await mirrorToReplyStream(transport, envelope, reply);
+      tenantId,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`Agent ${card.name} failed`, { topic: envelope.topic, message });
@@ -401,6 +479,160 @@ async function handleMessage(args: {
     await mirrorToReplyStream(transport, envelope, errorEnvelope);
   }
 }
+
+/**
+ * Build and publish an agent result envelope to `resultTopic`, then mirror it
+ * to the reply stream if one is attached. Shared by the initial-turn path and
+ * the handraise-resume path so both produce identical result envelopes.
+ */
+async function publishAgentResult(opts: {
+  transport: EventTransport;
+  card: AgentCard;
+  sourceEnvelope: MessageEnvelope;
+  resultTopic: string;
+  payload: unknown;
+  tenantId: string;
+}): Promise<void> {
+  const { transport, card, sourceEnvelope, resultTopic, payload, tenantId } = opts;
+  const reply: MessageEnvelope = {
+    id: messageId(),
+    topic: resultTopic,
+    type: 'result',
+    payload,
+    metadata: {
+      traceId: sourceEnvelope.metadata.traceId,
+      spanId: spanId(),
+      parentSpanId: sourceEnvelope.metadata.spanId,
+      conversationId: sourceEnvelope.metadata.conversationId,
+      replyTo: sourceEnvelope.id,
+      tenantId,
+      sourceInstanceId: card.name,
+      timestamp: Date.now(),
+    },
+  };
+  await transport.publish(reply);
+  await mirrorToReplyStream(transport, sourceEnvelope, reply);
+}
+
+/**
+ * Resume a parked handraise(human) turn when its answer arrives.
+ *
+ * The reply's `metadata.replyTo` (set by HandraiseInbox.answer to the question
+ * envelope id, which the handraise tool set == pendingId) identifies the
+ * suspended turn. We rebuild the original AgentInput from the persisted
+ * envelope, inject the answer as the suspended tool's result via
+ * `resumeContext`, and re-run to completion — or re-suspend if the resumed turn
+ * asks another question.
+ */
+async function resumeHandraiseTurn(args: {
+  replyEnv: MessageEnvelope;
+  store: SuspendedTurnStore;
+  card: AgentCard;
+  contextLoader: ContextLoader;
+  transport: EventTransport;
+  createRuntime: AgentBootstrapOptions['createRuntime'];
+  toAgentInput: AgentBootstrapOptions['toAgentInput'];
+  buildResultPayload?: AgentBootstrapOptions['buildResultPayload'];
+  validateOutput: (payload: unknown) => void;
+  logger: AgentLogger;
+}): Promise<void> {
+  const { replyEnv, store, card, contextLoader, transport, createRuntime, toAgentInput, logger } = args;
+
+  const pendingId = replyEnv.metadata.replyTo;
+  if (!pendingId) return; // not a correlated reply
+
+  const state = await store.load(pendingId);
+  if (!state) return; // unknown / already resumed (claimed by another delivery)
+
+  // Claim the turn up-front so a duplicate delivery can't double-resume it.
+  await store.delete(pendingId);
+
+  try {
+    const replyPayload = (replyEnv.payload ?? {}) as { answer?: unknown; rationale?: string };
+    const answer = replyPayload.answer;
+    const answerText = typeof answer === 'string' ? answer : JSON.stringify(answer);
+    const toolResult: ToolResult = textResult(
+      replyPayload.rationale ? `${answerText}\n\n[rationale] ${replyPayload.rationale}` : answerText,
+    );
+
+    const input = await toAgentInput(state.envelope);
+    input.resumeContext = {
+      architectureHistory: state.architectureHistory,
+      resumedCallId: state.toolCallId,
+      toolResult,
+    };
+
+    const context = await contextLoader.load(state.tenantId, card.name);
+
+    // Re-persist if the resumed turn suspends AGAIN (a second handraise) — a new
+    // pendingId/state is written under the fresh suspend.
+    const onSuspend: RuntimeServices['onSuspend'] = async ({ pendingId: nextId, toolCallId, architectureHistory }) => {
+      await store.save({
+        pendingId: nextId,
+        toolCallId,
+        architectureHistory,
+        envelope: state.envelope,
+        resultTopic: state.resultTopic,
+        tenantId: state.tenantId,
+        createdAt: Date.now(),
+        status: 'awaiting',
+      });
+    };
+
+    const runtime = await createRuntime({ context, envelope: state.envelope, onSuspend });
+
+    const events: AgentEvent[] = [];
+    for await (const event of runtime.execute(input)) {
+      events.push(event);
+    }
+
+    const reSuspended = events.find(e => e.type === 'suspended') as
+      | Extract<AgentEvent, { type: 'suspended' }>
+      | undefined;
+    if (reSuspended) {
+      logger.info(`Agent ${card.name} re-suspended after resume`, {
+        prevPendingId: pendingId,
+        pendingId: reSuspended.pendingId,
+      });
+      return; // new state persisted by onSuspend; awaits the next answer
+    }
+
+    const payload = args.buildResultPayload
+      ? args.buildResultPayload(events)
+      : defaultResultPayload(events);
+    args.validateOutput(payload);
+
+    await publishAgentResult({
+      transport,
+      card,
+      sourceEnvelope: state.envelope,
+      resultTopic: state.resultTopic,
+      payload,
+      tenantId: state.tenantId,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`Agent ${card.name} failed resuming handraise`, { pendingId, message });
+    const errorTopic = `${state.resultTopic}.failed`;
+    await transport.publish({
+      id: messageId(),
+      topic: errorTopic,
+      type: 'result',
+      payload: { error: message },
+      metadata: {
+        traceId: state.envelope.metadata.traceId,
+        spanId: spanId(),
+        parentSpanId: state.envelope.metadata.spanId,
+        conversationId: state.envelope.metadata.conversationId,
+        replyTo: state.envelope.id,
+        tenantId: state.tenantId,
+        sourceInstanceId: card.name,
+        timestamp: Date.now(),
+      },
+    });
+  }
+}
+
 
 /**
  * If the incoming envelope has `_replyStream` in metadata

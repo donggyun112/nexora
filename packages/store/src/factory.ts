@@ -12,6 +12,7 @@ import type {
   AuditStore,
   ToolContextStore,
   TreeConversationStore,
+  SuspendedTurnStore,
   DescribableStore,
   StoreBackendInfo,
   AgentLogger,
@@ -24,6 +25,8 @@ export interface StoreProvider {
   context: ContextStore;
   audit: AuditStore;
   toolContext: ToolContextStore;
+  /** Suspended-turn store — parks handraise(human) turns until the answer arrives. */
+  suspendedTurn: SuspendedTurnStore;
   /** Session tree store (optional — only available with PG backend or store-json) */
   sessionTree?: TreeConversationStore;
 }

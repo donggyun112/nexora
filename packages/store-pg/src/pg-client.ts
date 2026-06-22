@@ -91,6 +91,13 @@ async function migrate(sql: Sql): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS nexora_suspended_turns (
+      pending_id TEXT PRIMARY KEY,
+      data JSONB NOT NULL
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS nexora_context (
       namespace TEXT NOT NULL,
       date TEXT NOT NULL,

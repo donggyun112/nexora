@@ -15,6 +15,7 @@ export type {
 } from './engine.js';
 
 export { InMemoryWorkflowStateStore } from './workflow-state-store.js';
+export { InMemorySuspendedTurnStore } from './suspended-turn-store.js';
 
 export { CronScheduler, intervalJob, oneShotJob } from './cron.js';
 export type { CronJob, CronSchedulerOptions } from './cron.js';

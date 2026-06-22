@@ -122,43 +122,33 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
-describe('handraise tool — topic recipient round-trip via HandraiseInbox', () => {
-  it('publishes a request, inbox answers, tool returns the answer', async () => {
+describe('handraise tool — human suspend + agent-to-agent round-trip', () => {
+  it('human recipient suspends and publishes the question to the inbox', async () => {
     const transport = new FakeTransport();
     const inbox = new HandraiseInbox({ transport, channels: ['default'] });
     inbox.start();
 
     const tool = createHandraiseTool({ transport });
 
-    // Drive the inbox from a parallel task: as soon as a handraise arrives,
-    // answer it with a canned response.
-    const answered = (async () => {
-      // Poll until the inbox has something pending
-      for (let i = 0; i < 50; i++) {
-        if (inbox.size() > 0) break;
-        await new Promise(r => setTimeout(r, 5));
-      }
-      const [entry] = inbox.list();
-      expect(entry).toBeDefined();
-      await inbox.answer(entry.id, { chosen: 'business-account' }, { rationale: 'more recent activity' });
-    })();
-
     const result = await tool.execute('call-1', {
       question: 'Which account to charge?',
-      recipient: { type: 'human' }, // default channel → handraise.human.default
-      timeoutMs: 2000,
+      recipient: { type: 'human' },
     }, makeCtx());
 
-    await answered;
+    // Human handraise suspends the turn — no blocking, no timeout.
+    expect(result.type).toBe('suspend');
+    const pendingId = result.type === 'suspend' ? result.pendingId : '';
+    expect(pendingId).toBeTruthy();
 
-    expect(result.type).toBe('text');
-    if (result.type === 'text') {
-      expect(result.text).toContain('business-account');
-      expect(result.text).toContain('more recent activity');
-    }
+    // The question landed in the inbox; envelope id == pendingId so the reply's
+    // metadata.replyTo correlates straight back to this parked turn.
+    const [entry] = inbox.list();
+    expect(entry).toBeDefined();
+    expect(entry.envelope.id).toBe(pendingId);
+    const payload = entry.envelope.payload as { question?: string; pendingId?: string };
+    expect(payload.question).toContain('account');
+    expect(payload.pendingId).toBe(pendingId);
 
-    // The inbox consumed the request and should be empty
-    expect(inbox.size()).toBe(0);
     inbox.stop();
   });
 
@@ -191,14 +181,14 @@ describe('handraise tool — topic recipient round-trip via HandraiseInbox', () 
     if (result.type === 'text') expect(result.text).toContain('"ok":true');
   });
 
-  it('returns a non-error text result on timeout (so the agent can react)', async () => {
+  it('agent-to-agent (topic) recipient returns a non-error text result on timeout', async () => {
     const transport = new FakeTransport();
     const tool = createHandraiseTool({ transport });
 
     const result = await tool.execute('call-timeout', {
       question: 'nobody is home',
-      recipient: { type: 'human' },
-      timeoutMs: 30, // will time out
+      recipient: { type: 'topic', topic: 'nobody.listens' },
+      timeoutMs: 30, // will time out — no responder on this topic
     }, makeCtx());
 
     expect(result.type).toBe('text');
@@ -328,42 +318,27 @@ describe('handraise tool — policy pre-flight', () => {
     inbox.stop();
   });
 
-  it('falls through to the recipient when no rule matches', async () => {
+  it('falls through to the recipient when no rule matches (human → suspend)', async () => {
     const transport = new FakeTransport();
     const inbox = new HandraiseInbox({ transport });
     inbox.start();
-
     const policy = new HandraisePolicy([
       approveMatching(
-        'tmp-only',
+        'tmp-rule',
         (ctx) => ctx.question.includes('/tmp'),
         { approved: true },
       ),
     ]);
-
     const tool = createHandraiseTool({ transport, policy });
 
-    // Drive the inbox to answer in parallel
-    const answered = (async () => {
-      for (let i = 0; i < 50; i++) {
-        if (inbox.size() > 0) break;
-        await new Promise(r => setTimeout(r, 5));
-      }
-      const [entry] = inbox.list();
-      expect(entry).toBeDefined();
-      await inbox.answer(entry.id, 'human-reviewed');
-    })();
-
     const result = await tool.execute('call-ft', {
-      question: 'Delete /etc/passwd?', // does NOT match /tmp rule
+      question: 'Delete /etc/passwd?', // does NOT match the /tmp rule
       recipient: { type: 'human' },
-      timeoutMs: 2000,
     }, makeCtx());
 
-    await answered;
-
-    expect(result.type).toBe('text');
-    if (result.type === 'text') expect(result.text).toContain('human-reviewed');
+    // No rule matched → escalates to the human → suspends (no timeout, no answer inline).
+    expect(result.type).toBe('suspend');
+    expect(inbox.size()).toBe(1);
     inbox.stop();
   });
 

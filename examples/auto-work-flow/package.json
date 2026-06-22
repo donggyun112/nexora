@@ -15,6 +15,7 @@
     "@dongkseo/contracts": "workspace:*",
     "@dongkseo/core": "workspace:*",
     "@dongkseo/gateway": "workspace:*",
+    "@dongkseo/orchestrator": "workspace:*",
     "@dongkseo/registry": "workspace:*",
     "@dongkseo/tools": "workspace:*",
     "@dongkseo/transport": "workspace:*"

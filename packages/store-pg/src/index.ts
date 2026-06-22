@@ -18,6 +18,7 @@ export { ScheduleStorePg } from './schedule.js';
 export { ContextStorePg } from './context-store.js';
 export { ToolContextStorePg } from './tool-context.js';
 export { TranscriptStorePg } from './transcript.js';
+export { SuspendedTurnStorePg } from './suspended-turn.js';
 export { TreeConversationStorePg } from './session-tree.js';
 
 export { createRedisRateLimiter } from './redis-rate-limiter.js';
@@ -42,6 +43,7 @@ import { ScheduleStorePg } from './schedule.js';
 import { ContextStorePg } from './context-store.js';
 import { ToolContextStorePg } from './tool-context.js';
 import { TranscriptStorePg } from './transcript.js';
+import { SuspendedTurnStorePg } from './suspended-turn.js';
 
 export interface PgStoreProvider {
   conversation: ConversationStorePg;
@@ -51,6 +53,7 @@ export interface PgStoreProvider {
   context: ContextStorePg;
   toolContext: ToolContextStorePg;
   transcript: TranscriptStorePg;
+  suspendedTurn: SuspendedTurnStorePg;
 }
 
 /** Create all core stores from a single Postgres connection. */
@@ -63,5 +66,6 @@ export function createPgStoreProvider(sql: Sql): PgStoreProvider {
     context: new ContextStorePg(sql),
     toolContext: new ToolContextStorePg(sql),
     transcript: new TranscriptStorePg(sql),
+    suspendedTurn: new SuspendedTurnStorePg(sql),
   };
 }

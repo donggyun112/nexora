@@ -16,10 +16,11 @@ import { createReactArchitecture } from '@dongkseo/architectures';
 import {
   createReadTool, createGrepTool, createExecTool,
   createEditTool, createWriteTool, createDelegateTool,
-  createKnowledgeTool, createHandraiseTool,
+  createKnowledgeTool, createHandraiseTool, HandraiseInbox,
 } from '@dongkseo/tools';
 import { LocalTransport } from '@dongkseo/transport';
 import { InMemoryAgentRegistry } from '@dongkseo/registry';
+import { InMemorySuspendedTurnStore } from '@dongkseo/orchestrator';
 import { HttpAdapter } from '@dongkseo/adapters';
 import { GatewayRouter } from '@dongkseo/gateway';
 
@@ -144,18 +145,33 @@ const toolsFor: Record<string, ToolDefinition[]> = {
   pm: [...baseTools, createKnowledgeTool({ get: async () => null, set: async () => {}, list: async () => [], delete: async () => {} } as any), createHandraiseTool({ transport, registry })],
 };
 
+// Suspend/resume for handraise(human): park a turn until the human answers,
+// instead of blocking on a timeout. The HandraiseInbox renders pending
+// questions; an operator answers via `handraiseInbox.answer(entryId, {answer})`,
+// which publishes the reply that bootstrap resumes the parked turn from.
+const suspendedTurnStore = new InMemorySuspendedTurnStore();
+const handraiseInbox = new HandraiseInbox({
+  transport,
+  onPending: (entry) => {
+    console.log(`[handraise pending] id=${entry.id} q=${JSON.stringify(entry.envelope.payload)}`);
+  },
+});
+handraiseInbox.start();
+
 for (const card of [coder, reviewer, pm]) {
   await registry.register(card);
   await bootstrapAgent({
     card,
     contextLoader,
     transport,
-    createRuntime: () =>
+    suspendedTurnStore,
+    createRuntime: ({ onSuspend }) =>
       new AgentRunner({
         architecture: createReactArchitecture({
           systemPrompt: `You are ${card.name}. ${card.description}`,
         }),
         llm,
+        onSuspend,
         tools: new CoreToolExecutor({
           tools: toolsFor[card.name],
           context: {

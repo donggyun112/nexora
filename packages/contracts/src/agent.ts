@@ -56,7 +56,7 @@ export type AgentEvent =
   | { type: 'artifact'; artifact: OutboundArtifact }
   | { type: 'thinking'; content: string }
   | { type: 'progress'; message: string; agent?: string }
-  | { type: 'done'; content: string; toolCalls: ToolCallSummary[]; usage?: LLMUsage }
+  | { type: 'done'; content: string; toolCalls: ToolCallSummary[]; usage?: LLMUsage; model?: string }
   | { type: 'error'; message: string }
   | { type: 'suspended'; pendingId: string; toolCallId: string };
 

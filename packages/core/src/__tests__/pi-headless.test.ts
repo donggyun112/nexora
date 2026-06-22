@@ -99,6 +99,20 @@ describe('agentEventToPiWire', () => {
     const turnEnd = out.find((e) => e.type === 'turn_end') as { message: { usage: { totalTokens: number } } };
     expect(turnEnd.message.usage.totalTokens).toBe(0);
   });
+
+  it('carries done.model onto turn_end.message (lets Multica price the run)', () => {
+    const out = mapStream([
+      { type: 'done', content: 'hi', toolCalls: [], model: 'gpt-5.5' },
+    ]);
+    const turnEnd = out.find((e) => e.type === 'turn_end') as { message: { model?: string } };
+    expect(turnEnd.message.model).toBe('gpt-5.5');
+  });
+
+  it('omits model from turn_end.message when done carries none', () => {
+    const out = mapStream([{ type: 'done', content: 'x', toolCalls: [] }]);
+    const turnEnd = out.find((e) => e.type === 'turn_end') as { message: Record<string, unknown> };
+    expect('model' in turnEnd.message).toBe(false);
+  });
 });
 
 describe('drivePi', () => {

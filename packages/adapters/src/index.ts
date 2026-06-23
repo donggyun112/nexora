@@ -73,3 +73,4 @@ export type {
 } from './slack.js';
 
 export { resolveCodexApiKey } from './codex-auth.js';
+export { resolveAnthropicApiKey } from './anthropic-auth.js';

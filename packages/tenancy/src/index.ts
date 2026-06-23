@@ -16,6 +16,15 @@
  *
  * See docs/architecture/adrs/adr-001-tenancy-opt-in.md.
  */
+
+// ── 섹션 맵 (어떤 export가 어느 파일에서 오는지) ──────────────────────────────
+//   영역          출처                   대표 export
+//   Default       @dongkseo/contracts    DEFAULT_TENANT, BudgetScope
+//   Tenant config @dongkseo/context      TenantConfigStore, DEFAULT_LIMITS, TenantConfig
+//   Resolver      ./resolver             headerTenantResolver, TenantResolver
+//   Budget scope  ./budget               tenantBudgetScope, tenantAgentBudgetScope
+// ────────────────────────────────────────────────────────────────────────────
+
 export { DEFAULT_TENANT } from '@dongkseo/contracts';
 export type { BudgetScope } from '@dongkseo/contracts';
 

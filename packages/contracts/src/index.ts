@@ -1,4 +1,25 @@
 // ─── Contracts: 모든 패키지가 공유하는 타입 ───────────────────────────────
+//
+// 섹션 맵 (에이전트용: 무엇이 어느 파일에 있는지 — 정확한 타입은 해당 파일을 signatures 모드로)
+//   ID            ./id          createId, messageId, traceId, spanId, conversationId, jobId
+//   Agent 선언    ./define      defineAgent, AgentDefinition       ./agent-card  AgentCard
+//   Capability    ./capability  defineCapability, CapabilityRef
+//   Agent 런타임  ./agent       Agent 인터페이스                   ./runtime     RuntimeState
+//   Worker        ./worker, ./worker-protocol   WorkerRegistry, WorkerErrorResult
+//   Syscall       ./syscall     RetrySyscall, DlqSyscall
+//   Oracle        ./oracle      NexoraOracle, OracleDecision, OracleContext
+//   Messaging     ./message     메시지 타입        ./topic       topic, matchTopic, Topics
+//   Tools         ./tool        textResult, errorResult, suspendResult
+//   Workflow      ./workflow, ./workflow-state, ./suspended-turn
+//   Store         ./store, ./store-backend, ./context   StoreBackend
+//   Transcript    ./transcript  TranscriptStore, ContentBlock     ./session-tree  SessionTree
+//   Tenancy/Ctx   ./ctx         createTenantAgentScope, DEFAULT_TENANT
+//   Adapters      ./adapter, ./transport (assertDurable), ./channel-adapter
+//   Registry      ./registry    AgentRegistry
+//   Budget/Goal   ./budget      ./goal  formatGoalChain
+//   Extension     ./extension
+//
+// 새 모듈을 export하면 여기 한 줄 추가. API 설명은 각 파일 TSDoc이 정본 — 위는 위치 안내만.
 
 export {
   createId,

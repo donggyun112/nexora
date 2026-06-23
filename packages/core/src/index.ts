@@ -1,8 +1,22 @@
-/**
- * @dongkseo/core — 에이전트 런타임 코어.
- *
- * LLM Provider, Tool Executor, Memory + Compaction, Middleware, AgentRunner.
- */
+// ─── Core: contracts 계약을 실행하는 에이전트 런타임 엔진 ──────────────────
+//
+// 섹션 맵 (에이전트용: 무엇이 어느 파일에 있는지 — 정확한 타입은 해당 파일을 signatures 모드로)
+//   LLM Provider   ./llm (./llm/pi-ai, ./llm/fallback)   PiAiProvider, FallbackLLMProvider
+//   Tool Executor  ./tool-executor   CoreToolExecutor, formatToolResult, coerceToolArgs
+//   Memory         ./memory          CoreMemoryProvider
+//   Compaction     ./compaction      TwoStageCompactor, estimateTokens, shouldCompact
+//   Middleware     ./middleware      MiddlewarePipeline, loggingMiddleware, toolFilterMiddleware
+//   Runner         ./runner          AgentRunner          ./bootstrap   bootstrapAgent, RunningAgent
+//   Guards         ./idle-timeout createIdleTimeout · ./schema createSchemaValidator
+//                  ./budget InMemoryBudgetTracker · ./budget-middleware createBudgetMiddleware
+//                  ./lint lintAgentCard, enforceLint
+//   Extension      ./extension-loader   loadExtensions, InMemoryExtensionRegistry
+//   Self-improve   ./self-improve   createImprovementLoop, LearningEngine, SafeSkillWriter
+//   Primitives     ./keyed-serializer · ./rotating-key-provider · ./thinking-provider
+//                  ./url-safety   safeFetchImageBytes, assertHostResolvesPublic
+//   pi (headless)  ./pi-headless drivePi, agentEventToPiWire · ./pi-models listAvailableModels
+//
+// 새 모듈을 export하면 여기 한 줄 추가. API 설명은 각 파일 TSDoc이 정본 — 위는 위치 안내만.
 
 export * from './llm/index.js';
 export {

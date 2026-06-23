@@ -1,12 +1,14 @@
-/**
- * @dongkseo/transport — agent-to-agent event communication.
- *
- * - LocalTransport: in-memory EventTransport (at-most-once, dev/test)
- * - RedisTransport: Redis PUBSUB EventTransport (at-most-once, distributed)
- * - RedisStreamsTransport: Redis Streams DurableTransport (at-least-once,
- *   consumer groups, durable — production workflow path)
- * - TracingTransport: AsyncLocalStorage-based trace propagation wrapper
- */
+// ─── Transport: contracts/transport(EventTransport) 구현체 모음 ───────────
+//
+// 섹션 맵 (에이전트용: 무엇이 어느 파일에 있는지 — 정확한 타입은 해당 파일을 signatures 모드로)
+//   Local         ./local         LocalTransport (in-memory, at-most-once), createEnvelope
+//   Redis PubSub  ./redis         RedisTransport (PUBSUB, at-most-once, distributed)
+//   Redis Streams ./redis-streams RedisStreamsTransport (DurableTransport, at-least-once, consumer group)
+//   Durable(mem)  ./durable-local InMemoryDurableTransport (durable 경로 테스트용)
+//   DLQ           ./dlq           DLQTransport (중복 제거 + dead-letter 데코레이터)
+//   Tracing       ./tracing       TracingTransport, withTrace, currentTrace (AsyncLocalStorage trace 전파)
+//
+// 인터페이스/타입(EventTransport, DurableTransport, assertDurable)은 @dongkseo/contracts ./transport.
 
 export { LocalTransport, createEnvelope } from './local.js';
 export type { LocalTransportOptions } from './local.js';

@@ -20,6 +20,13 @@
  * await graph.remember("User prefers TypeScript", ["programming", "preference"]);
  * const results = await graph.recall("What language does the user like?");
  * ```
+ *
+ * 섹션 맵 (파일별 export):
+ *   MemoryGraph    ./memory-graph         MemoryGraph, MemoryGraphOptions
+ *   Vector         ./vector               cosineSim, batchCosineSim
+ *   Embedding      ./embedding-providers  createOpenAIEmbedding, createOllamaEmbedding (+Options)
+ *   Types          ./types                Memory, MemoryKey, MemoryKeyLink, GraphData,
+ *                                         RecallResult, EmbeddingProvider, KeyType
  */
 
 export { MemoryGraph } from './memory-graph.js';

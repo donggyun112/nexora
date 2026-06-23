@@ -11,6 +11,13 @@
  *
  * Only depends on @opentelemetry/api (the thin facade). The actual SDK/exporter
  * setup (OTLP, Jaeger, console) is done by the application, not by this package.
+ *
+ * ── 섹션 맵 ────────────────────────────────────────────────────────────────
+ *   transport-middleware.ts  OTelTransport, OTelTransportOptions
+ *                            — EventTransport 래퍼. publish/subscribe/request span
+ *   agent-middleware.ts      createOTelAgentMiddleware, OTelAgentMiddlewareOptions
+ *                            — MiddlewarePipeline 플러그인. 실행 + 도구 호출 span
+ * ──────────────────────────────────────────────────────────────────────────
  */
 
 export { OTelTransport } from './transport-middleware.js';

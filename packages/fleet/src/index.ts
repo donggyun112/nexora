@@ -1,3 +1,15 @@
+// ─── Fleet: 워커 등록·선택·코디네이션 + HTTP 호출 ─────────────────────────
+// 섹션 맵 (에이전트용: 무엇이 어느 줄에 있는지 — 정확한 타입은 signatures 모드로)
+//   Imports/Re-export   L1–27    contracts 계약을 가져오고 일부를 그대로 재노출
+//   Worker registry     L29–84   InMemoryWorkerRegistry (register/heartbeat/unregister/get/list/findByCapability)
+//   Worker selection    L86–113  selectWorker, WorkerSelectionOptions, rankHealth(내부 health 정렬)
+//   Coordinator 타입    L115–178 FleetCoordinatorOptions, FleetDispatch{Input,Result}, FleetBroadcast{Input,Delivery,Quorum,Result}
+//   FleetCoordinator    L180–406 dispatch(단일 위임) / broadcast(다중 전파) + 내부 judge·invokeBroadcastWorker·validateSubmitIfNeeded
+//   코디네이션 내부      L408–467 assertAllowed, selectBroadcastWorkers, contextForWorker, firstAcceptedDelivery, isAcceptedDelivery
+//   Errors              L469–481 NoWorkerForCapabilityError, OracleRejectedSyscallError
+//   HTTP invoker        L483–554 HttpWorkerInvoker(+Options/Fetch 타입) — WorkerInvoker의 HTTP 구현
+//   Invoker 내부        L555–626 getGlobalFetch, getGlobalTimers, parseWorkerInvocationResult, isEscalationTarget, isRecord
+// 새 심볼을 export하면 여기 한 줄 추가. API 설명은 각 심볼 TSDoc이 정본 — 위는 위치 안내만.
 import type {
   BroadcastMode,
   CapabilityRef,

@@ -1,12 +1,21 @@
-/**
- * @dongkseo/store-pg — PostgreSQL + Redis production store implementations.
- *
- * All 6 core stores + session tree + distributed rate limiter + budget tracker.
- * Drop-in replacements for @dongkseo/store-json with production characteristics:
- * - Durable (survives restart)
- * - Multi-process safe (concurrent access)
- * - Distributed (Redis-backed shared state)
- */
+// ─── Store-PG: @dongkseo/store 백엔드 계약의 PostgreSQL + Redis 구현 ─────────
+//
+// store-json 대비 프로덕션 특성: 영속(재시작 생존) · 멀티프로세스 안전 · Redis 분산 공유.
+//
+// 섹션 맵 (에이전트용: 무엇이 어느 파일에 있는지 — 정확한 타입은 해당 파일을 signatures 모드로)
+//   PG 커넥션      ./pg-client        createPgClient, PgOptions, Sql   (풀 생성·스키마 init·종료)
+//   Conversation   ./conversation     ConversationStorePg              (선형 대화 기록)
+//   Session tree   ./session-tree     TreeConversationStorePg          (분기 가능한 세션 트리)
+//   Transcript     ./transcript       TranscriptStorePg                (ContentBlock 단위 기록)
+//   Knowledge      ./knowledge        KnowledgeStorePg
+//   Schedule       ./schedule         ScheduleStorePg
+//   Context        ./context-store    ContextStorePg
+//   Audit          ./audit            AuditStorePg
+//   Tool context   ./tool-context     ToolContextStorePg
+//   Suspended turn ./suspended-turn   SuspendedTurnStorePg             (HITL 일시중단 턴)
+//   Provider       ./index            PgStoreProvider, createPgStoreProvider (커넥션 1개로 전부 생성)
+//   Rate limiter   ./redis-rate-limiter  createRedisRateLimiter, DistributedRateLimiter (Redis 분산)
+//   Budget         ./redis-budget        createRedisBudgetTracker, DistributedBudgetTracker (Redis 분산)
 
 export { createPgClient } from './pg-client.js';
 export type { PgOptions, Sql } from './pg-client.js';

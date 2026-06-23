@@ -33,6 +33,7 @@ import { ContextStoreJson } from './context-store.js';
 import { AuditStoreJson } from './audit.js';
 import { ToolContextStoreJson } from './tool-context.js';
 import { SuspendedTurnStoreJson } from './suspended-turn.js';
+import { TreeConversationStoreJson } from './session-tree.js';
 
 export interface JsonStoreProvider {
   conversation: ConversationStoreJson;
@@ -42,6 +43,7 @@ export interface JsonStoreProvider {
   audit: AuditStoreJson;
   toolContext: ToolContextStoreJson;
   suspendedTurn: SuspendedTurnStoreJson;
+  sessionTree: TreeConversationStoreJson;
 }
 
 /** 모든 JSON store를 한 번에 생성 */
@@ -54,5 +56,6 @@ export function createJsonStoreProvider(dataDir: string): JsonStoreProvider {
     audit: new AuditStoreJson(dataDir),
     toolContext: new ToolContextStoreJson(dataDir),
     suspendedTurn: new SuspendedTurnStoreJson(dataDir),
+    sessionTree: new TreeConversationStoreJson(dataDir),
   };
 }

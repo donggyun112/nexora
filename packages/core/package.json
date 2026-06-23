@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.79.4",
-    "@dongkseo/contracts": "workspace:*",
+    "@dongkseo/contracts": "workspace:^",
     "ajv": "^8.18.0"
   },
   "devDependencies": {

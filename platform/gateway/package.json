@@ -16,16 +16,16 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@dongkseo/adapters": "workspace:*",
-    "@dongkseo/contracts": "workspace:*",
-    "@dongkseo/registry": "workspace:*"
+    "@dongkseo/adapters": "workspace:^",
+    "@dongkseo/contracts": "workspace:^",
+    "@dongkseo/registry": "workspace:^"
   },
   "devDependencies": {
-    "@dongkseo/architectures": "workspace:*",
-    "@dongkseo/context": "workspace:*",
-    "@dongkseo/core": "workspace:*",
-    "@dongkseo/tools": "workspace:*",
-    "@dongkseo/transport": "workspace:*",
+    "@dongkseo/architectures": "workspace:^",
+    "@dongkseo/context": "workspace:^",
+    "@dongkseo/core": "workspace:^",
+    "@dongkseo/tools": "workspace:^",
+    "@dongkseo/transport": "workspace:^",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   },

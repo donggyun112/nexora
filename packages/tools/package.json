@@ -16,9 +16,9 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@dongkseo/contracts": "workspace:*",
-    "@dongkseo/skills": "workspace:*",
-    "@dongkseo/store": "workspace:*"
+    "@dongkseo/contracts": "workspace:^",
+    "@dongkseo/skills": "workspace:^",
+    "@dongkseo/store": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

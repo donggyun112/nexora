@@ -16,7 +16,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@dongkseo/contracts": "workspace:*",
+    "@dongkseo/contracts": "workspace:^",
     "@opentelemetry/api": "^1.9.0"
   },
   "devDependencies": {

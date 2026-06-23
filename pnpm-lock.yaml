@@ -200,10 +200,10 @@ importers:
   packages/adapters:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
       '@dongkseo/tools':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tools
       '@earendil-works/pi-ai':
         specifier: ^0.79.4
@@ -219,7 +219,7 @@ importers:
   packages/architectures:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -232,7 +232,7 @@ importers:
   packages/context:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -257,10 +257,10 @@ importers:
   packages/conversation:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
       '@dongkseo/tools':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tools
     devDependencies:
       '@types/node':
@@ -273,7 +273,7 @@ importers:
   packages/core:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
       '@earendil-works/pi-ai':
         specifier: ^0.79.4
@@ -292,13 +292,13 @@ importers:
   packages/fleet:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
 
   packages/orchestrator:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -311,7 +311,7 @@ importers:
   packages/otel:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
       '@opentelemetry/api':
         specifier: ^1.9.0
@@ -327,7 +327,7 @@ importers:
   packages/skills:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -340,7 +340,7 @@ importers:
   packages/store:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       typescript:
@@ -350,7 +350,7 @@ importers:
   packages/store-json:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -363,7 +363,7 @@ importers:
   packages/store-memory:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -376,7 +376,7 @@ importers:
   packages/store-pg:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
       postgres:
         specifier: ^3.4.0
@@ -392,10 +392,10 @@ importers:
   packages/tenancy:
     dependencies:
       '@dongkseo/context':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../context
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -408,13 +408,13 @@ importers:
   packages/tools:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
       '@dongkseo/skills':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../skills
       '@dongkseo/store':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../store
     devDependencies:
       '@types/node':
@@ -427,7 +427,7 @@ importers:
   packages/transport:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../contracts
     devDependencies:
       '@types/node':
@@ -449,29 +449,29 @@ importers:
   platform/gateway:
     dependencies:
       '@dongkseo/adapters':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/adapters
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/contracts
       '@dongkseo/registry':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../registry
     devDependencies:
       '@dongkseo/architectures':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/architectures
       '@dongkseo/context':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/context
       '@dongkseo/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/core
       '@dongkseo/tools':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/tools
       '@dongkseo/transport':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/transport
       '@types/node':
         specifier: ^22.0.0
@@ -483,7 +483,7 @@ importers:
   platform/registry:
     dependencies:
       '@dongkseo/contracts':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../../packages/contracts
     devDependencies:
       '@types/node':

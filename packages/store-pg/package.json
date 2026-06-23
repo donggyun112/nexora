@@ -17,7 +17,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@dongkseo/contracts": "workspace:*",
+    "@dongkseo/contracts": "workspace:^",
     "postgres": "^3.4.0"
   },
   "devDependencies": {

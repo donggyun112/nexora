@@ -16,8 +16,8 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@dongkseo/contracts": "workspace:*",
-    "@dongkseo/tools": "workspace:*",
+    "@dongkseo/contracts": "workspace:^",
+    "@dongkseo/tools": "workspace:^",
     "@earendil-works/pi-ai": "^0.79.4"
   },
   "devDependencies": {

@@ -11,6 +11,7 @@ import type {
   ContextStore,
   AuditStore,
   ToolContextStore,
+  ArtifactChannel,
   TreeConversationStore,
   SuspendedTurnStore,
   DescribableStore,
@@ -25,6 +26,8 @@ export interface StoreProvider {
   context: ContextStore;
   audit: AuditStore;
   toolContext: ToolContextStore;
+  /** 에이전트 간 산출물 공유 채널 (conversationId 키). */
+  artifact: ArtifactChannel;
   /** Suspended-turn store — parks handraise(human) turns until the answer arrives. */
   suspendedTurn: SuspendedTurnStore;
   /** Session tree store (optional — only available with PG backend or store-json) */
@@ -46,6 +49,7 @@ export function warnDevStores(
     ['context', provider.context],
     ['audit', provider.audit],
     ['toolContext', provider.toolContext],
+    ['artifact', provider.artifact],
   ];
   for (const [name, store] of stores) {
     if (isDescribable(store)) {

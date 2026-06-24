@@ -30,6 +30,9 @@ export type {
   ToolContextRecord,
   SuspendedTurnStore,
   SuspendedTurnState,
+  ArtifactChannel,
+  ArtifactRef,
+  ArtifactPublishOptions,
 } from '@dongkseo/contracts';
 
 export { createStoreProvider, warnDevStores } from './factory.js';

@@ -55,6 +55,7 @@ import { ContextStorePg } from './context-store.js';
 import { ToolContextStorePg } from './tool-context.js';
 import { TranscriptStorePg } from './transcript.js';
 import { SuspendedTurnStorePg } from './suspended-turn.js';
+import { ArtifactChannelPg } from './artifact.js';
 
 export interface PgStoreProvider {
   conversation: ConversationStorePg;
@@ -65,6 +66,7 @@ export interface PgStoreProvider {
   toolContext: ToolContextStorePg;
   transcript: TranscriptStorePg;
   suspendedTurn: SuspendedTurnStorePg;
+  artifact: ArtifactChannelPg;
 }
 
 /** Create all core stores from a single Postgres connection. */
@@ -78,5 +80,6 @@ export function createPgStoreProvider(sql: Sql): PgStoreProvider {
     toolContext: new ToolContextStorePg(sql),
     transcript: new TranscriptStorePg(sql),
     suspendedTurn: new SuspendedTurnStorePg(sql),
+    artifact: new ArtifactChannelPg(sql),
   };
 }

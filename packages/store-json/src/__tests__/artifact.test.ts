@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ArtifactChannelJson } from '../artifact.js';
+import { createJsonStoreProvider } from '../index.js';
 
 let tmpDir: string;
 
@@ -84,5 +85,14 @@ describe('ArtifactChannelJson', () => {
     expect(ch.describeBackend()).toEqual({
       name: 'json-file', type: 'dev', durable: true, multiProcess: false,
     });
+  });
+});
+
+describe('createJsonStoreProvider artifact wiring', () => {
+  it('exposes a working artifact channel', async () => {
+    const provider = createJsonStoreProvider(tmpDir);
+    const ref = await provider.artifact.publish('conv-1', 'x.bin', Buffer.from('hello'));
+    const got = await provider.artifact.fetch(ref.ref);
+    expect(got!.toString()).toBe('hello');
   });
 });

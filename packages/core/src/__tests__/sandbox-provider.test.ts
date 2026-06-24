@@ -56,7 +56,9 @@ describe('createSandboxProvider', () => {
         filesystem: { denyRead: string[] };
       };
       expect(cfg.filesystem.denyRead).toContain('/custom/secret');
-      expect(cfg.filesystem.denyRead).toContain(SANDBOX_SECRET_DENYLIST[0]);
+      for (const secret of SANDBOX_SECRET_DENYLIST) {
+        expect(cfg.filesystem.denyRead).toContain(secret);
+      }
     } finally {
       await fsp.rm(base, { recursive: true, force: true });
     }

@@ -17,7 +17,7 @@ import { AsrtSandboxClient } from './asrt-sandbox-client.js';
  * 항상 읽기 차단되는 비밀 경로(홈 기준 절대경로). 소비자 denyRead는 여기에 병합되며
  * 이 목록을 무력화할 수 없다. "개방" 철학상 그 외 읽기는 넓게 허용한다.
  */
-export const SANDBOX_SECRET_DENYLIST: string[] = [
+export const SANDBOX_SECRET_DENYLIST: readonly string[] = [
   path.join(os.homedir(), '.ssh'),
   path.join(os.homedir(), '.aws'),
   path.join(os.homedir(), '.config', 'gcloud'),

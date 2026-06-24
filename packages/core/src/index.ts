@@ -73,6 +73,9 @@ export type {
 export { createIdleTimeout, IdleTimeoutError } from './idle-timeout.js';
 export type { IdleTimeout } from './idle-timeout.js';
 
+export { LocalExecutionHarness } from './execution-harness.js';
+export type { LocalExecutionHarnessOptions } from './execution-harness.js';
+
 export { AgentRunner } from './runner.js';
 export type { AgentRunnerOptions } from './runner.js';
 

@@ -76,10 +76,12 @@ export interface ToolCallSummary {
 }
 
 /**
- * AgentRuntime — 모든 에이전트가 구현해야 하는 실행 인터페이스.
- * core 패키지에서 구현.
+ * ExecutionHarness — runner가 위임하는 실제 실행 드라이버.
+ *
+ * Local ReAct, remote worker, deterministic pipeline처럼 실행 방식이 달라도
+ * 이 계약으로 event stream, abort, steering을 맞춘다.
  */
-export interface AgentRuntime {
+export interface ExecutionHarness {
   /** 에이전트 실행 (이벤트 스트림 반환) */
   execute(input: AgentInput): AsyncGenerator<AgentEvent>;
 
@@ -93,6 +95,12 @@ export interface AgentRuntime {
    */
   steer?(text: string): boolean;
 }
+
+/**
+ * AgentRuntime — 모든 에이전트가 구현해야 하는 실행 인터페이스.
+ * core 패키지에서 구현.
+ */
+export interface AgentRuntime extends ExecutionHarness {}
 
 /**
  * AgentArchitecture — 사고 패턴 정의.

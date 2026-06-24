@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { LocalExecutionHarness } from '../execution-harness.js';
 import { AgentRunner } from '../runner.js';
 import { CoreToolExecutor } from '../tool-executor.js';
 import { loggingMiddleware } from '../middleware.js';
@@ -7,6 +8,7 @@ import type {
   RuntimeServices,
   AgentInput,
   AgentEvent,
+  ExecutionHarness,
   ToolDefinition,
   ToolContext,
   ToolResult,
@@ -75,6 +77,29 @@ const simpleReact: AgentArchitecture = {
 };
 
 describe('AgentRunner', () => {
+  it('can execute through the isolated local harness contract', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'local harness done' },
+    ]);
+    const tools = new CoreToolExecutor({ tools: [], context: mockContext });
+    const harness: ExecutionHarness = new LocalExecutionHarness({
+      architecture: simpleReact,
+      llm,
+      tools,
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of harness.execute({ prompt: 'hi' })) {
+      events.push(ev);
+    }
+
+    const done = events.find(e => e.type === 'done');
+    expect(done).toBeDefined();
+    if (done?.type === 'done') {
+      expect(done.content).toBe('local harness done');
+    }
+  });
+
   it('runs simple react loop with tool call', async () => {
     const llm = new MockLLMProvider([
       { text: '', toolCalls: [{ id: 'tc-1', name: 'echo', arguments: { msg: 'hi' } }] },

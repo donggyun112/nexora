@@ -6,10 +6,10 @@
  */
 
 import { execFile, type ExecFileException } from 'node:child_process';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
+import { canonicalizePath, PathOutsideWorkspaceError, resolveDirForListing } from './safe-path.js';
 import { buildToolEnv } from './tool-env.js';
 import { resolveToolPath } from './workspace-access.js';
 
@@ -57,14 +57,20 @@ export function createGrepTool(): ToolDefinition {
         return errorResult(msg);
       }
       const root = path.resolve(resolved.root);
-      const searchPath = path.isAbsolute(resolved.path)
-        ? path.resolve(resolved.path)
-        : path.resolve(root, resolved.path);
-      const pathCheck = await validateSearchPath(searchPath, root);
-      if (pathCheck.status === 'error') return errorResult(pathCheck.message);
-      if (pathCheck.status === 'missing') return textResult('No matches found.');
-      const grepPath = pathCheck.path;
-      const stripRoots = uniqueRoots([pathCheck.realRoot, root]);
+      const searchPath = toWorkspaceRelativeInput(resolved.path, root);
+      let grepPath: string;
+      let realRoot: string;
+      try {
+        const canonicalSearchPath = await canonicalizePath(searchPath, root);
+        realRoot = await resolveDirForListing('.', root);
+        grepPath = await resolveDirForListing(canonicalSearchPath, root);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return textResult('No matches found.');
+        if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
+        const msg = err instanceof Error ? err.message : String(err);
+        return errorResult(`Cannot grep: ${msg}`);
+      }
+      const stripRoots = uniqueRoots([realRoot, root]);
 
       const include = params.include?.trim();
       if (include && (include.includes('/') || include.includes('..'))) {
@@ -153,35 +159,17 @@ export function createGrepTool(): ToolDefinition {
   };
 }
 
-type PathCheck =
-  | { status: 'ok'; path: string; realRoot: string }
-  | { status: 'missing' }
-  | { status: 'error'; message: string };
-
-async function validateSearchPath(searchPath: string, root: string): Promise<PathCheck> {
-  if (!isWithin(searchPath, root)) {
-    return { status: 'error', message: 'path is outside workspace root' };
-  }
-  try {
-    const realRoot = await fsp.realpath(root);
-    const realSearchPath = await fsp.realpath(searchPath);
-    if (!isWithin(realSearchPath, realRoot)) {
-      return { status: 'error', message: 'path is outside workspace root' };
-    }
-    return { status: 'ok', path: realSearchPath, realRoot };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing' };
-    const message = err instanceof Error ? err.message : String(err);
-    return { status: 'error', message: `Cannot grep: ${message}` };
-  }
-}
-
-function isWithin(target: string, root: string): boolean {
-  return target === root || target.startsWith(root + path.sep);
-}
-
 function uniqueRoots(roots: string[]): string[] {
   return [...new Set(roots)].sort((a, b) => b.length - a.length);
+}
+
+function toWorkspaceRelativeInput(rawPath: string, root: string): string {
+  if (!path.isAbsolute(rawPath)) return rawPath;
+  const absolutePath = path.resolve(rawPath);
+  if (absolutePath === root) return '.';
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (absolutePath.startsWith(rootPrefix)) return path.relative(root, absolutePath) || '.';
+  return rawPath;
 }
 
 function stripWorkspacePrefix(line: string, roots: string[]): string {

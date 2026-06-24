@@ -18,6 +18,14 @@
   "dependencies": {
     "@dongkseo/contracts": "workspace:^"
   },
+  "peerDependencies": {
+    "ioredis": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"

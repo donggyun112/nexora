@@ -43,6 +43,17 @@ export class InMemoryAgentRegistry implements AgentRegistry {
   }
 }
 
+// --- distributed (Redis) implementation ---
+export { RedisAgentRegistry } from './redis.js';
+export type { RedisAgentRegistryOptions, RegistryRedisLike } from './redis.js';
+export { createAgentRegistry } from './factory.js';
+export type {
+  RegistryKind,
+  CreateRegistryOptions,
+  RegistryDescription,
+  CreatedRegistry,
+} from './factory.js';
+
 // --- lifted from in7 (generic capability routing mechanism) ---
 export { checkInputContract, formatContractError } from './capability-input-contract.js';
 export type {

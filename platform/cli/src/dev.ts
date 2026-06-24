@@ -8,8 +8,8 @@
  * nexora dev — start all agents + gateway + transport in one command.
  *
  * Scans the workspace for agent configs (agents/* /agent.config.ts),
- * boots a LocalTransport, a CoreContextLoader, an HttpAdapter + GatewayRouter,
- * and bootstraps every discovered agent on the shared transport.
+ * boots a transport + an AgentRegistry, a CoreContextLoader, an HttpAdapter +
+ * GatewayRouter, and bootstraps every discovered agent on the shared transport.
  *
  * This is the "golden path" dev experience:
  *   nexora create agent my-agent
@@ -38,6 +38,7 @@ export async function runDev(options: DevOptions): Promise<void> {
   // Dynamic imports so the CLI package stays dependency-free at build time.
   // At runtime, these resolve from the workspace's node_modules.
   const { createTransport } = await import('@dongkseo/transport' as string) as typeof import('@dongkseo/transport');
+  const { createAgentRegistry } = await import('@dongkseo/registry' as string) as typeof import('@dongkseo/registry');
   const { CoreContextLoader } = await import('@dongkseo/context' as string) as typeof import('@dongkseo/context');
   const {
     AgentRunner,
@@ -74,7 +75,14 @@ export async function runDev(options: DevOptions): Promise<void> {
   // 배포는 NEXORA_TRANSPORT=redis-streams + REDIS_URL + ioredis 설치.
   const createdTransport = await createTransport(transportConfigFromEnv());
   const transport = createdTransport.transport;
-  console.log(`  transport: ${createdTransport.desc.kind} (${createdTransport.desc.deliveryGuarantee})`);
+  console.log(`  transport: ${createdTransport.description.kind} (${createdTransport.description.deliveryGuarantee})`);
+
+  // 엔트리포인트 책임: registry도 env로 매핑한다. 기본 memory(단일 프로세스).
+  // 멀티 서버 배포는 NEXORA_REGISTRY=redis + REDIS_URL + ioredis 설치 — 그래야
+  // 다른 프로세스가 등록한 에이전트 카드를 capability로 조회할 수 있다.
+  const createdRegistry = await createAgentRegistry(registryConfigFromEnv());
+  const registry = createdRegistry.registry;
+  console.log(`  registry:  ${createdRegistry.description.kind}${createdRegistry.description.distributed ? ' (distributed)' : ''}`);
   const contextDir = path.resolve(options.contextDir);
   if (!fs.existsSync(contextDir)) {
     fs.mkdirSync(contextDir, { recursive: true });
@@ -112,6 +120,7 @@ export async function runDev(options: DevOptions): Promise<void> {
         card,
         contextLoader,
         transport,
+        registry,
         createRuntime: ({ context }) => {
           const allowed = context.tools.length > 0 ? new Set(context.tools) : null;
           const tools = allowed ? allTools.filter(t => allowed.has(t.name)) : allTools;
@@ -165,6 +174,7 @@ export async function runDev(options: DevOptions): Promise<void> {
 
   if (runningAgents.length === 0) {
     console.error('No agents loaded. Exiting.');
+    await createdRegistry.close();
     await createdTransport.close();
     process.exit(1);
   }
@@ -210,6 +220,7 @@ ${runningAgents.map(a => `║    · ${a.name.padEnd(46)}║`).join('\n')}
     for (const agent of runningAgents) {
       await agent.shutdown();
     }
+    await createdRegistry.close();
     await createdTransport.close();
     console.log('Done.');
     process.exit(0);
@@ -242,5 +253,35 @@ function transportConfigFromEnv(): import('@dongkseo/transport').CreateTransport
     redisUrl: process.env.REDIS_URL,
     prefix: process.env.NEXORA_STREAM_PREFIX,
     consumerName: process.env.NEXORA_CONSUMER_NAME,
+  };
+}
+
+/**
+ * env → registry config 매핑. transport와 동일 원칙: env는 엔트리포인트가 읽고
+ * 프레임워크(@dongkseo/registry)는 명시적 config만 받는다. 기본은 memory —
+ * 멀티 서버 배포에서만 redis로 올린다(transport와 독립적으로 설정).
+ *
+ *   NEXORA_REGISTRY         'memory'(기본) | 'redis'
+ *   REDIS_URL               redis://host:port (redis 에 필수, transport와 공유)
+ *   NEXORA_REGISTRY_PREFIX  레지스트리 키 prefix
+ *   NEXORA_REGISTRY_TTL_MS  카드 TTL(ms) — 이 시간 안에 heartbeat가 없으면 evict
+ */
+function registryConfigFromEnv(): import('@dongkseo/registry').CreateRegistryOptions {
+  const raw = process.env.NEXORA_REGISTRY?.trim().toLowerCase();
+  let kind: import('@dongkseo/registry').RegistryKind = 'memory';
+  if (raw === 'redis') kind = 'redis';
+  else if (raw && raw !== 'memory') {
+    throw new Error(`Unknown NEXORA_REGISTRY="${raw}". Use 'memory' or 'redis'.`);
+  }
+  const ttlRaw = process.env.NEXORA_REGISTRY_TTL_MS;
+  const ttlMs = ttlRaw ? Number(ttlRaw) : undefined;
+  if (ttlMs !== undefined && !Number.isFinite(ttlMs)) {
+    throw new Error(`Invalid NEXORA_REGISTRY_TTL_MS="${ttlRaw}". Must be a number (ms).`);
+  }
+  return {
+    kind,
+    redisUrl: process.env.REDIS_URL,
+    prefix: process.env.NEXORA_REGISTRY_PREFIX,
+    ttlMs,
   };
 }

@@ -45,20 +45,28 @@ describe('AsrtSandboxClient concurrency characterization', () => {
     }
   });
 
-  it('global init path replaces config on second acquire when sandboxing already enabled', async () => {
+  it('first acquire initializes; second acquire re-enters via updateConfig (global config swap)', async () => {
     const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
     const rootA = await fsp.mkdtemp(path.join(os.tmpdir(), 'asrt-gA-'));
     const rootB = await fsp.mkdtemp(path.join(os.tmpdir(), 'asrt-gB-'));
     try {
       const client = new AsrtSandboxClient({ perRun: false, cleanup: 'keep' });
-      sandboxManager.isSandboxingEnabled.mockReturnValue(true); // 이미 활성 가정
+
+      // First acquire: sandboxing not yet enabled → initialize() path, no updateConfig.
+      sandboxManager.isSandboxingEnabled.mockReturnValue(false);
       await client.create({ baseWorkdir: rootA });
+      expect(sandboxManager.initialize).toHaveBeenCalledTimes(1);
+      expect(sandboxManager.updateConfig).not.toHaveBeenCalled();
+
+      // initialize() enables sandboxing; model that state for the second acquire.
+      sandboxManager.isSandboxingEnabled.mockReturnValue(true);
       await client.create({ baseWorkdir: rootB });
 
-      // 두 번째 acquire는 updateConfig로 전역 config를 B 기준으로 교체한다(전역 상태 공유 입증).
-      expect(sandboxManager.updateConfig).toHaveBeenCalledTimes(2);
-      const lastCfg = sandboxManager.updateConfig.mock.calls.at(-1)?.[0];
-      expect(lastCfg.filesystem.allowWrite).toContain(await fsp.realpath(rootB));
+      // Re-entry swaps the global config to B in place (no re-initialize) → global state shared.
+      expect(sandboxManager.initialize).toHaveBeenCalledTimes(1);
+      expect(sandboxManager.updateConfig).toHaveBeenCalledTimes(1);
+      const swapped = sandboxManager.updateConfig.mock.calls.at(-1)?.[0];
+      expect(swapped.filesystem.allowWrite).toContain(await fsp.realpath(rootB));
     } finally {
       sandboxManager.isSandboxingEnabled.mockReturnValue(false);
       await fsp.rm(rootA, { recursive: true, force: true });

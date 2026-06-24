@@ -39,6 +39,10 @@ export interface AsrtSandboxClientOptions {
   baseDir?: string;
   mode?: WorkspaceAccessMode;
   cleanup?: 'keep' | 'delete';
+  /** When false, reuse a fixed root across runs instead of mkdtemp per run. Default true. */
+  perRun?: boolean;
+  /** Fixed workspace root used when perRun is false (falls back to acquire baseWorkdir). */
+  root?: string;
   allowedDomains?: string[];
   deniedDomains?: string[];
   allowRead?: string[];
@@ -62,6 +66,8 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
   private readonly baseDir: string;
   private readonly mode: WorkspaceAccessMode;
   private readonly cleanupMode: 'keep' | 'delete';
+  private readonly perRun: boolean;
+  private readonly root?: string;
   private readonly allowedDomains: string[];
   private readonly deniedDomains: string[];
   private readonly allowRead: string[];
@@ -81,7 +87,9 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
   constructor(options: AsrtSandboxClientOptions = {}) {
     this.baseDir = options.baseDir ?? path.join(os.tmpdir(), 'nexora-asrt-workspaces');
     this.mode = options.mode ?? 'workspace-write';
-    this.cleanupMode = options.cleanup ?? 'delete';
+    this.perRun = options.perRun ?? true;
+    this.root = options.root;
+    this.cleanupMode = options.cleanup ?? (this.perRun ? 'delete' : 'keep');
     this.allowedDomains = options.allowedDomains ?? [];
     this.deniedDomains = options.deniedDomains ?? [];
     this.allowRead = options.allowRead ?? [];
@@ -105,8 +113,9 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
 
   async create(options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
     const id = options.runId ?? crypto.randomUUID();
-    await fsp.mkdir(this.baseDir, { recursive: true, mode: 0o700 });
-    const root = await fsp.mkdtemp(path.join(this.baseDir, `${safeWorkspaceSegment(id)}-`));
+    const root = this.perRun
+      ? await this.createRunRoot(id)
+      : await this.resolveExistingRoot(options.baseWorkdir);
     const config = this.buildConfig(root);
     await ensureSandboxManagerInitialized(config);
 
@@ -127,6 +136,21 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
 
   async delete(session: WorkspaceSession): Promise<void> {
     await session.cleanup();
+  }
+
+  private async createRunRoot(id: string): Promise<string> {
+    await fsp.mkdir(this.baseDir, { recursive: true, mode: 0o700 });
+    return fsp.mkdtemp(path.join(this.baseDir, `${safeWorkspaceSegment(id)}-`));
+  }
+
+  private async resolveExistingRoot(baseWorkdir?: string): Promise<string> {
+    const selected = this.root ?? baseWorkdir;
+    if (!selected) {
+      throw new Error('AsrtSandboxClient requires root, baseWorkdir, or perRun: true');
+    }
+    const resolved = path.resolve(selected);
+    await fsp.mkdir(resolved, { recursive: true, mode: 0o700 });
+    return fsp.realpath(resolved);
   }
 
   private buildConfig(root: string): SandboxRuntimeConfig {

@@ -145,4 +145,56 @@ describe('AsrtSandboxClient', () => {
       await fsp.rm(baseDir, { recursive: true, force: true });
     }
   });
+
+  it('reuses a fixed root across runs when perRun is false', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const fixedRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-fixed-'));
+    try {
+      const client = new AsrtSandboxClient({ perRun: false, root: fixedRoot, cleanup: 'keep' });
+
+      const a = await client.create({ runId: 'turn-1' });
+      const b = await client.create({ runId: 'turn-2' });
+
+      expect(a.root).toBe(await fsp.realpath(fixedRoot));
+      expect(b.root).toBe(a.root);
+    } finally {
+      await fsp.rm(fixedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('persists files across sessions on a fixed root with cleanup keep', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const fixedRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-persist-'));
+    try {
+      const client = new AsrtSandboxClient({ perRun: false, root: fixedRoot, cleanup: 'keep' });
+
+      const first = await client.create({ runId: 'turn-1' });
+      await fsp.writeFile(path.join(first.root, 'draft.txt'), 'hello');
+      await first.cleanup();
+
+      const second = await client.create({ runId: 'turn-2' });
+      const body = await fsp.readFile(path.join(second.root, 'draft.txt'), 'utf8');
+      expect(body).toBe('hello');
+    } finally {
+      await fsp.rm(fixedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('uses baseWorkdir as the fixed root when no explicit root is set', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-base-'));
+    try {
+      const client = new AsrtSandboxClient({ perRun: false, cleanup: 'keep' });
+      const session = await client.create({ baseWorkdir: base });
+      expect(session.root).toBe(await fsp.realpath(base));
+    } finally {
+      await fsp.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('throws when perRun is false and neither root nor baseWorkdir is provided', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const client = new AsrtSandboxClient({ perRun: false });
+    await expect(client.create({})).rejects.toThrow(/root, baseWorkdir, or perRun/);
+  });
 });

@@ -79,6 +79,8 @@ export { HostWorkspaceProvider } from './workspace-provider.js';
 export type { HostWorkspaceProviderOptions } from './workspace-provider.js';
 export { AsrtSandboxClient } from './asrt-sandbox-client.js';
 export type { AsrtSandboxClientOptions } from './asrt-sandbox-client.js';
+export { createSandboxProvider, SANDBOX_SECRET_DENYLIST } from './sandbox-provider.js';
+export type { SandboxProviderOptions } from './sandbox-provider.js';
 export { LocalTarSnapshotBackend, NoopSnapshotBackend } from './workspace-snapshot.js';
 
 export { AgentRunner } from './runner.js';

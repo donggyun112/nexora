@@ -26,7 +26,7 @@
  *     - Consumer groups give load balancing within a group + fan-out across
  *       groups, so N instances of the same agent don't all process the
  *       same message
- *     - Implementations: (planned) RedisStreamsTransport, KafkaTransport
+ *     - Implementations: RedisStreamsTransport (shipped); KafkaTransport (planned)
  *     - Use for: workflow engine steps, billing events, critical notifications
  *
  * If you pass an EventTransport where a DurableTransport is required, your
@@ -145,9 +145,9 @@ export type Transport = EventTransport;
  *     within a group and fan-out across groups
  *   - Expose ordering guarantees as part of describe()
  *
- * NOT YET IMPLEMENTED: RedisStreamsTransport is the planned default. Until
- * it lands, passing an EventTransport to the workflow engine is allowed with
- * a runtime warning; the next breaking release will tighten this to a
+ * RedisStreamsTransport (packages/transport) is the reference DurableTransport
+ * implementation. The workflow engine still accepts an EventTransport with a
+ * runtime warning; a future breaking release will tighten this to a
  * compile-time error.
  */
 export interface DurableTransport extends EventTransport {

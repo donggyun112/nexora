@@ -37,7 +37,7 @@ export interface DevOptions {
 export async function runDev(options: DevOptions): Promise<void> {
   // Dynamic imports so the CLI package stays dependency-free at build time.
   // At runtime, these resolve from the workspace's node_modules.
-  const { LocalTransport } = await import('@dongkseo/transport' as string) as typeof import('@dongkseo/transport');
+  const { createTransport } = await import('@dongkseo/transport' as string) as typeof import('@dongkseo/transport');
   const { CoreContextLoader } = await import('@dongkseo/context' as string) as typeof import('@dongkseo/context');
   const {
     AgentRunner,
@@ -69,7 +69,12 @@ export async function runDev(options: DevOptions): Promise<void> {
   }
 
   // ── Infrastructure ─────────────────────────────────────────────────────
-  const transport = new LocalTransport();
+  // 엔트리포인트 책임: env를 읽어 transport config로 매핑한다(프레임워크는
+  // env를 모른다 — 명시적 config만 받는다). 기본은 local. 멀티 프로세스/서버
+  // 배포는 NEXORA_TRANSPORT=redis-streams + REDIS_URL + ioredis 설치.
+  const createdTransport = await createTransport(transportConfigFromEnv());
+  const transport = createdTransport.transport;
+  console.log(`  transport: ${createdTransport.desc.kind} (${createdTransport.desc.deliveryGuarantee})`);
   const contextDir = path.resolve(options.contextDir);
   if (!fs.existsSync(contextDir)) {
     fs.mkdirSync(contextDir, { recursive: true });
@@ -160,7 +165,7 @@ export async function runDev(options: DevOptions): Promise<void> {
 
   if (runningAgents.length === 0) {
     console.error('No agents loaded. Exiting.');
-    await transport.close();
+    await createdTransport.close();
     process.exit(1);
   }
 
@@ -205,11 +210,37 @@ ${runningAgents.map(a => `║    · ${a.name.padEnd(46)}║`).join('\n')}
     for (const agent of runningAgents) {
       await agent.shutdown();
     }
-    await transport.close();
+    await createdTransport.close();
     console.log('Done.');
     process.exit(0);
   };
 
   process.on('SIGINT', () => void shutdown());
   process.on('SIGTERM', () => void shutdown());
+}
+
+/**
+ * env → transport config 매핑. env를 읽는 책임은 엔트리포인트에 있다
+ * (프레임워크 @dongkseo/transport는 process.env를 모른다). 알 수 없는
+ * NEXORA_TRANSPORT 값은 여기서 거른다.
+ *
+ *   NEXORA_TRANSPORT      'local'(기본) | 'redis-streams' | 'redis-pubsub'
+ *   REDIS_URL             redis://host:port (redis-* 에 필수)
+ *   NEXORA_STREAM_PREFIX  스트림/채널 키 prefix
+ *   NEXORA_CONSUMER_NAME  redis-streams 컨슈머 식별자
+ */
+function transportConfigFromEnv(): import('@dongkseo/transport').CreateTransportOptions {
+  const raw = process.env.NEXORA_TRANSPORT?.trim().toLowerCase();
+  let kind: import('@dongkseo/transport').TransportKind = 'local';
+  if (raw === 'redis-streams' || raw === 'redis' || raw === 'streams') kind = 'redis-streams';
+  else if (raw === 'redis-pubsub' || raw === 'pubsub') kind = 'redis-pubsub';
+  else if (raw && raw !== 'local') {
+    throw new Error(`Unknown NEXORA_TRANSPORT="${raw}". Use 'local', 'redis-streams', or 'redis-pubsub'.`);
+  }
+  return {
+    kind,
+    redisUrl: process.env.REDIS_URL,
+    prefix: process.env.NEXORA_STREAM_PREFIX,
+    consumerName: process.env.NEXORA_CONSUMER_NAME,
+  };
 }

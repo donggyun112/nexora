@@ -11,7 +11,7 @@
  * Use for: development, unit tests, single-process demos.
  * Do NOT use for: workflow engine steps, billable work, anything that
  * must be processed exactly once. For those, use a DurableTransport
- * implementation (RedisStreamsTransport, planned).
+ * implementation (RedisStreamsTransport).
  *
  * Topic pattern matching: `*` matches a single segment, `#` matches the rest.
  */

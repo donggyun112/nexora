@@ -4,8 +4,8 @@
  * DELIVERY CONTRACT: at-most-once, non-durable. Redis pub/sub is fire-and-forget:
  * if no subscriber is listening when the message is published, the message is
  * dropped. This transport implements `EventTransport` ONLY. For production
- * workflow steps or critical paths, use `RedisStreamsTransport` (planned,
- * at-least-once with consumer groups) or another `DurableTransport` impl.
+ * workflow steps or critical paths, use `RedisStreamsTransport` (at-least-once
+ * with consumer groups) or another `DurableTransport` impl.
  *
  * Do NOT assume this is "production-grade just because it's Redis". Pub/sub
  * in Redis has the same delivery guarantees as LocalTransport — it's just

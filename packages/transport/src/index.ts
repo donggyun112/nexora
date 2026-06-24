@@ -7,6 +7,7 @@
 //   Durable(mem)  ./durable-local InMemoryDurableTransport (durable 경로 테스트용)
 //   DLQ           ./dlq           DLQTransport (중복 제거 + dead-letter 데코레이터)
 //   Tracing       ./tracing       TracingTransport, withTrace, currentTrace (AsyncLocalStorage trace 전파)
+//   Factory       ./factory       createTransport (env 기반 Local/Redis 선택, 프로덕션 wiring)
 //
 // 인터페이스/타입(EventTransport, DurableTransport, assertDurable)은 @dongkseo/contracts ./transport.
 
@@ -30,3 +31,6 @@ export type { DLQTransportOptions } from './dlq.js';
 
 export { InMemoryDurableTransport } from './durable-local.js';
 export type { InMemoryDurableTransportOptions } from './durable-local.js';
+
+export { createTransport } from './factory.js';
+export type { TransportKind, CreateTransportOptions, CreatedTransport } from './factory.js';

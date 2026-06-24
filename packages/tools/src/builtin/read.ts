@@ -7,6 +7,7 @@
  */
 
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
 import {
@@ -19,6 +20,14 @@ import { resolveToolPath } from './workspace-access.js';
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 8 * 1024 * 1024; // 8MB hard cap
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
 
 export function createReadTool(): ToolDefinition {
   return {
@@ -81,6 +90,12 @@ export function createReadTool(): ToolDefinition {
         }
         if (stat.size > MAX_BYTES) {
           return errorResult(`Cannot read: ${rawPath} exceeds ${MAX_BYTES} byte cap (${stat.size} bytes)`);
+        }
+
+        const imageMime = IMAGE_MIME_BY_EXT[path.extname(toolPath).toLowerCase()];
+        if (imageMime) {
+          const bytes = await handle.readFile();
+          return { type: 'image', data: bytes.toString('base64'), mimeType: imageMime };
         }
 
         const content = (await handle.readFile('utf-8'));

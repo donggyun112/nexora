@@ -194,4 +194,24 @@ async function migrate(sql: Sql): Promise<void> {
       PRIMARY KEY (conversation_id, ref)
     )
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS nexora_artifacts (
+      ref         TEXT PRIMARY KEY,
+      scope       TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      media_type  TEXT NOT NULL,
+      size        BIGINT NOT NULL,
+      created_at  BIGINT NOT NULL,
+      expires_at  BIGINT,
+      meta        JSONB,
+      data        BYTEA NOT NULL
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_nexora_artifacts_scope ON nexora_artifacts(scope)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_nexora_artifacts_expires ON nexora_artifacts(expires_at)
+  `;
 }

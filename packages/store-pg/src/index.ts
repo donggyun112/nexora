@@ -13,6 +13,7 @@
 //   Audit          ./audit            AuditStorePg
 //   Tool context   ./tool-context     ToolContextStorePg
 //   Suspended turn ./suspended-turn   SuspendedTurnStorePg             (HITL 일시중단 턴)
+//   Artifact       ./artifact         ArtifactChannelPg                (에이전트 간 산출물 공유)
 //   Provider       ./index            PgStoreProvider, createPgStoreProvider (커넥션 1개로 전부 생성)
 //   Rate limiter   ./redis-rate-limiter  createRedisRateLimiter, DistributedRateLimiter (Redis 분산)
 //   Budget         ./redis-budget        createRedisBudgetTracker, DistributedBudgetTracker (Redis 분산)
@@ -29,6 +30,7 @@ export { ToolContextStorePg } from './tool-context.js';
 export { TranscriptStorePg } from './transcript.js';
 export { SuspendedTurnStorePg } from './suspended-turn.js';
 export { TreeConversationStorePg } from './session-tree.js';
+export { ArtifactChannelPg } from './artifact.js';
 
 export { createRedisRateLimiter } from './redis-rate-limiter.js';
 export type {

@@ -28,6 +28,7 @@ import type {
   WorkspaceSession,
   WorkspaceSnapshot,
 } from '@dongkseo/contracts';
+import { safeUtf8Prefix } from '@dongkseo/contracts';
 import {
   resolveWorkspacePath,
   safeWorkspaceSegment,
@@ -327,19 +328,34 @@ function spawnAndCollect(options: SpawnAndCollectOptions): Promise<SandboxComman
 
     let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     const append = (target: 'stdout' | 'stderr', chunk: Buffer): void => {
+      const alreadyTruncated = target === 'stdout' ? stdoutTruncated : stderrTruncated;
+      if (alreadyTruncated) return;
       const current = target === 'stdout' ? stdout : stderr;
       if (current.length >= options.maxOutputBytes) {
-        const safe = safeUtf8Prefix(current, current.length);
-        if (target === 'stdout') stdout = safe;
-        else stderr = safe;
+        const safe = safeUtf8Prefix(current, options.maxOutputBytes);
+        if (target === 'stdout') {
+          stdout = safe;
+          stdoutTruncated = true;
+        } else {
+          stderr = safe;
+          stderrTruncated = true;
+        }
         return;
       }
       const remaining = options.maxOutputBytes - current.length;
       let next: Buffer<ArrayBufferLike> = Buffer.concat([current, chunk.subarray(0, remaining)]);
-      if (chunk.length > remaining) next = safeUtf8Prefix(next, next.length);
-      if (target === 'stdout') stdout = next;
-      else stderr = next;
+      const truncated = chunk.length > remaining;
+      if (truncated) next = safeUtf8Prefix(next, next.length);
+      if (target === 'stdout') {
+        stdout = next;
+        stdoutTruncated = truncated;
+      } else {
+        stderr = next;
+        stderrTruncated = truncated;
+      }
     };
 
     child.stdout?.on('data', (chunk: Buffer) => append('stdout', chunk));
@@ -369,42 +385,6 @@ function spawnAndCollect(options: SpawnAndCollectOptions): Promise<SandboxComman
       });
     });
   });
-}
-
-function safeUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
-  const end = utf8SafeSliceEnd(buffer, maxBytes);
-  return end === buffer.length ? buffer : buffer.subarray(0, end);
-}
-
-function utf8SafeSliceEnd(buffer: Buffer, maxBytes: number): number {
-  const end = Math.min(buffer.length, maxBytes);
-  if (end === 0) return 0;
-
-  let continuationBytes = 0;
-  while (
-    continuationBytes < 4 &&
-    end - 1 - continuationBytes >= 0 &&
-    (buffer[end - 1 - continuationBytes] & 0b1100_0000) === 0b1000_0000
-  ) {
-    continuationBytes += 1;
-  }
-
-  const leadIndex = end - 1 - continuationBytes;
-  if (leadIndex < 0) return end - continuationBytes;
-
-  const lead = buffer[leadIndex];
-  const expectedBytes =
-    (lead & 0b1000_0000) === 0 ? 1 :
-      (lead & 0b1110_0000) === 0b1100_0000 ? 2 :
-        (lead & 0b1111_0000) === 0b1110_0000 ? 3 :
-          (lead & 0b1111_1000) === 0b1111_0000 ? 4 :
-            0;
-
-  if (expectedBytes === 0) return leadIndex;
-  if (expectedBytes === 1) {
-    return continuationBytes === 0 ? end : leadIndex;
-  }
-  return continuationBytes + 1 >= expectedBytes ? end : leadIndex;
 }
 
 const ASRT_ENV_KEYS = new Set([

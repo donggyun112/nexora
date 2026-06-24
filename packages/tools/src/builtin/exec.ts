@@ -30,7 +30,7 @@
 
 import { spawn } from 'node:child_process';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
-import { textResult, errorResult } from '@dongkseo/contracts';
+import { textResult, errorResult, safeUtf8Prefix, safeUtf8Suffix } from '@dongkseo/contracts';
 import { buildToolEnv } from './tool-env.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -266,7 +266,7 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
             exitCode: result.exitCode,
             signal: result.signal,
             timedOut: result.timedOut,
-            aborted: result.aborted,
+            aborted: result.aborted || (parentAbortRequested && !result.timedOut && result.exitCode === null),
             timeoutMs,
           });
           ctx.logger.info(`exec ${formatted.status}`, {
@@ -300,23 +300,14 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
           signal: controller.signal,
         });
 
-        let collected = Buffer.alloc(0);
+        let collected: Buffer<ArrayBufferLike> = Buffer.alloc(0);
         let truncated = false;
         let timedOut = false;
 
         const onData = (chunk: Buffer): void => {
           if (truncated) return;
-          if (collected.length >= MAX_OUTPUT_BYTES) {
-            const safeEnd = utf8SafeSliceEnd(collected, collected.length);
-            if (safeEnd < collected.length) collected = collected.subarray(0, safeEnd);
-            truncated = true;
-            return;
-          }
           if (collected.length + chunk.length > MAX_OUTPUT_BYTES) {
-            const remaining = MAX_OUTPUT_BYTES - collected.length;
-            collected = Buffer.concat([collected, chunk.subarray(0, remaining)]);
-            const safeEnd = utf8SafeSliceEnd(collected, collected.length);
-            if (safeEnd < collected.length) collected = collected.subarray(0, safeEnd);
+            collected = safeUtf8Prefix(Buffer.concat([collected, chunk]), MAX_OUTPUT_BYTES);
             truncated = true;
           } else {
             collected = Buffer.concat([collected, chunk]);
@@ -359,7 +350,7 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
 
         child.on('close', (code, signal) => {
           cleanup();
-          const abortedByParent = parentAbortRequested && !timedOut && code === null;
+          const abortedByParent = parentAbortRequested && !timedOut;
 
           const formatted = formatExecResult({
             label,
@@ -404,8 +395,9 @@ interface ExecFormatInput {
 }
 
 function formatExecResult(input: ExecFormatInput): { text: string; status: string; bytes: number } {
-  const rawOutput = input.output ?? [input.stdout, input.stderr].filter(Boolean).join('');
-  const capped = capOutput(rawOutput);
+  const capped = input.output !== undefined
+    ? capOutput(input.output)
+    : capOutputParts(input.stdout, input.stderr);
   let text = capped.text || '(no output)';
   const truncated = capped.truncated || input.outputTruncated;
   if (truncated) text += `\n\n[Output truncated at ${MAX_OUTPUT_BYTES} bytes]`;
@@ -437,41 +429,40 @@ function capOutput(output: string | Buffer): { text: string; bytes: number; trun
     return { text: Buffer.isBuffer(output) ? output.toString('utf-8') : output, bytes, truncated: false };
   }
   const buffer = Buffer.isBuffer(output) ? output : Buffer.from(output, 'utf-8');
-  const end = utf8SafeSliceEnd(buffer, MAX_OUTPUT_BYTES);
+  const capped = safeUtf8Prefix(buffer, MAX_OUTPUT_BYTES);
   return {
-    text: buffer.toString('utf-8', 0, end),
+    text: capped.toString('utf-8'),
     bytes: MAX_OUTPUT_BYTES,
     truncated: true,
   };
 }
 
-function utf8SafeSliceEnd(buffer: Buffer, maxBytes: number): number {
-  const end = Math.min(buffer.length, maxBytes);
-  if (end === 0) return 0;
+function capOutputParts(
+  stdout?: string,
+  stderr?: string,
+): { text: string; bytes: number; truncated: boolean } {
+  if (!stderr) return capOutput(stdout ?? '');
+  if (!stdout) return capOutput(stderr);
 
-  let continuationBytes = 0;
-  while (
-    continuationBytes < 4 &&
-    end - 1 - continuationBytes >= 0 &&
-    (buffer[end - 1 - continuationBytes] & 0b1100_0000) === 0b1000_0000
-  ) {
-    continuationBytes += 1;
+  const stdoutBuffer = Buffer.from(stdout, 'utf-8');
+  const stderrBuffer = Buffer.from(stderr, 'utf-8');
+  const totalBytes = stdoutBuffer.length + stderrBuffer.length;
+  if (totalBytes <= MAX_OUTPUT_BYTES) {
+    return { text: stdout + stderr, bytes: totalBytes, truncated: false };
   }
 
-  const leadIndex = end - 1 - continuationBytes;
-  if (leadIndex < 0) return end - continuationBytes;
-
-  const lead = buffer[leadIndex];
-  const expectedBytes =
-    (lead & 0b1000_0000) === 0 ? 1 :
-      (lead & 0b1110_0000) === 0b1100_0000 ? 2 :
-        (lead & 0b1111_0000) === 0b1110_0000 ? 3 :
-          (lead & 0b1111_1000) === 0b1111_0000 ? 4 :
-            0;
-
-  if (expectedBytes === 0) return leadIndex;
-  if (expectedBytes === 1) {
-    return continuationBytes === 0 ? end : leadIndex;
-  }
-  return continuationBytes + 1 >= expectedBytes ? end : leadIndex;
+  const stderrBudget = Math.min(stderrBuffer.length, 64 * 1024, Math.floor(MAX_OUTPUT_BYTES / 2));
+  const stdoutBudget = Math.max(0, MAX_OUTPUT_BYTES - stderrBudget);
+  const cappedStdout = safeUtf8Prefix(stdoutBuffer, stdoutBudget);
+  const cappedStderr = safeUtf8Suffix(stderrBuffer, stderrBudget);
+  const text = [
+    cappedStdout.toString('utf-8'),
+    '[stderr]',
+    cappedStderr.toString('utf-8'),
+  ].filter(Boolean).join('\n\n');
+  return {
+    text,
+    bytes: cappedStdout.length + cappedStderr.length,
+    truncated: true,
+  };
 }

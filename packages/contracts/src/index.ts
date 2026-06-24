@@ -158,6 +158,7 @@ export type {
   WorkspaceProvider,
   SandboxClient,
 } from './workspace.js';
+export { safeUtf8Prefix, safeUtf8Suffix, utf8SafeSliceEnd } from './utf8.js';
 
 export type {
   AgentInput,

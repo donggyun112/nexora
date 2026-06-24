@@ -99,14 +99,20 @@ export function createGrepTool(): ToolDefinition {
         };
       } else {
         let timedOut = false;
+        let parentAbortRequested = false;
+        let localSettled = false;
         const controller = new AbortController();
         const timer = setTimeout(() => {
           timedOut = true;
           controller.abort();
         }, GREP_TIMEOUT_MS);
         timer.unref?.();
-        const onParentAbort = (): void => controller.abort();
-        if (ctx.signal?.aborted) controller.abort();
+        const onParentAbort = (): void => {
+          if (localSettled) return;
+          parentAbortRequested = true;
+          controller.abort();
+        };
+        if (ctx.signal?.aborted) onParentAbort();
         else ctx.signal?.addEventListener('abort', onParentAbort, { once: true });
 
         const local = await new Promise<{ stdout: string; error?: ExecFileException }>((resolve) => {
@@ -114,11 +120,14 @@ export function createGrepTool(): ToolDefinition {
             env,
             maxBuffer: GREP_MAX_BUFFER,
             signal: controller.signal,
-          }, (err, out) => resolve({ stdout: out, error: err ?? undefined }));
+          }, (err, out) => {
+            localSettled = true;
+            resolve({ stdout: out, error: err ?? undefined });
+          });
         });
         clearTimeout(timer);
         ctx.signal?.removeEventListener('abort', onParentAbort);
-        grepResult = normalizeLocalGrepResult(local.stdout, local.error, timedOut, ctx.signal?.aborted);
+        grepResult = normalizeLocalGrepResult(local.stdout, local.error, timedOut, parentAbortRequested);
       }
 
       const classified = classifyGrepResult(grepResult);

@@ -181,6 +181,29 @@ describe('Exec sandbox regressions', () => {
     }
   });
 
+  it('preserves sandbox stderr when stdout fills the output cap', async () => {
+    const workspace = makeWorkspace({
+      run: async () => ({
+        exitCode: 1,
+        signal: null,
+        stdout: 'x'.repeat(300_000),
+        stderr: 'fatal: build failed\n',
+      }),
+    });
+    const result = await createExecTool({ allowList: ['npm'] }).execute(
+      'call-8',
+      { argv: ['npm', 'run', 'build'] },
+      { ...makeCtx(), workspace },
+    );
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('[stderr]');
+      expect(result.text).toContain('fatal: build failed');
+      expect(result.text).toContain('Output truncated at 262144 bytes');
+    }
+  });
+
   it('caps sandbox exec output without splitting UTF-8 characters', async () => {
     const workspace = makeWorkspace({
       run: async () => ({
@@ -191,7 +214,7 @@ describe('Exec sandbox regressions', () => {
       }),
     });
     const result = await createExecTool({ allowList: ['echo'] }).execute(
-      'call-8',
+      'call-9',
       { argv: ['echo', 'large'] },
       { ...makeCtx(), workspace },
     );
@@ -215,7 +238,7 @@ describe('Exec sandbox regressions', () => {
       }),
     });
     const result = await createExecTool({ allowList: ['echo'] }).execute(
-      'call-9',
+      'call-10',
       { argv: ['echo', 'large'] },
       { ...makeCtx(), workspace },
     );
@@ -231,7 +254,7 @@ describe('Exec sandbox regressions', () => {
   it('caps local streamed exec output without splitting UTF-8 characters', async () => {
     const script = "process.stdout.write('a'.repeat(262_143) + '한' + 'x')";
     const result = await createExecTool({ allowShell: true }).execute(
-      'call-10',
+      'call-11',
       { command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}` },
       makeCtx(),
     );
@@ -241,6 +264,29 @@ describe('Exec sandbox regressions', () => {
       expect(result.text).toContain('Output truncated at 262144 bytes');
       expect(result.text).not.toContain('\uFFFD');
       expect(result.text).not.toContain('한');
+    }
+  });
+
+  it('does not mark completed local exec output aborted based on a later signal state', async () => {
+    let abortedReads = 0;
+    const signal = {
+      get aborted() {
+        abortedReads += 1;
+        return abortedReads > 1;
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as AbortSignal;
+    const result = await createExecTool({ allowList: ['echo'] }).execute(
+      'call-12',
+      { argv: ['echo', 'done'] },
+      { ...makeCtx(), signal },
+    );
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('done');
+      expect(result.text).not.toContain('Aborted by caller');
     }
   });
 
@@ -258,7 +304,7 @@ describe('Exec sandbox regressions', () => {
       },
     });
     const result = await createExecTool({ allowList: ['echo'] }).execute(
-      'call-11',
+      'call-13',
       { argv: ['echo', 'done'] },
       { ...makeCtx(), signal: parent.signal, workspace },
     );
@@ -270,6 +316,32 @@ describe('Exec sandbox regressions', () => {
     }
   });
 
+  it('marks sandbox exec aborted when the parent aborts and the runner omits aborted', async () => {
+    const parent = new AbortController();
+    const workspace = makeWorkspace({
+      run: async () => {
+        parent.abort();
+        return {
+          exitCode: null,
+          signal: 'SIGTERM',
+          stdout: 'partial',
+          stderr: '',
+        };
+      },
+    });
+    const result = await createExecTool({ allowList: ['echo'] }).execute(
+      'call-14',
+      { argv: ['echo', 'partial'] },
+      { ...makeCtx(), signal: parent.signal, workspace },
+    );
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('Aborted by caller');
+      expect(result.text).not.toContain('Killed by signal: SIGTERM');
+    }
+  });
+
   it('reports sandbox exec runner failures as tool errors', async () => {
     const workspace = makeWorkspace({
       run: async () => {
@@ -277,7 +349,7 @@ describe('Exec sandbox regressions', () => {
       },
     });
     const result = await createExecTool({ allowList: ['missing-bin'] }).execute(
-      'call-12',
+      'call-15',
       { argv: ['missing-bin'] },
       { ...makeCtx(), workspace },
     );
@@ -387,6 +459,31 @@ describe('Workspace policy regressions', () => {
     if (result.type === 'text') expect(result.text).toBe('No matches found.');
   });
 
+  it('grep does not mark completed local results aborted based on a later signal state', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'a.ts'), 'TODO\n', 'utf-8');
+    let abortedReads = 0;
+    const signal = {
+      get aborted() {
+        abortedReads += 1;
+        return abortedReads > 1;
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as AbortSignal;
+
+    const result = await createGrepTool().execute(
+      'grep-5',
+      { pattern: 'TODO' },
+      { ...makeCtx(), signal },
+    );
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('a.ts:1:TODO');
+      expect(result.text).not.toContain('grep aborted');
+    }
+  });
+
   it('grep strips canonical roots from output when the workspace root is a symlink', async () => {
     const realRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexora-grep-real-'));
     const linkRoot = path.join(os.tmpdir(), `nexora-grep-link-${process.pid}-${Date.now()}`);
@@ -395,7 +492,7 @@ describe('Workspace policy regressions', () => {
       fs.symlinkSync(realRoot, linkRoot, 'dir');
 
       const result = await createGrepTool().execute(
-        'grep-5',
+        'grep-6',
         { pattern: 'TODO' },
         makeCtx(linkRoot),
       );
@@ -431,7 +528,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-6',
+      'grep-7',
       { pattern: 'TODO', path: 'link-in' },
       { ...makeCtx(), workspace },
     );
@@ -452,7 +549,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-7',
+      'grep-8',
       { pattern: 'TODO' },
       { ...makeCtx(), workspace },
     );
@@ -472,7 +569,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-8',
+      'grep-9',
       { pattern: '[' },
       { ...makeCtx(), workspace },
     );
@@ -492,7 +589,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-9',
+      'grep-10',
       { pattern: 'TODO' },
       { ...makeCtx(), workspace },
     );
@@ -517,7 +614,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-10',
+      'grep-11',
       { pattern: 'TODO' },
       { ...makeCtx(), workspace },
     );
@@ -540,7 +637,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-11',
+      'grep-12',
       { pattern: 'TODO' },
       { ...makeCtx(), workspace },
     );
@@ -564,7 +661,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-12',
+      'grep-13',
       { pattern: 'TODO' },
       { ...makeCtx(), workspace },
     );
@@ -588,7 +685,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-13',
+      'grep-14',
       { pattern: 'TODO' },
       { ...makeCtx(), workspace },
     );
@@ -613,7 +710,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-14',
+      'grep-15',
       { pattern: 'TODO' },
       { ...makeCtx(), workspace },
     );
@@ -641,7 +738,7 @@ describe('Workspace policy regressions', () => {
     });
 
     const result = await createGrepTool().execute(
-      'grep-15',
+      'grep-16',
       { pattern: 'TODO' },
       { ...makeCtx(), signal: parent.signal, workspace },
     );

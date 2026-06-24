@@ -151,6 +151,7 @@ export type {
   WorkspaceResolveOptions,
   ResolvedWorkspacePath,
   WorkspaceSnapshot,
+  SnapshotBackend,
   SandboxCommand,
   SandboxCommandResult,
   WorkspaceSession,

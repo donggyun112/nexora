@@ -128,6 +128,7 @@ class HostWorkspaceSession implements WorkspaceSession {
   async snapshot(): Promise<WorkspaceSnapshot> {
     return {
       id: this.id,
+      backend: 'inline-root',
       root: this.root,
       metadata: { mode: this.mode },
     };

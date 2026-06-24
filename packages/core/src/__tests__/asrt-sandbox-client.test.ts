@@ -197,4 +197,52 @@ describe('AsrtSandboxClient', () => {
     const client = new AsrtSandboxClient({ perRun: false });
     await expect(client.create({})).rejects.toThrow(/root, baseWorkdir, or perRun/);
   });
+
+  it('snapshots to a backend and resumes into a fresh root after the original is gone', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const { LocalTarSnapshotBackend } = await import('../workspace-snapshot.js');
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-snap-'));
+    const store = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-snapstore-'));
+    try {
+      const client = new AsrtSandboxClient({
+        baseDir,
+        snapshotBackend: new LocalTarSnapshotBackend(store),
+        cleanup: 'delete',
+      });
+
+      const first = await client.create({ runId: 'conv-7' });
+      await fsp.writeFile(path.join(first.root, 'memo.txt'), 'remember-me');
+
+      const snap = await first.snapshot?.();
+      expect(snap?.backend).toBe('local-tar');
+      expect(snap?.ref).toBeTruthy();
+
+      // Simulate per-run tmpdir loss between turns.
+      await fsp.rm(first.root, { recursive: true, force: true });
+
+      const resumed = await client.resume?.(snap!);
+      expect(resumed).toBeDefined();
+      const body = await fsp.readFile(path.join(resumed!.root, 'memo.txt'), 'utf8');
+      expect(body).toBe('remember-me');
+    } finally {
+      await fsp.rm(baseDir, { recursive: true, force: true });
+      await fsp.rm(store, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to an inline-root snapshot when no backend is configured', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-inline-'));
+    try {
+      const client = new AsrtSandboxClient({ baseDir, cleanup: 'keep' });
+      const session = await client.create({ runId: 'inline-1' });
+
+      const snap = await session.snapshot?.();
+      expect(snap?.backend).toBe('inline-root');
+      expect(snap?.ref).toBeUndefined();
+      expect(snap?.root).toBe(session.root);
+    } finally {
+      await fsp.rm(baseDir, { recursive: true, force: true });
+    }
+  });
 });

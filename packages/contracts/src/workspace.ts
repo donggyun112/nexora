@@ -34,9 +34,36 @@ export interface ResolvedWorkspacePath {
 }
 
 export interface WorkspaceSnapshot {
-  id?: string;
-  root: string;
+  id: string;
+  /**
+   * Persistence backend that owns the archived bytes. `'inline-root'` means the
+   * snapshot is only a pointer to a still-live root (no portable archive).
+   */
+  backend: string;
+  /** Backend-specific locator used to restore the archive. Absent for `inline-root`. */
+  ref?: string;
+  /** Live root, when still on disk — enables fast-path reuse without a restore. */
+  root?: string;
+  createdAt?: string;
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * Pluggable durable persistence for a workspace's bytes.
+ *
+ * Mirrors the reference SDK's snapshot model (persist / restore / restorable):
+ * a snapshot archives the whole workspace root so it survives tmpdir loss and
+ * can be rehydrated into a fresh root on a later turn or host. The backend is
+ * orthogonal to the OS isolation engine.
+ */
+export interface SnapshotBackend {
+  readonly kind: string;
+  /** Archive `rootDir` and persist it under `snapshotId`. Returns the restore ref. */
+  persist(snapshotId: string, rootDir: string): Promise<string>;
+  /** Restore a previously persisted archive (by `ref`) into `destDir`. */
+  restore(ref: string, destDir: string): Promise<void>;
+  /** Whether `ref` can be restored right now. */
+  restorable(ref: string): Promise<boolean>;
 }
 
 export interface SandboxCommand {

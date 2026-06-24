@@ -27,8 +27,10 @@ import type {
   WorkspaceResolveOptions,
   WorkspaceSession,
   WorkspaceSnapshot,
+  SnapshotBackend,
 } from '@dongkseo/contracts';
 import { safeUtf8Prefix } from '@dongkseo/contracts';
+import { NoopSnapshotBackend } from './workspace-snapshot.js';
 import {
   resolveWorkspacePath,
   safeWorkspaceSegment,
@@ -58,6 +60,8 @@ export interface AsrtSandboxClientOptions {
   mounts?: WorkspaceMount[];
   shell?: string;
   maxOutputBytes?: number;
+  /** Durable workspace persistence. Defaults to a no-op (inline-root snapshots). */
+  snapshotBackend?: SnapshotBackend;
 }
 
 const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024;
@@ -83,6 +87,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
   private readonly mounts: WorkspaceMount[];
   private readonly shell?: string;
   private readonly maxOutputBytes: number;
+  private readonly snapshotBackend: SnapshotBackend;
 
   constructor(options: AsrtSandboxClientOptions = {}) {
     this.baseDir = options.baseDir ?? path.join(os.tmpdir(), 'nexora-asrt-workspaces');
@@ -105,6 +110,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
     this.mounts = options.mounts ?? [];
     this.shell = options.shell;
     this.maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    this.snapshotBackend = options.snapshotBackend ?? new NoopSnapshotBackend();
   }
 
   async acquire(options?: WorkspaceAcquireOptions): Promise<WorkspaceSession> {
@@ -116,6 +122,30 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
     const root = this.perRun
       ? await this.createRunRoot(id)
       : await this.resolveExistingRoot(options.baseWorkdir);
+    return this.buildSession(id, root);
+  }
+
+  /**
+   * Rehydrate a workspace from a snapshot. With a durable backend, the archived
+   * bytes are restored into a fresh root (surviving tmpdir loss between turns);
+   * an inline-root snapshot simply reuses the still-live root.
+   */
+  async resume(state: WorkspaceSnapshot): Promise<WorkspaceSession> {
+    const id = state.id || crypto.randomUUID();
+    const root = this.perRun
+      ? await this.createRunRoot(id)
+      : await this.resolveExistingRoot(state.root);
+    if (state.ref && (await this.snapshotBackend.restorable(state.ref))) {
+      await this.snapshotBackend.restore(state.ref, root);
+    }
+    return this.buildSession(id, root);
+  }
+
+  async delete(session: WorkspaceSession): Promise<void> {
+    await session.cleanup();
+  }
+
+  private async buildSession(id: string, root: string): Promise<WorkspaceSession> {
     const config = this.buildConfig(root);
     await ensureSandboxManagerInitialized(config);
 
@@ -131,11 +161,8 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
       ],
       shell: this.shell,
       maxOutputBytes: this.maxOutputBytes,
+      snapshotBackend: this.snapshotBackend,
     });
-  }
-
-  async delete(session: WorkspaceSession): Promise<void> {
-    await session.cleanup();
   }
 
   private async createRunRoot(id: string): Promise<string> {
@@ -189,6 +216,7 @@ interface AsrtSandboxSessionOptions {
   mounts: WorkspaceMount[];
   shell?: string;
   maxOutputBytes: number;
+  snapshotBackend: SnapshotBackend;
 }
 
 class AsrtSandboxSession implements WorkspaceSession {
@@ -200,6 +228,7 @@ class AsrtSandboxSession implements WorkspaceSession {
   private readonly cleanupMode: 'keep' | 'delete';
   private readonly shell?: string;
   private readonly maxOutputBytes: number;
+  private readonly snapshotBackend: SnapshotBackend;
   private cleaned = false;
 
   constructor(options: AsrtSandboxSessionOptions) {
@@ -211,6 +240,7 @@ class AsrtSandboxSession implements WorkspaceSession {
     this.mounts = options.mounts;
     this.shell = options.shell;
     this.maxOutputBytes = options.maxOutputBytes;
+    this.snapshotBackend = options.snapshotBackend;
   }
 
   async resolve(
@@ -248,13 +278,20 @@ class AsrtSandboxSession implements WorkspaceSession {
   }
 
   async snapshot(): Promise<WorkspaceSnapshot> {
+    const createdAt = new Date().toISOString();
+    const metadata = { mode: this.mode };
+    if (this.snapshotBackend.kind === 'noop') {
+      // No durable backend: the snapshot only points at the still-live root.
+      return { id: this.id, backend: 'inline-root', root: this.root, createdAt, metadata };
+    }
+    const ref = await this.snapshotBackend.persist(this.id, this.root);
     return {
       id: this.id,
+      backend: this.snapshotBackend.kind,
+      ref,
       root: this.root,
-      metadata: {
-        mode: this.mode,
-        backend: 'asrt',
-      },
+      createdAt,
+      metadata,
     };
   }
 

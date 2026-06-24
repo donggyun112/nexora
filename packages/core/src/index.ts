@@ -79,6 +79,7 @@ export { HostWorkspaceProvider } from './workspace-provider.js';
 export type { HostWorkspaceProviderOptions } from './workspace-provider.js';
 export { AsrtSandboxClient } from './asrt-sandbox-client.js';
 export type { AsrtSandboxClientOptions } from './asrt-sandbox-client.js';
+export { LocalTarSnapshotBackend, NoopSnapshotBackend } from './workspace-snapshot.js';
 
 export { AgentRunner } from './runner.js';
 export type { AgentRunnerOptions } from './runner.js';

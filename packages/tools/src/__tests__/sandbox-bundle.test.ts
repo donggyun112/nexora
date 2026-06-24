@@ -8,7 +8,7 @@ describe('sandboxToolDefinitions', () => {
     expect(names).toEqual(['edit', 'exec', 'grep', 'read', 'write']);
   });
 
-  it('forwards exec options without throwing', () => {
+  it('accepts exec options without throwing', () => {
     const defs = sandboxToolDefinitions({ exec: { allowList: ['python3'], defaultTimeoutMs: 60_000 } });
     expect(defs.find(t => t.name === 'exec')).toBeDefined();
   });

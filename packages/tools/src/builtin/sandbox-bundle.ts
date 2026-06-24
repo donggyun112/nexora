@@ -8,14 +8,11 @@
  */
 
 import type { ToolDefinition } from '@dongkseo/contracts';
-import {
-  createReadTool,
-  createWriteTool,
-  createEditTool,
-  createGrepTool,
-  createExecTool,
-  type ExecToolOptions,
-} from './index.js';
+import { createReadTool } from './read.js';
+import { createWriteTool } from './write.js';
+import { createEditTool } from './edit.js';
+import { createGrepTool } from './grep.js';
+import { createExecTool, type ExecToolOptions } from './exec.js';
 import type { ToolRegistry } from '../registry.js';
 
 export interface SandboxToolBundleOptions {

@@ -90,6 +90,16 @@ export interface ToolContext {
    * Used by delegate tool to relay child agent events in real-time.
    */
   emitProgress?: (message: string, agent?: string) => void;
+
+  /**
+   * Inject a user message into the calling agent's own in-flight loop.
+   * Returns true if the parent turn is still active (the message was queued and
+   * will be absorbed before the next LLM call); false if the turn has already
+   * ended (the caller must deliver the result as a new turn instead).
+   * Used by background-subagent delegation to fold a child's result back into
+   * the parent's turn without blocking it.
+   */
+  steerSelf?: (message: string) => boolean;
 }
 
 export interface SecretAccessor {

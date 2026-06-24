@@ -125,10 +125,17 @@ export class LocalExecutionHarness implements ExecutionHarness {
           baseWorkdir: baseToolContext.workdir,
           input,
         });
+      }
+      // Inject steerSelf (and the acquired workspace, if any) into the tool
+      // context so tools can re-enter their own parent loop via a steer — the
+      // channel background-subagent delegation uses to fold a child result back
+      // into this turn. Requires a context-capable executor; otherwise tools see
+      // steerSelf === undefined and fall back to a new-turn delivery.
+      if (baseToolContext && this.tools.withContext) {
         toolExecutor = this.tools.withContext({
           ...baseToolContext,
-          workdir: workspace.root,
-          workspace,
+          ...(workspace ? { workdir: workspace.root, workspace } : {}),
+          steerSelf: (message: string) => this.steer(message),
         });
       }
 

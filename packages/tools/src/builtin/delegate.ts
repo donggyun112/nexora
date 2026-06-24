@@ -16,6 +16,8 @@
 import type {
   ToolDefinition,
   ToolResult,
+  ToolContext,
+  ToolLogger,
   EventTransport,
   AgentRegistry,
   AgentRuntime,
@@ -34,6 +36,7 @@ import {
 } from '@dongkseo/contracts';
 import { createApprovalGateMiddleware } from '../handraise/approval-middleware.js';
 import type { ApprovalGateOptions } from '../handraise/approval-middleware.js';
+import { BackgroundJobRegistry } from './background-subagents.js';
 
 // ─── Subagent types (deepagents pattern) ────────────────────────────────
 
@@ -73,6 +76,27 @@ export type Subagent = DeclarativeSubagent | CompiledSubagent | AsyncSubagent;
  * The caller provides this so delegate doesn't depend on core internals.
  */
 export type SubagentRuntimeFactory = (spec: DeclarativeSubagent) => AgentRuntime | Promise<AgentRuntime>;
+
+/**
+ * Builds a caller-owned runtime for a capability-resolved peer, so the peer can
+ * run as a background subagent the caller owns (rather than an autonomous peer
+ * reached over transport). Supplied by the app, which knows how to assemble a
+ * runtime from a card (the framework cannot). When absent, async delegation to a
+ * registry peer falls back to the legacy fire-and-forget publish.
+ */
+export type PeerRuntimeFactory = (
+  capability: string,
+  input: unknown,
+  meta: { delegationDepth: number; callerAgent: string },
+) => AgentRuntime | Promise<AgentRuntime>;
+
+/** The settled result of a background subagent, delivered when the parent turn already ended. */
+export interface BackgroundSubagentResult {
+  jobId: string;
+  childName: string;
+  content: string;
+  isError: boolean;
+}
 
 export interface DelegateToolOptions {
   transport: EventTransport;
@@ -124,6 +148,34 @@ export interface DelegateToolOptions {
    * delegation target is an external/async subagent.
    */
   approvalGate?: ApprovalGateOptions;
+  /**
+   * Builds a caller-owned runtime for a capability-resolved peer when
+   * `delegate({ waitForResult: 'async' })` targets a registry agent. Enables
+   * running that peer as a background subagent the caller owns. Without it,
+   * async delegation to a peer keeps the legacy fire-and-forget publish.
+   */
+  peerRuntimeFactory?: PeerRuntimeFactory;
+  /**
+   * Shared registry tracking background subagent jobs. Pass the SAME instance to
+   * `createCheckSubagentsTool` / `createCancelSubagentTool` so the agent can list
+   * and cancel the children it launched. Defaults to a private instance (jobs
+   * still run, but the control tools won't see them).
+   */
+  jobRegistry?: BackgroundJobRegistry;
+  /**
+   * Delivers a background subagent's result when the parent turn has already
+   * ended (so `ctx.steerSelf` can no longer fold it into the live turn). The app
+   * wires this to start a new turn carrying the result. If absent, a result that
+   * arrives after the parent turn ends is logged and dropped.
+   */
+  deliverResult?: (result: BackgroundSubagentResult) => void | Promise<void>;
+  /**
+   * Max wall-clock a background subagent may run before it is aborted and
+   * settled as an error. Bounds hung children (the sync path has timeoutMs; the
+   * background path otherwise relies only on the child runtime's own idle
+   * timeout). Omit for no delegate-level cap.
+   */
+  backgroundJobTimeoutMs?: number;
 }
 
 /**
@@ -166,12 +218,113 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     runtimeFactory,
     onSubagentEvent,
     approvalGate,
+    peerRuntimeFactory,
+    jobRegistry = new BackgroundJobRegistry(),
+    deliverResult,
+    backgroundJobTimeoutMs,
   } = options;
 
   // Index inline subagents by name for O(1) lookup
   const subagentsByName = new Map<string, Subagent>();
   for (const sa of subagents) {
     subagentsByName.set(sa.name, sa);
+  }
+
+  // Launch a caller-owned background subagent: resolve a child runtime (inline
+  // subagent, else a capability-resolved peer via peerRuntimeFactory), pump it on
+  // a detached loop, and return immediately so the parent's turn continues. The
+  // child's result is folded back via ctx.steerSelf (live turn) or deliverResult
+  // (parent turn ended). Returns null when no caller-owned child can be built, so
+  // the caller falls through to the legacy async peer publish.
+  async function startBackgroundSubagent(
+    params: DelegateParams,
+    ctx: ToolContext,
+    nextDepth: number,
+  ): Promise<ToolResult | null> {
+    let childRuntime: AgentRuntime | null = null;
+    let childName = params.capability;
+
+    const inlineSa = subagentsByName.get(params.capability);
+    try {
+      if (inlineSa) {
+        childName = inlineSa.name;
+        if (inlineSa.type === 'compiled') {
+          childRuntime = inlineSa.runtime;
+        } else if (inlineSa.type === 'declarative') {
+          if (!runtimeFactory) {
+            return errorResult(
+              `Cannot run declarative subagent "${inlineSa.name}" in background: no runtimeFactory provided`,
+            );
+          }
+          childRuntime = await runtimeFactory(inlineSa);
+        } else {
+          return errorResult(
+            `Remote (async) subagent "${inlineSa.name}" cannot run as a caller-owned background subagent`,
+          );
+        }
+      } else if (peerRuntimeFactory) {
+        const candidates = await registry.findByCapability(params.capability);
+        if (candidates.length === 0) {
+          return errorResult(`No agent declares capability "${params.capability}"`);
+        }
+        childName = candidates[0].name;
+        childRuntime = await peerRuntimeFactory(params.capability, params.input, {
+          delegationDepth: nextDepth,
+          callerAgent: callerAgentName,
+        });
+      } else {
+        // No inline subagent and no peer factory — caller can't own a child here.
+        return null;
+      }
+    } catch (err) {
+      ctx.logger.error('delegate.background.build_runtime_failed', {
+        capability: params.capability,
+        childName,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return errorResult(`Failed to build background subagent for "${params.capability}"`);
+    }
+
+    if (!ctx.steerSelf && !deliverResult) {
+      return errorResult(
+        'Background subagents need a steerable parent loop or a deliverResult sink; ' +
+          'neither is available in this runtime. Use waitForResult:"sync" instead.',
+      );
+    }
+
+    const jobId = messageId();
+    jobRegistry.register({
+      jobId,
+      childName,
+      capability: params.capability,
+      runtime: childRuntime,
+      startedAt: Date.now(),
+    });
+    ctx.logger.info('delegate.background.launched', {
+      jobId,
+      childName,
+      capability: params.capability,
+      depth: nextDepth,
+    });
+
+    void pumpBackgroundChild({
+      jobId,
+      childName,
+      runtime: childRuntime,
+      input: params.input,
+      jobRegistry,
+      onSubagentEvent,
+      steerSelf: ctx.steerSelf,
+      deliverResult,
+      logger: ctx.logger,
+      timeoutMs: backgroundJobTimeoutMs,
+    });
+
+    return textResult(
+      `[subagent ${childName}] launched as background job ${jobId}. ` +
+        `Keep working — its result arrives in this turn if you're still active, otherwise as a follow-up. ` +
+        `Use check_subagents for status, or cancel_subagent with job id "${jobId}" to stop it.`,
+    );
   }
 
   const toolDef: ToolDefinition = {
@@ -196,9 +349,11 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         },
         waitForResult: {
           description:
-            'Result handling. "sync" (default): wait for reply this turn. ' +
+            'Result handling. "sync" (default): wait for the reply this turn. ' +
             'false: fire-and-forget, no result returned. ' +
-            '"async": spawn thread, result arrives in a later turn (not yet implemented).',
+            '"async": run as a background subagent — returns immediately and its ' +
+            'result is folded into your turn when ready (or arrives as a follow-up). ' +
+            'Use check_subagents / cancel_subagent to manage it.',
         },
       },
       required: ['capability', 'input'],
@@ -220,6 +375,15 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
           `This usually means agents are delegating in a cycle. ` +
           `Review the capability graph.`,
         );
+      }
+
+      // ── Background subagent (async): caller-owned child pumped concurrently ──
+      // Returns null when no caller-owned child can be built (no inline subagent
+      // and no peerRuntimeFactory) — then fall through to the existing paths,
+      // where 'async' keeps the legacy fire-and-forget peer publish.
+      if (params.waitForResult === 'async') {
+        const bg = await startBackgroundSubagent(params, ctx, nextDepth);
+        if (bg) return bg;
       }
 
       // ── Try inline subagents first ──────────────────────────────────
@@ -421,4 +585,99 @@ async function runRuntime(
     else if (event.type === 'error') return errorResult(`subagent "${name}": ${event.message}`);
   }
   return textResult(content || '(no response)');
+}
+
+// ─── Background subagent pump ───────────────────────────────────────────────
+
+/**
+ * Pumps a caller-owned background subagent's runtime to completion on a detached
+ * loop, then delivers its result: into the parent's live turn via steerSelf, or
+ * — if the parent turn already ended — through the deliverResult sink. A child
+ * cancelled via cancel_subagent is settled but not delivered.
+ */
+async function pumpBackgroundChild(args: {
+  jobId: string;
+  childName: string;
+  runtime: AgentRuntime;
+  input: unknown;
+  jobRegistry: BackgroundJobRegistry;
+  onSubagentEvent?: (name: string, event: AgentEvent) => void;
+  steerSelf?: (message: string) => boolean;
+  deliverResult?: (result: BackgroundSubagentResult) => void | Promise<void>;
+  logger: ToolLogger;
+  timeoutMs?: number;
+}): Promise<void> {
+  const { jobId, childName, runtime, input, jobRegistry, onSubagentEvent, steerSelf, deliverResult, logger, timeoutMs } = args;
+  const childInput: AgentInput = {
+    prompt: typeof input === 'string' ? input : JSON.stringify(input),
+  };
+
+  // Bound a hung child: abort its runtime after timeoutMs. The abort unwinds the
+  // execute() loop below; `timedOut` distinguishes that from normal completion
+  // and from an explicit cancel_subagent.
+  let timedOut = false;
+  const timer =
+    timeoutMs && timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          runtime.abort();
+        }, timeoutMs)
+      : null;
+  timer?.unref?.();
+
+  let content = '';
+  let isError = false;
+  try {
+    for await (const event of runtime.execute(childInput)) {
+      onSubagentEvent?.(childName, event);
+      if (event.type === 'done') content = event.content;
+      else if (event.type === 'error') {
+        content = event.message;
+        isError = true;
+      }
+    }
+  } catch (err) {
+    content = err instanceof Error ? err.message : String(err);
+    isError = true;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  if (timedOut) {
+    content = `Background subagent "${childName}" exceeded ${timeoutMs}ms and was aborted.`;
+    isError = true;
+  }
+
+  // settle() is a no-op if the job was already marked cancelled by cancel_subagent.
+  jobRegistry.settle(jobId, isError ? 'error' : 'done', Date.now());
+  if (jobRegistry.get(jobId)?.status === 'cancelled') return;
+
+  const result: BackgroundSubagentResult = { jobId, childName, content: content || '(no output)', isError };
+  const message = formatChildResult(result);
+
+  // Fold into the parent's live turn; steerSelf returns false once that turn ends.
+  if (steerSelf?.(message)) return;
+
+  if (deliverResult) {
+    try {
+      await deliverResult(result);
+    } catch (err) {
+      logger.error('delegate.background.deliver_failed', {
+        jobId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return;
+  }
+
+  logger.warn('delegate.background.result_dropped', {
+    jobId,
+    childName,
+    reason: 'parent turn ended and no deliverResult sink configured',
+  });
+}
+
+function formatChildResult(result: BackgroundSubagentResult): string {
+  const status = result.isError ? 'failed' : 'completed';
+  return `[background subagent "${result.childName}" ${status}] (job ${result.jobId})\n${result.content}`;
 }

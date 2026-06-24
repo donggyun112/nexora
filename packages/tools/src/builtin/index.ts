@@ -43,7 +43,21 @@ export type {
   CompiledSubagent,
   AsyncSubagent,
   SubagentRuntimeFactory,
+  PeerRuntimeFactory,
+  BackgroundSubagentResult,
 } from './delegate.js';
+
+export {
+  BackgroundJobRegistry,
+  createCheckSubagentsTool,
+  createCancelSubagentTool,
+} from './background-subagents.js';
+export type {
+  BackgroundJob,
+  BackgroundJobSnapshot,
+  BackgroundJobStatus,
+  SubagentControlToolOptions,
+} from './background-subagents.js';
 
 export { createSkillManageTool } from './skill-manage.js';
 export type { SkillManageToolOptions } from './skill-manage.js';

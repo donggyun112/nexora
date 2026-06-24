@@ -15,6 +15,7 @@ import {
   PathOutsideWorkspaceError,
   SymlinkRefusedError,
 } from './safe-path.js';
+import { resolveToolPath } from './workspace-access.js';
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 8 * 1024 * 1024; // 8MB hard cap
@@ -43,16 +44,25 @@ export function createReadTool(): ToolDefinition {
 
       // Try to open as a file first. If the path is a directory, openForRead
       // returns EISDIR — we then fall back to the directory-listing path.
+      let resolved;
+      try {
+        resolved = await resolveToolPath(ctx, rawPath, 'read');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return errorResult(msg);
+      }
+      const workdir = resolved.root;
+      const toolPath = resolved.path;
       let handle: fsp.FileHandle | null = null;
       try {
-        handle = await openForRead(rawPath, ctx.workdir);
+        handle = await openForRead(toolPath, workdir);
       } catch (err) {
         if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
         if (err instanceof SymlinkRefusedError) return errorResult(err.message);
         const code = (err as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') return errorResult(`Cannot read: ${rawPath} not found`);
         if (code === 'EISDIR') {
-          return readDirectory(rawPath, ctx.workdir);
+          return readDirectory(toolPath, workdir);
         }
         const msg = err instanceof Error ? err.message : String(err);
         return errorResult(`Cannot read: ${msg}`);
@@ -64,7 +74,7 @@ export function createReadTool(): ToolDefinition {
           // Some platforms let us open() a directory successfully. Redirect to listing.
           await handle.close().catch(() => {});
           handle = null;
-          return readDirectory(rawPath, ctx.workdir);
+          return readDirectory(toolPath, workdir);
         }
         if (!stat.isFile()) {
           return errorResult(`Cannot read: ${rawPath} is not a regular file`);

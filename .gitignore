@@ -9,7 +9,7 @@ dist/
 
 # Reference implementations copied locally for design reference only.
 # These are third-party projects with their own licenses — do not commit.
-reference/
+references/
 
 # Logs and temp data
 logs/
@@ -21,3 +21,4 @@ data/
 
 # lean-ctx runtime cache
 local_cache/
+reference/

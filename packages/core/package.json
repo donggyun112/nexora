@@ -16,8 +16,9 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.79.4",
+    "@anthropic-ai/sandbox-runtime": "^0.0.59",
     "@dongkseo/contracts": "workspace:^",
+    "@earendil-works/pi-ai": "^0.79.4",
     "ajv": "^8.18.0"
   },
   "devDependencies": {

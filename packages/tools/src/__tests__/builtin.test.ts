@@ -260,6 +260,19 @@ describe('grep tool', () => {
     const result = await tool.execute('1', { pattern: 'nonexistent' }, makeContext(tmpDir));
     if (result.type === 'text') expect(result.text).toBe('No matches found.');
   });
+
+  it('reports abort instead of "No matches found"', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'plain text');
+    const controller = new AbortController();
+    controller.abort();
+    const tool = createGrepTool();
+    const result = await tool.execute('1', { pattern: 'plain' }, {
+      ...makeContext(tmpDir),
+      signal: controller.signal,
+    });
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toMatch(/aborted/);
+  });
 });
 
 describe('write tool', () => {

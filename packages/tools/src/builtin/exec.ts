@@ -31,6 +31,7 @@
 import { spawn } from 'node:child_process';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
+import { buildToolEnv } from './tool-env.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -55,9 +56,6 @@ export interface ExecToolOptions {
   /** Default timeout (ms). */
   defaultTimeoutMs?: number;
 }
-
-/** Env var names that are always passed through. */
-const ALWAYS_PASS = ['PATH', 'HOME', 'LANG', 'LC_ALL'];
 
 /**
  * Programs whose design includes "read code from arguments" or "execute other
@@ -140,21 +138,11 @@ function validateProgram(program: string): string | null {
   return null;
 }
 
-function buildEnv(envAllowList: string[] | undefined): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  const allowed = new Set<string>([...ALWAYS_PASS, ...(envAllowList ?? [])]);
-  for (const key of allowed) {
-    const value = process.env[key];
-    if (value !== undefined) env[key] = value;
-  }
-  return env;
-}
-
 export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
   const allowList = options.allowList ? new Set(options.allowList) : null;
   const allowShell = options.allowShell ?? false;
   const defaultTimeout = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const env = buildEnv(options.envAllowList);
+  const env = buildToolEnv(options.envAllowList);
 
   const description = allowShell
     ? 'Execute a command in the workspace. Use { argv: [...] } (preferred) or { command: "shell string" } for pipes/globs. Returns combined stdout/stderr. Times out after 120s by default; output capped at 256KB.'
@@ -251,15 +239,62 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
 
       // Cancellation: combine ctx.signal (run-level) with our timeout via AbortController.
       const controller = new AbortController();
-      const onParentAbort = (): void => controller.abort();
+      let parentAbortRequested = false;
+      const onParentAbort = (): void => {
+        parentAbortRequested = true;
+        controller.abort();
+      };
       if (ctx.signal) {
-        if (ctx.signal.aborted) controller.abort();
+        if (ctx.signal.aborted) onParentAbort();
         else ctx.signal.addEventListener('abort', onParentAbort, { once: true });
+      }
+
+      const workdir = ctx.workspace?.root ?? ctx.workdir;
+      if (ctx.workspace?.run) {
+        try {
+          const result = await ctx.workspace.run({
+            argv: [program, ...args],
+            cwd: workdir,
+            env,
+            timeoutMs,
+            signal: controller.signal,
+          });
+          const formatted = formatExecResult({
+            label,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+            signal: result.signal,
+            timedOut: result.timedOut,
+            aborted: result.aborted,
+            timeoutMs,
+          });
+          ctx.logger.info(`exec ${formatted.status}`, {
+            program,
+            args,
+            timeoutMs,
+            bytes: formatted.bytes,
+            sandbox: true,
+          });
+          return textResult(formatted.text);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          ctx.logger.warn('sandboxed exec failed', {
+            program,
+            args,
+            timeoutMs,
+            sandbox: true,
+            error: msg,
+          });
+          return errorResult(`sandboxed exec failed: ${msg}`);
+        } finally {
+          ctx.signal?.removeEventListener('abort', onParentAbort);
+        }
       }
 
       return new Promise<ToolResult>((resolve) => {
         const child = spawn(program, args, {
-          cwd: ctx.workdir,
+          cwd: workdir,
           env,
           shell: false, // never bash interpolation; even bash -lc is invoked as program
           signal: controller.signal,
@@ -268,13 +303,20 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
         let collected = Buffer.alloc(0);
         let truncated = false;
         let timedOut = false;
-        let abortedByParent = false;
 
         const onData = (chunk: Buffer): void => {
           if (truncated) return;
+          if (collected.length >= MAX_OUTPUT_BYTES) {
+            const safeEnd = utf8SafeSliceEnd(collected, collected.length);
+            if (safeEnd < collected.length) collected = collected.subarray(0, safeEnd);
+            truncated = true;
+            return;
+          }
           if (collected.length + chunk.length > MAX_OUTPUT_BYTES) {
             const remaining = MAX_OUTPUT_BYTES - collected.length;
             collected = Buffer.concat([collected, chunk.subarray(0, remaining)]);
+            const safeEnd = utf8SafeSliceEnd(collected, collected.length);
+            if (safeEnd < collected.length) collected = collected.subarray(0, safeEnd);
             truncated = true;
           } else {
             collected = Buffer.concat([collected, chunk]);
@@ -298,37 +340,44 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
         child.on('error', (err) => {
           cleanup();
           // AbortError vs real error
-          const message = err.name === 'AbortError'
-            ? (timedOut
-                ? `[killed: timeout after ${timeoutMs}ms]`
-                : '[aborted]')
-            : `exec failed: ${err.message}`;
-          resolve(textResult(message + textTail(collected, truncated)));
+          if (err.name === 'AbortError') {
+            const formatted = formatExecResult({
+              label,
+              output: collected,
+              exitCode: null,
+              signal: null,
+              timedOut,
+              aborted: !timedOut,
+              timeoutMs,
+              outputTruncated: truncated,
+            });
+            resolve(textResult(formatted.text));
+            return;
+          }
+          resolve(textResult(`exec failed: ${err.message}` + textTail(collected, truncated)));
         });
 
         child.on('close', (code, signal) => {
           cleanup();
-          if (ctx.signal?.aborted && !timedOut) abortedByParent = true;
+          const abortedByParent = parentAbortRequested && !timedOut && code === null;
 
-          let text = collected.toString('utf-8');
-          if (truncated) text += `\n\n[Output truncated at ${MAX_OUTPUT_BYTES} bytes]`;
-          if (timedOut) text += `\n\n[Killed: timeout after ${timeoutMs}ms]`;
-          else if (abortedByParent) text += '\n\n[Aborted by caller]';
-
-          const status = code === 0 && !timedOut && !abortedByParent
-            ? 'ok'
-            : `exit ${code ?? signal ?? 'signal'}`;
-          ctx.logger.info(`exec ${status}`, {
+          const formatted = formatExecResult({
+            label,
+            output: collected,
+            exitCode: code,
+            signal,
+            timedOut,
+            aborted: abortedByParent,
+            timeoutMs,
+            outputTruncated: truncated,
+          });
+          ctx.logger.info(`exec ${formatted.status}`, {
             program,
             useShell,
-            bytes: collected.length,
+            bytes: formatted.bytes,
           });
 
-          if (code === 0 && !timedOut && !abortedByParent) {
-            resolve(textResult(text || '(no output)'));
-          } else {
-            resolve(textResult(`[${status}] ${label}\n${text}`));
-          }
+          resolve(textResult(formatted.text));
         });
       });
     },
@@ -337,5 +386,92 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
 
 function textTail(buf: Buffer, truncated: boolean): string {
   if (buf.length === 0) return '';
-  return `\n${buf.toString('utf-8')}${truncated ? '\n[truncated]' : ''}`;
+  const capped = capOutput(buf);
+  return `\n${capped.text}${truncated || capped.truncated ? '\n[truncated]' : ''}`;
+}
+
+interface ExecFormatInput {
+  label: string;
+  output?: string | Buffer;
+  stdout?: string;
+  stderr?: string;
+  exitCode: number | null;
+  signal: string | null;
+  timedOut?: boolean;
+  aborted?: boolean;
+  timeoutMs: number;
+  outputTruncated?: boolean;
+}
+
+function formatExecResult(input: ExecFormatInput): { text: string; status: string; bytes: number } {
+  const rawOutput = input.output ?? [input.stdout, input.stderr].filter(Boolean).join('');
+  const capped = capOutput(rawOutput);
+  let text = capped.text || '(no output)';
+  const truncated = capped.truncated || input.outputTruncated;
+  if (truncated) text += `\n\n[Output truncated at ${MAX_OUTPUT_BYTES} bytes]`;
+  if (input.timedOut) text += `\n\n[Killed: timeout after ${input.timeoutMs}ms]`;
+  else if (input.aborted) text += '\n\n[Aborted by caller]';
+  else if (input.signal) text += `\n\n[Killed by signal: ${input.signal}]`;
+
+  const ok = input.exitCode === 0 && !input.timedOut && !input.aborted && !input.signal;
+  const status = ok
+    ? 'ok'
+    : input.timedOut
+      ? 'timeout'
+      : input.aborted
+        ? 'aborted'
+        : input.signal
+          ? `signal ${input.signal}`
+          : `exit ${input.exitCode ?? 'unknown'}`;
+
+  return {
+    status,
+    text: ok ? text : `[${status}] ${input.label}\n${text}`,
+    bytes: capped.bytes,
+  };
+}
+
+function capOutput(output: string | Buffer): { text: string; bytes: number; truncated: boolean } {
+  const bytes = Buffer.isBuffer(output) ? output.length : Buffer.byteLength(output);
+  if (bytes <= MAX_OUTPUT_BYTES) {
+    return { text: Buffer.isBuffer(output) ? output.toString('utf-8') : output, bytes, truncated: false };
+  }
+  const buffer = Buffer.isBuffer(output) ? output : Buffer.from(output, 'utf-8');
+  const end = utf8SafeSliceEnd(buffer, MAX_OUTPUT_BYTES);
+  return {
+    text: buffer.toString('utf-8', 0, end),
+    bytes: MAX_OUTPUT_BYTES,
+    truncated: true,
+  };
+}
+
+function utf8SafeSliceEnd(buffer: Buffer, maxBytes: number): number {
+  const end = Math.min(buffer.length, maxBytes);
+  if (end === 0) return 0;
+
+  let continuationBytes = 0;
+  while (
+    continuationBytes < 4 &&
+    end - 1 - continuationBytes >= 0 &&
+    (buffer[end - 1 - continuationBytes] & 0b1100_0000) === 0b1000_0000
+  ) {
+    continuationBytes += 1;
+  }
+
+  const leadIndex = end - 1 - continuationBytes;
+  if (leadIndex < 0) return end - continuationBytes;
+
+  const lead = buffer[leadIndex];
+  const expectedBytes =
+    (lead & 0b1000_0000) === 0 ? 1 :
+      (lead & 0b1110_0000) === 0b1100_0000 ? 2 :
+        (lead & 0b1111_0000) === 0b1110_0000 ? 3 :
+          (lead & 0b1111_1000) === 0b1111_0000 ? 4 :
+            0;
+
+  if (expectedBytes === 0) return leadIndex;
+  if (expectedBytes === 1) {
+    return continuationBytes === 0 ? end : leadIndex;
+  }
+  return continuationBytes + 1 >= expectedBytes ? end : leadIndex;
 }

@@ -11,7 +11,9 @@ import type {
   ExecutionHarness,
   ToolDefinition,
   ToolContext,
+  ToolExecutor,
   ToolResult,
+  WorkspaceProvider,
 } from '@dongkseo/contracts';
 import { suspendResult } from '@dongkseo/contracts';
 import { MockLLMProvider } from './mock-llm.js';
@@ -98,6 +100,89 @@ describe('AgentRunner', () => {
     if (done?.type === 'done') {
       expect(done.content).toBe('local harness done');
     }
+  });
+
+  it('injects acquired workspace sessions into tool context', async () => {
+    let observedWorkdir: string | undefined;
+    let observedWorkspaceRoot: string | undefined;
+    const cleanup = vi.fn(async () => {});
+    const provider: WorkspaceProvider = {
+      acquire: vi.fn(async ({ baseWorkdir } = {}) => ({
+        id: 'ws-1',
+        root: '/isolated/workspace',
+        mode: 'workspace-write',
+        mounts: [],
+        resolve: async (target: string) => ({
+          path: `/isolated/workspace/${target}`,
+          root: '/isolated/workspace',
+          relativePath: target,
+          access: 'ro',
+        }),
+        cleanup,
+        snapshot: async () => ({ id: 'ws-1', root: '/isolated/workspace', metadata: { baseWorkdir } }),
+      })),
+    };
+    const inspectTool: ToolDefinition = {
+      name: 'inspect_workspace',
+      description: 'Inspect workspace context',
+      parameters: { type: 'object', properties: {} },
+      execute: async (_id, _input, ctx) => {
+        observedWorkdir = ctx.workdir;
+        observedWorkspaceRoot = ctx.workspace?.root;
+        return { type: 'text', text: 'ok' };
+      },
+    };
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'tc-1', name: 'inspect_workspace', arguments: {} }] },
+      { text: 'done' },
+    ]);
+    const tools = new CoreToolExecutor({ tools: [inspectTool], context: mockContext });
+    const runner = new AgentRunner({
+      architecture: simpleReact,
+      llm,
+      tools,
+      workspaceProvider: provider,
+    });
+
+    for await (const _ of runner.execute({ prompt: 'inspect' })) {
+      // consume stream
+    }
+
+    expect(provider.acquire).toHaveBeenCalledWith({
+      baseWorkdir: mockContext.workdir,
+      input: { prompt: 'inspect' },
+    });
+    expect(observedWorkdir).toBe('/isolated/workspace');
+    expect(observedWorkspaceRoot).toBe('/isolated/workspace');
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when workspaceProvider cannot inject tool context', async () => {
+    const provider: WorkspaceProvider = {
+      acquire: vi.fn(async () => {
+        throw new Error('should not acquire');
+      }),
+    };
+    const legacyTools: ToolExecutor = {
+      list: () => [],
+      execute: async () => ({ type: 'text', text: 'legacy' }),
+    };
+    const harness = new LocalExecutionHarness({
+      architecture: simpleReact,
+      llm: new MockLLMProvider([{ text: 'done' }]),
+      tools: legacyTools,
+      workspaceProvider: provider,
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of harness.execute({ prompt: 'hi' })) {
+      events.push(ev);
+    }
+
+    const err = events.find(e => e.type === 'error');
+    expect(err).toBeDefined();
+    if (err?.type === 'error') expect(err.message).toMatch(/getContext\(\).*withContext\(\)/);
+    expect(provider.acquire).not.toHaveBeenCalled();
   });
 
   it('runs simple react loop with tool call', async () => {

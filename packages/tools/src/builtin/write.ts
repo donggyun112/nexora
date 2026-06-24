@@ -18,6 +18,7 @@ import {
   PathOutsideWorkspaceError,
   SymlinkRefusedError,
 } from './safe-path.js';
+import { resolveToolPath } from './workspace-access.js';
 
 export function createWriteTool(): ToolDefinition {
   return {
@@ -41,9 +42,16 @@ export function createWriteTool(): ToolDefinition {
       if (typeof params.content !== 'string') return errorResult('content is required');
 
       let handle: fsp.FileHandle;
+      let resolved;
+      try {
+        resolved = await resolveToolPath(ctx, rawPath, 'write');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return errorResult(msg);
+      }
       try {
         // openForWrite does the parent mkdir AFTER canonicalization — safe.
-        handle = await openForWrite(rawPath, ctx.workdir);
+        handle = await openForWrite(resolved.path, resolved.root);
       } catch (err) {
         if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
         if (err instanceof SymlinkRefusedError) return errorResult(err.message);

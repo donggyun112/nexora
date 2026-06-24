@@ -1,4 +1,5 @@
 import type { TenantAgentScope } from './context.js';
+import type { WorkspaceSession } from './workspace.js';
 
 /**
  * ToolDefinition — 도구 계약.
@@ -68,6 +69,9 @@ export interface ToolContext {
 
   /** 작업 디렉토리 */
   workdir: string;
+
+  /** Active workspace boundary for file/process tools. */
+  workspace?: WorkspaceSession;
 
   /** 테넌트별 시크릿 접근 */
   secrets: SecretAccessor;

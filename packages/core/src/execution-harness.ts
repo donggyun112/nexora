@@ -19,6 +19,8 @@ import type {
   ToolDefinition,
   ToolExecutor,
   ToolResult,
+  WorkspaceProvider,
+  WorkspaceSession,
 } from '@dongkseo/contracts';
 import {
   MiddlewarePipeline,
@@ -46,6 +48,8 @@ export interface LocalExecutionHarnessOptions {
   idleTimeoutMs?: number;
   /** Optional architecture-level suspend hook. Forwarded to RuntimeServices. */
   onSuspend?: RuntimeServices['onSuspend'];
+  /** Optional workspace provider. When set, tools receive a per-run workspace session. */
+  workspaceProvider?: WorkspaceProvider;
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
@@ -66,6 +70,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly pipeline: MiddlewarePipeline;
   private readonly idleTimeoutMs: number;
   private readonly onSuspend?: RuntimeServices['onSuspend'];
+  private readonly workspaceProvider?: WorkspaceProvider;
   /**
    * Active controllers per concurrent execute() call. abort() aborts ALL of them.
    * Per-call structure means concurrent executions don't trample each other's state.
@@ -87,6 +92,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.pipeline = new MiddlewarePipeline(options.middlewares ?? []);
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.onSuspend = options.onSuspend;
+    this.workspaceProvider = options.workspaceProvider;
   }
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
@@ -105,22 +111,40 @@ export class LocalExecutionHarness implements ExecutionHarness {
       controller.abort(new IdleTimeoutError(`Agent idle for ${this.idleTimeoutMs}ms`));
     });
 
-    // Per-execute services snapshot — signal injected so architectures can forward.
-    // Wrap the shared ToolExecutor so its execute() always sees this call's signal.
-    // Wrap LLM with middleware so afterLLMCall actually fires.
-    const services: RuntimeServices = {
-      llm: wrapLLMWithMiddleware(this.llm, this.pipeline),
-      tools: wrapToolExecutorWithSignal(this.tools, controller.signal),
-      memory: this.memory,
-      logger: this.logger,
-      signal: controller.signal,
-      drainSteers: () => (this.pendingSteers.length > 0 ? this.pendingSteers.splice(0) : []),
-      onSuspend: this.onSuspend,
-    };
-
+    let workspace: WorkspaceSession | undefined;
+    let toolExecutor = this.tools;
     let loopGen: AsyncGenerator<AgentEvent> | null = null;
 
     try {
+      const baseToolContext = this.tools.getContext?.();
+      if (this.workspaceProvider) {
+        if (!baseToolContext || !this.tools.withContext) {
+          throw new Error('workspaceProvider requires a ToolExecutor with getContext() and withContext()');
+        }
+        workspace = await this.workspaceProvider.acquire({
+          baseWorkdir: baseToolContext.workdir,
+          input,
+        });
+        toolExecutor = this.tools.withContext({
+          ...baseToolContext,
+          workdir: workspace.root,
+          workspace,
+        });
+      }
+
+      // Per-execute services snapshot — signal injected so architectures can forward.
+      // Wrap the shared ToolExecutor so its execute() always sees this call's signal.
+      // Wrap LLM with middleware so afterLLMCall actually fires.
+      const services: RuntimeServices = {
+        llm: wrapLLMWithMiddleware(this.llm, this.pipeline),
+        tools: wrapToolExecutorWithSignal(toolExecutor, controller.signal),
+        memory: this.memory,
+        logger: this.logger,
+        signal: controller.signal,
+        drainSteers: () => (this.pendingSteers.length > 0 ? this.pendingSteers.splice(0) : []),
+        onSuspend: this.onSuspend,
+      };
+
       // Pass actual ToolDefinition objects to beforeExecution when the executor
       // can expose them. Middleware such as approval gates can then wrap
       // execute(), and filters can remove tools before the architecture sees
@@ -204,6 +228,14 @@ export class LocalExecutionHarness implements ExecutionHarness {
         }
       }
       this.activeControllers.delete(controller);
+      if (workspace) {
+        try {
+          await workspace.cleanup();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn('workspace.cleanup.failed', { error: message });
+        }
+      }
       try {
         await this.pipeline.runAfterExecution({
           input,
@@ -316,6 +348,13 @@ function wrapToolExecutorWithSignal(inner: ToolExecutor, signal: AbortSignal): T
   if (innerWithExtras.withTools) {
     (wrapped as ToolExecutor & { withTools: (tools: ToolDefinition[]) => ToolExecutor }).withTools =
       (tools) => wrapToolExecutorWithSignal(innerWithExtras.withTools?.(tools) ?? inner, signal);
+  }
+  if (innerWithExtras.withContext) {
+    wrapped.withContext = (context) =>
+      wrapToolExecutorWithSignal(innerWithExtras.withContext?.(context) ?? inner, signal);
+  }
+  if (innerWithExtras.getContext) {
+    wrapped.getContext = innerWithExtras.getContext.bind(innerWithExtras);
   }
   if (innerWithExtras.has) {
     (wrapped as ToolExecutor & { has: (name: string) => boolean }).has =

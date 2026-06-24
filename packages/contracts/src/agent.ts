@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolResult } from './tool.js';
+import type { ToolDefinition, ToolContext, ToolResult } from './tool.js';
 import type { OutboundArtifact } from './adapter.js';
 
 /**
@@ -243,6 +243,12 @@ export interface ToolExecutor {
 
   /** 같은 실행 컨텍스트로 도구 목록을 교체한 executor 반환. */
   withTools?(tools: ToolDefinition[]): ToolExecutor;
+
+  /** 같은 도구 목록으로 실행 컨텍스트를 교체한 executor 반환. */
+  withContext?(context: ToolContext): ToolExecutor;
+
+  /** 현재 실행 컨텍스트 조회. Harness가 workspace/session을 주입할 때 사용한다. */
+  getContext?(): ToolContext;
 }
 
 export interface ToolBatchCall {

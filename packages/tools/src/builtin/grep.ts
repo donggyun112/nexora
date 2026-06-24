@@ -5,14 +5,21 @@
  * include 글롭으로 파일 필터, context 옵션.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, type ExecFileException } from 'node:child_process';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
+import { buildToolEnv } from './tool-env.js';
+import { resolveToolPath } from './workspace-access.js';
 
 const MAX_LINES = 200;
+const GREP_TIMEOUT_MS = 120_000;
+const GREP_MAX_BUFFER = 4 * 1024 * 1024;
 
 export function createGrepTool(): ToolDefinition {
+  const env = buildToolEnv();
+
   return {
     name: 'grep',
     description:
@@ -41,13 +48,23 @@ export function createGrepTool(): ToolDefinition {
       const pattern = (params.pattern ?? '').trim();
       if (!pattern) return errorResult('pattern is required');
 
-      const root = path.resolve(ctx.workdir);
       const subpath = params.path?.trim();
-      const searchPath = subpath ? path.resolve(root, subpath) : root;
-
-      if (!searchPath.startsWith(root + path.sep) && searchPath !== root) {
-        return errorResult('path is outside workspace root');
+      let resolved;
+      try {
+        resolved = await resolveToolPath(ctx, subpath || '.', 'list');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return errorResult(msg);
       }
+      const root = path.resolve(resolved.root);
+      const searchPath = path.isAbsolute(resolved.path)
+        ? path.resolve(resolved.path)
+        : path.resolve(root, resolved.path);
+      const pathCheck = await validateSearchPath(searchPath, root);
+      if (pathCheck.status === 'error') return errorResult(pathCheck.message);
+      if (pathCheck.status === 'missing') return textResult('No matches found.');
+      const grepPath = pathCheck.path;
+      const stripRoots = uniqueRoots([pathCheck.realRoot, root]);
 
       const include = params.include?.trim();
       if (include && (include.includes('/') || include.includes('..'))) {
@@ -61,27 +78,220 @@ export function createGrepTool(): ToolDefinition {
       const args = ['-rEn', '--color=never'];
       if (include) args.push(`--include=${include}`);
       if (ctxLines > 0) args.push(`-C${ctxLines}`);
-      args.push(pattern, searchPath);
+      args.push('--', pattern, grepPath);
 
-      const stdout = await new Promise<string>((resolve) => {
-        execFile('grep', args, { maxBuffer: 4 * 1024 * 1024 }, (_err, out) => resolve(out));
-      });
+      let grepResult: GrepProcessResult;
+      if (ctx.workspace?.run) {
+        const result = await ctx.workspace.run({
+          argv: ['grep', ...args],
+          cwd: root,
+          env,
+          signal: ctx.signal,
+          timeoutMs: GREP_TIMEOUT_MS,
+        });
+        grepResult = {
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          timedOut: result.timedOut,
+          aborted: result.aborted,
+        };
+      } else {
+        let timedOut = false;
+        const controller = new AbortController();
+        const timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, GREP_TIMEOUT_MS);
+        timer.unref?.();
+        const onParentAbort = (): void => controller.abort();
+        if (ctx.signal?.aborted) controller.abort();
+        else ctx.signal?.addEventListener('abort', onParentAbort, { once: true });
 
+        const local = await new Promise<{ stdout: string; error?: ExecFileException }>((resolve) => {
+          execFile('grep', args, {
+            env,
+            maxBuffer: GREP_MAX_BUFFER,
+            signal: controller.signal,
+          }, (err, out) => resolve({ stdout: out, error: err ?? undefined }));
+        });
+        clearTimeout(timer);
+        ctx.signal?.removeEventListener('abort', onParentAbort);
+        grepResult = normalizeLocalGrepResult(local.stdout, local.error, timedOut, ctx.signal?.aborted);
+      }
+
+      const classified = classifyGrepResult(grepResult);
+      if (classified.type === 'error') return errorResult(classified.message);
+      const { stdout, warning } = classified;
       if (!stdout.trim()) return textResult('No matches found.');
 
       const lines = stdout
         .trimEnd()
         .split('\n')
-        .map(line => line.startsWith(root + path.sep) ? line.slice(root.length + 1) : line);
+        .map(line => stripWorkspacePrefix(line, stripRoots));
 
       if (lines.length > MAX_LINES) {
         return textResult(
           lines.slice(0, MAX_LINES).join('\n') +
-          `\n\n[Truncated: showing ${MAX_LINES} of ${lines.length} lines]`,
+          `\n\n[Truncated: showing ${MAX_LINES} of ${lines.length} lines]` +
+          warning,
         );
       }
 
-      return textResult(lines.join('\n'));
+      return textResult(lines.join('\n') + warning);
     },
   };
+}
+
+type PathCheck =
+  | { status: 'ok'; path: string; realRoot: string }
+  | { status: 'missing' }
+  | { status: 'error'; message: string };
+
+async function validateSearchPath(searchPath: string, root: string): Promise<PathCheck> {
+  if (!isWithin(searchPath, root)) {
+    return { status: 'error', message: 'path is outside workspace root' };
+  }
+  try {
+    const realRoot = await fsp.realpath(root);
+    const realSearchPath = await fsp.realpath(searchPath);
+    if (!isWithin(realSearchPath, realRoot)) {
+      return { status: 'error', message: 'path is outside workspace root' };
+    }
+    return { status: 'ok', path: realSearchPath, realRoot };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing' };
+    const message = err instanceof Error ? err.message : String(err);
+    return { status: 'error', message: `Cannot grep: ${message}` };
+  }
+}
+
+function isWithin(target: string, root: string): boolean {
+  return target === root || target.startsWith(root + path.sep);
+}
+
+function uniqueRoots(roots: string[]): string[] {
+  return [...new Set(roots)].sort((a, b) => b.length - a.length);
+}
+
+function stripWorkspacePrefix(line: string, roots: string[]): string {
+  for (const root of roots) {
+    if (line.startsWith(root + path.sep)) return line.slice(root.length + 1);
+    if (line.startsWith(`${root}:`)) return `.${line.slice(root.length)}`;
+  }
+  return line;
+}
+
+interface GrepProcessResult {
+  stdout: string;
+  stderr?: string;
+  exitCode: number | string | null | undefined;
+  signal?: string | null;
+  timedOut?: boolean;
+  aborted?: boolean;
+  errorMessage?: string;
+}
+
+type ClassifiedGrepResult =
+  | { type: 'ok'; stdout: string; warning: string }
+  | { type: 'error'; message: string };
+
+function normalizeLocalGrepResult(
+  stdout: string,
+  error: ExecFileException | undefined,
+  timedOut: boolean,
+  aborted?: boolean,
+): GrepProcessResult {
+  return {
+    stdout,
+    exitCode: error ? error.code : 0,
+    signal: error?.signal,
+    timedOut,
+    aborted: aborted || (error?.name === 'AbortError' && !timedOut),
+    errorMessage: error?.message,
+  };
+}
+
+function classifyGrepResult(result: GrepProcessResult): ClassifiedGrepResult {
+  const hasStdout = result.stdout.trim().length > 0;
+  if (result.aborted) {
+    if (hasStdout) {
+      return {
+        type: 'ok',
+        stdout: result.stdout,
+        warning: '\n\n[grep aborted: partial results returned]',
+      };
+    }
+    return { type: 'error', message: 'grep aborted' };
+  }
+  if (result.timedOut) {
+    if (hasStdout) {
+      return {
+        type: 'ok',
+        stdout: result.stdout,
+        warning: '\n\n[grep timed out: partial results returned]',
+      };
+    }
+    return { type: 'error', message: 'grep timed out' };
+  }
+
+  if (result.signal) {
+    if (hasStdout) {
+      return {
+        type: 'ok',
+        stdout: result.stdout,
+        warning: `\n\n[grep killed by signal ${result.signal}: partial results returned]`,
+      };
+    }
+    return { type: 'error', message: `grep killed by signal ${result.signal}` };
+  }
+
+  const code = result.exitCode;
+  if (code === 0 || code === 1) {
+    return { type: 'ok', stdout: result.stdout, warning: '' };
+  }
+  if (code === null) {
+    if (hasStdout) {
+      return {
+        type: 'ok',
+        stdout: result.stdout,
+        warning: '\n\n[grep terminated without exit code]',
+      };
+    }
+    return { type: 'error', message: 'grep terminated without exit code' };
+  }
+  if (code === undefined) {
+    return { type: 'error', message: grepFailureMessage(result, 'grep ended without exit status') };
+  }
+  if (isMaxBufferError(result) && hasStdout) {
+    return {
+      type: 'ok',
+      stdout: result.stdout,
+      warning: '\n\n[grep output exceeded buffer: partial results returned]',
+    };
+  }
+  if (hasStdout) {
+    return {
+      type: 'ok',
+      stdout: result.stdout,
+      warning: grepWarning(result, `grep exited ${code}`),
+    };
+  }
+  return { type: 'error', message: grepFailureMessage(result, `grep failed with exit ${code}`) };
+}
+
+function isMaxBufferError(result: GrepProcessResult): boolean {
+  return /maxBuffer|buffer length exceeded/i.test(result.errorMessage ?? '');
+}
+
+function grepFailureMessage(result: GrepProcessResult, fallback: string): string {
+  return result.errorMessage || result.stderr?.trim() || fallback;
+}
+
+function grepWarning(result: GrepProcessResult, prefix: string): string {
+  const detail = result.errorMessage || result.stderr?.trim();
+  return detail
+    ? `\n\n[${prefix}: ${detail}; partial results returned]`
+    : `\n\n[${prefix}: partial results returned]`;
 }

@@ -75,6 +75,10 @@ export type { IdleTimeout } from './idle-timeout.js';
 
 export { LocalExecutionHarness } from './execution-harness.js';
 export type { LocalExecutionHarnessOptions } from './execution-harness.js';
+export { HostWorkspaceProvider } from './workspace-provider.js';
+export type { HostWorkspaceProviderOptions } from './workspace-provider.js';
+export { AsrtSandboxClient } from './asrt-sandbox-client.js';
+export type { AsrtSandboxClientOptions } from './asrt-sandbox-client.js';
 
 export { AgentRunner } from './runner.js';
 export type { AgentRunnerOptions } from './runner.js';
@@ -114,6 +118,19 @@ export type {
   ImprovementLoopOptions,
   SafeSkillWriterOptions,
 } from './self-improve.js';
+
+// Verification Loop (grader/judge) — wrap a runtime factory with a retry-on-fail grader.
+export {
+  createVerifiedRuntime,
+  createRubricGrader,
+  createLlmJudgeGrader,
+} from './verification.js';
+export type {
+  Grader,
+  GradeResult,
+  LlmJudgeOptions,
+  VerifiedRuntimeOptions,
+} from './verification.js';
 
 // --- lifted from in7-marketing-poc (generic runtime primitives) ---
 export { KeyedSerializer } from './keyed-serializer.js';

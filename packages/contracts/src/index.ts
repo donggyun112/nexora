@@ -144,6 +144,22 @@ export type {
 export { textResult, errorResult, suspendResult } from './tool.js';
 
 export type {
+  WorkspaceAccessMode,
+  WorkspaceMountAccess,
+  WorkspaceMountKind,
+  WorkspaceMount,
+  WorkspaceResolveOptions,
+  ResolvedWorkspacePath,
+  WorkspaceSnapshot,
+  SandboxCommand,
+  SandboxCommandResult,
+  WorkspaceSession,
+  WorkspaceAcquireOptions,
+  WorkspaceProvider,
+  SandboxClient,
+} from './workspace.js';
+
+export type {
   AgentInput,
   ChatMessage,
   ImageContent,

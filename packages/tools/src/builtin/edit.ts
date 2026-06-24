@@ -27,6 +27,7 @@ import {
   PathOutsideWorkspaceError,
   SymlinkRefusedError,
 } from './safe-path.js';
+import { resolveToolPath, type ToolPathResolution } from './workspace-access.js';
 
 export function createEditTool(): ToolDefinition {
   return {
@@ -61,6 +62,15 @@ export function createEditTool(): ToolDefinition {
       if (params.old_string === params.new_string) {
         return errorResult('old_string and new_string are identical');
       }
+      let target;
+      try {
+        target = await resolveToolPath(ctx, rawPath, 'readwrite');
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return errorResult(msg);
+      }
+      const workdir = target.root;
+      const targetPath = target.path;
 
       // Step 1: read the original atomically (fd with O_NOFOLLOW) and capture
       // its permission bits. The temp file we write to below is created with
@@ -70,7 +80,7 @@ export function createEditTool(): ToolDefinition {
       let content: string;
       let originalMode: number;
       try {
-        const readHandle = await openForRead(rawPath, ctx.workdir);
+        const readHandle = await openForRead(targetPath, workdir);
         try {
           const stat = await readHandle.stat();
           // Only keep the 12 mode bits that matter for file permissions
@@ -118,15 +128,15 @@ export function createEditTool(): ToolDefinition {
       // Step 3: write updated content to a SIBLING temp file (same directory,
       // so rename is atomic on the same filesystem).
       const tempSuffix = randomBytes(6).toString('hex');
-      const targetBasename = path.basename(rawPath);
-      const targetDir = path.dirname(rawPath);
-      const tempPath = targetDir === '.' || targetDir === ''
-        ? `.${targetBasename}.nexora-${tempSuffix}.tmp`
-        : path.join(targetDir, `.${targetBasename}.nexora-${tempSuffix}.tmp`);
+      const targetBasename = path.basename(targetPath);
+      const targetDir = path.dirname(targetPath);
+      const tempPath = path.join(targetDir, `.${targetBasename}.nexora-${tempSuffix}.tmp`);
 
       let writeHandle;
+      let temp: ToolPathResolution | undefined;
       try {
-        writeHandle = await openForWrite(tempPath, ctx.workdir);
+        temp = await resolveToolPath(ctx, tempPath, 'write');
+        writeHandle = await openForWrite(temp.path, temp.root);
       } catch (err) {
         if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
         if (err instanceof SymlinkRefusedError) return errorResult(err.message);
@@ -149,7 +159,7 @@ export function createEditTool(): ToolDefinition {
       } catch (err) {
         await writeHandle.close().catch(() => {});
         // Clean up the temp file so we don't leave garbage.
-        await cleanupTemp(tempPath, ctx.workdir);
+        await cleanupTemp(temp?.path ?? tempPath, workdir);
         const msg = err instanceof Error ? err.message : String(err);
         return errorResult(`Cannot write temp file: ${msg}`);
       }
@@ -160,10 +170,10 @@ export function createEditTool(): ToolDefinition {
       let finalTempPath: string;
       let finalTargetPath: string;
       try {
-        finalTempPath = await canonicalizePath(tempPath, ctx.workdir);
-        finalTargetPath = await canonicalizePath(rawPath, ctx.workdir);
+        finalTempPath = await canonicalizePath(temp?.path ?? tempPath, workdir);
+        finalTargetPath = await canonicalizePath(targetPath, workdir);
       } catch (err) {
-        await cleanupTemp(tempPath, ctx.workdir);
+        await cleanupTemp(temp?.path ?? tempPath, workdir);
         if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
         const msg = err instanceof Error ? err.message : String(err);
         return errorResult(`Cannot canonicalize: ${msg}`);
@@ -172,7 +182,7 @@ export function createEditTool(): ToolDefinition {
       try {
         await fsp.rename(finalTempPath, finalTargetPath);
       } catch (err) {
-        await cleanupTemp(tempPath, ctx.workdir);
+        await cleanupTemp(temp?.path ?? tempPath, workdir);
         const msg = err instanceof Error ? err.message : String(err);
         return errorResult(`Cannot atomically replace: ${msg}`);
       }

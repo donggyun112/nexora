@@ -65,6 +65,18 @@ export class CoreToolExecutor implements ToolExecutor {
     });
   }
 
+  withContext(context: ToolContext): CoreToolExecutor {
+    return new CoreToolExecutor({
+      tools: Array.from(this.tools.values()),
+      context,
+      logger: this.logger,
+    });
+  }
+
+  getContext(): ToolContext {
+    return this.context;
+  }
+
   /**
    * 단일 도구 실행 (ToolExecutor 인터페이스).
    * 결과는 unknown 반환 — 호출자가 해석.

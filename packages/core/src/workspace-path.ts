@@ -1,4 +1,3 @@
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type {
   ResolvedWorkspacePath,
@@ -6,6 +5,7 @@ import type {
   WorkspaceMount,
   WorkspaceResolveOptions,
 } from '@dongkseo/contracts';
+import { resolvePathAgainstRoot } from '@dongkseo/contracts';
 
 export interface ResolveWorkspacePathOptions {
   rawPath: string;
@@ -17,20 +17,11 @@ export interface ResolveWorkspacePathOptions {
 
 export async function resolveWorkspacePath(options: ResolveWorkspacePathOptions): Promise<ResolvedWorkspacePath> {
   const access = options.access ?? 'read';
-  const root = await fsp.realpath(path.resolve(options.root));
-  const requested = path.isAbsolute(options.rawPath)
-    ? path.resolve(options.rawPath)
-    : path.resolve(root, options.rawPath);
-  const resolvedPath = await canonicalizeRequestedPath(requested);
+  const { canonicalRoot: root, finalPath: resolvedPath } = await resolvePathAgainstRoot(
+    options.rawPath,
+    options.root,
+  );
   const relativePath = path.relative(root, resolvedPath);
-
-  if (
-    relativePath === '..' ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new Error(`Access denied: "${options.rawPath}" resolves outside workspace root ${root}`);
-  }
 
   const mount = findMount(resolvedPath, options.mounts, root);
   if (isWriteAccess(access)) {
@@ -49,37 +40,6 @@ export async function resolveWorkspacePath(options: ResolveWorkspacePathOptions)
     access: isWriteAccess(access) ? 'rw' : 'ro',
     mount,
   };
-}
-
-async function canonicalizeRequestedPath(requested: string): Promise<string> {
-  try {
-    return await fsp.realpath(requested);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    const parent = path.dirname(requested);
-    const parentReal = await canonicalizeNearest(parent);
-    return path.join(parentReal, path.basename(requested));
-  }
-}
-
-async function canonicalizeNearest(target: string): Promise<string> {
-  const missing: string[] = [];
-  let current = target;
-  while (true) {
-    try {
-      let resolved = await fsp.realpath(current);
-      for (let i = missing.length - 1; i >= 0; i--) {
-        resolved = path.join(resolved, missing[i]);
-      }
-      return resolved;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      const parent = path.dirname(current);
-      if (parent === current) return target;
-      missing.push(path.basename(current));
-      current = parent;
-    }
-  }
 }
 
 export function workspaceRootMount(root: string, mode: WorkspaceAccessMode): WorkspaceMount {

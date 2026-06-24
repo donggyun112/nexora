@@ -85,10 +85,15 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import {
+  isPathWithinRoot,
+  PathOutsideRootError,
+  resolvePathAgainstRoot,
+} from '@dongkseo/contracts';
 
-export class PathOutsideWorkspaceError extends Error {
+export class PathOutsideWorkspaceError extends PathOutsideRootError {
   constructor(target: string, root: string) {
-    super(`Access denied: "${target}" resolves outside workspace root ${root}`);
+    super(target, root);
     this.name = 'PathOutsideWorkspaceError';
   }
 }
@@ -98,11 +103,6 @@ export class SymlinkRefusedError extends Error {
     super(`Refusing to follow symlink at "${target}"`);
     this.name = 'SymlinkRefusedError';
   }
-}
-
-function isWithin(target: string, root: string): boolean {
-  if (target === root) return true;
-  return target.startsWith(root + path.sep);
 }
 
 /**
@@ -117,43 +117,9 @@ async function resolveAgainstRoot(rawPath: string, root: string): Promise<{
   /** Absolute path with parent directory canonicalized. */
   finalPath: string;
 }> {
-  const canonicalRoot = await fsp.realpath(path.resolve(root));
-  const requested = path.isAbsolute(rawPath)
-    ? path.resolve(rawPath)
-    : path.resolve(canonicalRoot, rawPath);
-
-  // Special case: caller is asking for the root itself (e.g. read tool with '.').
-  // We only need to verify that `requested` canonicalizes to the root — the
-  // usual parent-dir check would wrongly reject it because root's parent is
-  // outside root.
-  if (requested === canonicalRoot) {
-    return { canonicalRoot, finalPath: canonicalRoot };
-  }
-
-  // Canonicalize parent (which must already exist for read; may not for write).
-  // Walking up handles the mkdir -p case.
-  const parent = path.dirname(requested);
-  const base = path.basename(requested);
-
-  let parentReal: string;
-  try {
-    parentReal = await fsp.realpath(parent);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    parentReal = await canonicalizeNearest(parent);
-  }
-
-  const finalPath = path.join(parentReal, base);
-
-  // parent must be the root itself or a descendant of root
-  if (!isWithin(parentReal, canonicalRoot)) {
-    throw new PathOutsideWorkspaceError(rawPath, canonicalRoot);
-  }
-  if (!isWithin(finalPath, canonicalRoot)) {
-    throw new PathOutsideWorkspaceError(rawPath, canonicalRoot);
-  }
-
-  return { canonicalRoot, finalPath };
+  return resolvePathAgainstRoot(rawPath, root, {
+    createOutsideRootError: (target, canonicalRoot) => new PathOutsideWorkspaceError(target, canonicalRoot),
+  });
 }
 
 /** Construct flags including O_NOFOLLOW when the platform supports it. */
@@ -235,7 +201,7 @@ export async function openForWrite(rawPath: string, root: string): Promise<fsp.F
     // and raises an error, but see the "KNOWN LIMITATION" note above — the mkdir
     // side effect has already happened by the time we get here.
     const parentReal = await fsp.realpath(parentDir);
-    if (!isWithin(parentReal, canonicalRoot)) {
+    if (!isPathWithinRoot(parentReal, canonicalRoot)) {
       throw new PathOutsideWorkspaceError(rawPath, canonicalRoot);
     }
   }
@@ -288,7 +254,7 @@ export async function resolveDirForListing(rawPath: string, root: string): Promi
     ? path.resolve(rawPath)
     : path.resolve(canonicalRoot, rawPath);
   const real = await fsp.realpath(requested);
-  if (!isWithin(real, canonicalRoot)) {
+  if (!isPathWithinRoot(real, canonicalRoot)) {
     throw new PathOutsideWorkspaceError(rawPath, canonicalRoot);
   }
   return real;
@@ -303,32 +269,4 @@ export async function resolveDirForListing(rawPath: string, root: string): Promi
 export async function canonicalizePath(rawPath: string, root: string): Promise<string> {
   const { finalPath } = await resolveAgainstRoot(rawPath, root);
   return finalPath;
-}
-
-/**
- * Walk up the path until we find a directory that exists, canonicalize that,
- * then re-attach the missing trailing components. Used for "mkdir -p"-style
- * write targets where intermediate dirs may not exist yet.
- */
-async function canonicalizeNearest(p: string): Promise<string> {
-  const segments: string[] = [];
-  let current = p;
-  while (true) {
-    try {
-      const real = await fsp.realpath(current);
-      let result = real;
-      for (let i = segments.length - 1; i >= 0; i--) {
-        result = path.join(result, segments[i]);
-      }
-      return result;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      const parent = path.dirname(current);
-      if (parent === current) {
-        return p;
-      }
-      segments.push(path.basename(current));
-      current = parent;
-    }
-  }
 }

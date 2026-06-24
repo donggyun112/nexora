@@ -158,6 +158,17 @@ export type {
   WorkspaceProvider,
   SandboxClient,
 } from './workspace.js';
+export {
+  canonicalizeExistingOrNearestPath,
+  canonicalizeNearestExistingPath,
+  isPathWithinRoot,
+  PathOutsideRootError,
+  resolvePathAgainstRoot,
+} from './canonical-path.js';
+export type {
+  ResolvedPathAgainstRoot,
+  ResolvePathAgainstRootOptions,
+} from './canonical-path.js';
 export { safeUtf8Prefix, safeUtf8Suffix, utf8SafeSliceEnd } from './utf8.js';
 
 export type {

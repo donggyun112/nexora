@@ -79,3 +79,6 @@ export { createEphemeralResultListener } from './ephemeral-result-listener.js';
 export type { EphemeralResultListenerOptions } from './ephemeral-result-listener.js';
 
 export { createSubmitRelayTool } from './submit-relay.js';
+
+export { sandboxToolDefinitions, registerSandboxTools } from './sandbox-bundle.js';
+export type { SandboxToolBundleOptions } from './sandbox-bundle.js';

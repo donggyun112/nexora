@@ -214,6 +214,9 @@ export type {
   ToolCallRecord,
   ToolResultRecord,
   ToolContextRecord,
+  ArtifactChannel,
+  ArtifactRef,
+  ArtifactPublishOptions,
 } from './store.js';
 
 export type {

@@ -10,6 +10,7 @@
 //   Audit          ./audit            AuditStoreJson
 //   Tool context   ./tool-context     ToolContextStoreJson
 //   Suspended turn ./suspended-turn   SuspendedTurnStoreJson       (HITL 일시중단 턴)
+//   Artifact       ./artifact         ArtifactChannelJson          (에이전트 간 산출물 공유)
 //   Provider       ./index            JsonStoreProvider, createJsonStoreProvider (한 번에 전부 생성)
 //
 // 모든 클래스는 @dongkseo/contracts 의 *Store 인터페이스 + DescribableStore 를 구현한다.
@@ -25,6 +26,7 @@ export { AuditStoreJson } from './audit.js';
 export { ToolContextStoreJson } from './tool-context.js';
 export { SuspendedTurnStoreJson } from './suspended-turn.js';
 export { TreeConversationStoreJson } from './session-tree.js';
+export { ArtifactChannelJson } from './artifact.js';
 
 import { ConversationStoreJson } from './conversation.js';
 import { KnowledgeStoreJson } from './knowledge.js';

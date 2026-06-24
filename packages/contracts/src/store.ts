@@ -176,3 +176,54 @@ export interface ToolResultRecord {
 export type ToolContextRecord =
   | { type: 'call'; toolCallId: string; name: string; input: unknown; timestamp: number }
   | { type: 'result'; toolCallId: string; output: string; isError: boolean; timestamp: number };
+
+// ─── Artifact Channel ─────────────────────────────────────────────────────
+// 에이전트 간 산출물 공유 — conversationId(scope) 키. 로컬 파일 공유(.scratch) 대체.
+// producer가 자기 샌드박스 산출물을 publish(ref 반환) → ref를 메시지로 전달 →
+// consumer가 fetch(ref)로 bytes 수령. 격리 유지, 명시적 계약, TTL은 cleanup 스윕으로 실현.
+
+export interface ArtifactRef {
+  /** Globally-unique opaque handle. fetch()는 이것만으로 조회 가능. */
+  ref: string;
+  /** 소유 스코프 (conversationId 또는 tenant+conversation). */
+  scope: string;
+  /** 사람이 읽는 이름 (예: 'slide-1.png'). */
+  name: string;
+  /** MIME 타입. 기본 application/octet-stream. */
+  mediaType: string;
+  /** 바이트 크기. */
+  size: number;
+  /** 생성 시각 (epoch ms). */
+  createdAt: number;
+  /** 만료 시각 (epoch ms). 없으면 무기한. */
+  expiresAt?: number;
+  /** 임의 메타데이터. */
+  meta?: Record<string, unknown>;
+}
+
+export interface ArtifactPublishOptions {
+  /** MIME 타입. 기본 application/octet-stream. */
+  mediaType?: string;
+  /** 생존 기간(ms). 지나면 cleanup()이 제거. 없으면 무기한. */
+  ttlMs?: number;
+  /** 임의 메타데이터. */
+  meta?: Record<string, unknown>;
+}
+
+export interface ArtifactChannel {
+  /** 산출물 게시 → ref 반환. */
+  publish(
+    scope: string,
+    name: string,
+    bytes: Buffer,
+    options?: ArtifactPublishOptions,
+  ): Promise<ArtifactRef>;
+  /** ref로 바이트 조회. 없으면 null. (만료는 검사하지 않음 — cleanup 책임.) */
+  fetch(ref: string): Promise<Buffer | null>;
+  /** scope의 아티팩트 메타 목록 (바이트 제외), createdAt 오름차순. */
+  list(scope: string): Promise<ArtifactRef[]>;
+  /** ref 삭제 (없으면 no-op). */
+  delete(ref: string): Promise<void>;
+  /** expiresAt <= now 인 아티팩트 제거 → 제거 개수. now 기본 Date.now(). */
+  cleanup(now?: number): Promise<number>;
+}

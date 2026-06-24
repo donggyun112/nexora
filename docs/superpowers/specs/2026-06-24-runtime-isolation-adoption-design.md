@@ -113,6 +113,8 @@ nexora의 런타임 격리 기능(WorkspaceSession / ExecutionHarness / SandboxC
 ## 5. 리스크 & 미해결 (플랜 단계 필수 검증)
 
 1. **전역 `SandboxManager` 동시성 (최우선)**: `ensureSandboxManagerInitialized`/`SandboxManager.cleanupAfterCommand()`가 정적/싱글톤으로 보임. in7의 동시 다중 대화(서로 다른 root/정책)에서 경합·정책 오염 가능. 대책 후보: per-command 격리 확인, 직렬화, 또는 세션별 매니저 인스턴스화 가능 여부 확인. **이 검증 없이는 in7 적용 불가.**
+
+   **동시성 검증 결과(2026-06-24, Task2)**: 특성화 테스트(`packages/core/src/__tests__/asrt-sandbox-concurrency.test.ts`, 2 PASS) + SDK `@anthropic-ai/sandbox-runtime@0.0.59` 소스 독해로 확인. **FS 정책은 per-command 격리 성립** — `run()`이 세션별 config를 `wrapWithSandboxArgv(cmd, shell, this.config, signal)`로 전달하고, SDK `wrapWithSandbox`가 그 `customConfig.filesystem` 의 allow/deny 를 wrap 시점에 seatbelt 프로파일로 굽는다(SDK `updateConfig` 주석: "Filesystem changes are NOT applied live; macOS bakes them into the seatbelt profile at wrap time"). 따라서 동시 다른-root 세션 간 파일 격리는 전역 config 교체와 **무관하게** 유지된다. **단 네트워크는 전역 공유**: 프록시와 `config`는 module-level 싱글톤으로 `initialize` 1회 기동되고 `config.network.allowedDomains/deniedDomains`를 per-request로 읽는다. 고정-root(`perRun:false`)에서 sandboxing 이 이미 enabled 면 두 번째 이후 `create()`가 `ensureSandboxManagerInitialized → updateConfig(config)`로 **전역 네트워크 정책을 live-swap**(실행 중인 모든 sandbox 자식에 즉시 반영)한다. → 동시 대화가 **동일 네트워크 allowlist를 공유**하며, 새 세션 acquire 가 in-flight 대화의 유효 네트워크 정책을 바꿀 수 있다. **in7 게이트 판정**: (a) 모든 대화에 공통 도메인 allowlist 를 쓰거나 (b) exec 네트워크를 끄는 선에서 안전. 대화별 상이 네트워크 정책은 현재 비지원 → 필요 시 세션별 매니저 인스턴스화 등 별도 과제.
 2. macOS seatbelt 베타 프리뷰 — API 변동 가능성, 위반 시 디버깅 흐름.
 3. `ripgrep` 호스트 prereq — 배포/개발 환경 보장.
 4. exec 개방의 운영 안전 — 자원 고갈은 범위 밖이나 타임아웃/캡 + 모니터링 권장.

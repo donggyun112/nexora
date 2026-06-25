@@ -16,10 +16,7 @@ export function llmContentToBlocks(content: string | LLMContentBlock[]): Content
   });
 }
 
-function blocksToLLMContent(
-  blocks: ContentBlock[],
-  images: Array<{ data: string; mimeType: string }>,
-): LLMContentBlock[] {
+function blocksToLLMContent(blocks: ContentBlock[]): LLMContentBlock[] {
   const out: LLMContentBlock[] = [];
   for (const b of blocks) {
     if (b.type === 'text') out.push({ type: 'text', text: b.text });
@@ -27,12 +24,8 @@ function blocksToLLMContent(
     else if (b.type === 'tool_result') {
       const content = typeof b.content === 'string' ? b.content : b.content.map(c => (c.type === 'text' ? c.text : '[image]')).join('');
       out.push({ type: 'tool_result', id: b.tool_use_id, content, isError: b.is_error ?? false });
-    } else if (b.type === 'image') {
-      // image blocks are appended after resolution by the caller (see toLLMMessages)
     }
   }
-  // images resolved out-of-band are appended by the caller
-  void images;
   return out;
 }
 
@@ -55,7 +48,7 @@ export async function toLLMMessages(
   // 2. Map each content entry, resolving image blocks via the injected resolver.
   for (const e of kept) {
     if (e.type === 'summary' || e.type === 'attachment' || e.type === 'system') continue;
-    const content: LLMContentBlock[] = blocksToLLMContent(e.content, []);
+    const content: LLMContentBlock[] = blocksToLLMContent(e.content);
     for (const b of e.content) {
       if (b.type === 'image') {
         if (b.source.type === 'attachment_ref') {

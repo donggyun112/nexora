@@ -33,4 +33,58 @@ describe('sanitizeToolPairsInPlace', () => {
     sanitizeToolPairsInPlace(history);
     expect(history).toEqual(before);
   });
+
+  it('pulls a tool_result adjacent when a user message is interleaved before it', () => {
+    const history: LLMMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'c1', name: 'x', arguments: {} }] },
+      { role: 'user', content: 'stop' },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'c1', content: 'ok' }] },
+    ];
+    sanitizeToolPairsInPlace(history);
+    expect(history).toEqual([
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'c1', name: 'x', arguments: {} }] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'c1', content: 'ok' }] },
+      { role: 'user', content: 'stop' },
+    ]);
+  });
+
+  it('merges scattered results for one assistant into a single adjacent message in call order', () => {
+    const history: LLMMessage[] = [
+      { role: 'assistant', content: [
+        { type: 'tool_call', id: 'c1', name: 'x', arguments: {} },
+        { type: 'tool_call', id: 'c2', name: 'y', arguments: {} },
+      ] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'c1', content: 'r1' }] },
+      { role: 'user', content: 'resumed' },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'c2', content: 'r2' }] },
+    ];
+    sanitizeToolPairsInPlace(history);
+    expect(history).toEqual([
+      { role: 'assistant', content: [
+        { type: 'tool_call', id: 'c1', name: 'x', arguments: {} },
+        { type: 'tool_call', id: 'c2', name: 'y', arguments: {} },
+      ] },
+      { role: 'tool_result', content: [
+        { type: 'tool_result', id: 'c1', content: 'r1' },
+        { type: 'tool_result', id: 'c2', content: 'r2' },
+      ] },
+      { role: 'user', content: 'resumed' },
+    ]);
+  });
+
+  it('gives each of two consecutive assistant tool_call messages its own adjacent result', () => {
+    const history: LLMMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'a1', name: 'x', arguments: {} }] },
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'b1', name: 'y', arguments: {} }] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'a1', content: 'ra' }] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'b1', content: 'rb' }] },
+    ];
+    sanitizeToolPairsInPlace(history);
+    expect(history).toEqual([
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'a1', name: 'x', arguments: {} }] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'a1', content: 'ra' }] },
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'b1', name: 'y', arguments: {} }] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'b1', content: 'rb' }] },
+    ]);
+  });
 });

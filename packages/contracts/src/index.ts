@@ -198,6 +198,8 @@ export type {
   AgentLogger,
 } from './agent.js';
 
+export { imageResultForLLM, sanitizeToolPairsInPlace } from './llm-message.js';
+
 export type {
   ConversationStore,
   ConversationSearchOptions,

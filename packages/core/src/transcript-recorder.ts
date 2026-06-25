@@ -36,7 +36,10 @@ export class TranscriptRecorder {
 
   async recordUserInput(input: AgentInput): Promise<void> {
     const content: ContentBlock[] = [{ type: 'text', text: input.prompt }];
-    for (const img of input.images ?? []) content.push(await this.imageBlock(img));
+    for (const img of input.images ?? []) {
+      const block = await this.imageBlock(img);
+      if (block) content.push(block);
+    }
     await this.write({
       ...this.base(),
       type: 'user',
@@ -47,8 +50,8 @@ export class TranscriptRecorder {
   }
 
   async recordSteer(text: string): Promise<void> {
-    await this.flushPendingAssistant();
     await this.flushPendingToolResults();
+    await this.flushPendingAssistant();
     await this.write({
       ...this.base(),
       type: 'user',
@@ -90,7 +93,8 @@ export class TranscriptRecorder {
         // If the result is an image, also store it as an attachment_ref block
         const img = imageResultForLLM(event.result);
         if (img) {
-          this.pendingToolResults.push(await this.imageBlock({ type: 'image', data: img.data, mimeType: img.mimeType }));
+          const block = await this.imageBlock({ type: 'image', data: img.data, mimeType: img.mimeType });
+          if (block) this.pendingToolResults.push(block);
         }
         break;
       }
@@ -155,17 +159,21 @@ export class TranscriptRecorder {
     this.mode = 'idle';
   }
 
-  private async imageBlock(img: ImageContent): Promise<ContentBlock> {
-    const buf = Buffer.from(img.data, 'base64');
-    const ref = await this.store.putAttachment(this.conversationId, buf, img.mimeType);
-    return {
-      type: 'image',
-      source: {
-        type: 'attachment_ref',
-        ref: ref.ref,
-        media_type: img.mimeType,
-      },
-    };
+  private async imageBlock(img: ImageContent): Promise<ContentBlock | null> {
+    try {
+      const buf = Buffer.from(img.data, 'base64');
+      const ref = await this.store.putAttachment(this.conversationId, buf, img.mimeType);
+      return {
+        type: 'image',
+        source: {
+          type: 'attachment_ref',
+          ref: ref.ref,
+          media_type: img.mimeType,
+        },
+      };
+    } catch {
+      return null; // best-effort: a storage hiccup drops the image, never the turn
+    }
   }
 
   async flush(): Promise<void> {

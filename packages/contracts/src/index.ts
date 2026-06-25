@@ -159,6 +159,7 @@ export type {
   WorkspaceProvider,
   SandboxClient,
 } from './workspace.js';
+export type { WorkspaceStateStore } from './workspace-state.js';
 export {
   canonicalizeExistingOrNearestPath,
   canonicalizeNearestExistingPath,

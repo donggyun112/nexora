@@ -33,6 +33,7 @@ export type {
   ArtifactChannel,
   ArtifactRef,
   ArtifactPublishOptions,
+  WorkspaceStateStore,
 } from '@dongkseo/contracts';
 
 export { createStoreProvider, warnDevStores } from './factory.js';

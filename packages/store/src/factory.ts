@@ -15,6 +15,7 @@ import type {
   TreeConversationStore,
   SuspendedTurnStore,
   TranscriptStore,
+  WorkspaceStateStore,
   DescribableStore,
   StoreBackendInfo,
   AgentLogger,
@@ -35,6 +36,8 @@ export interface StoreProvider {
   sessionTree?: TreeConversationStore;
   /** Rich append-only transcript store (system of record). Optional until all backends implement it. */
   transcript?: TranscriptStore;
+  /** 대화별 워크스페이스 snapshot 바인딩 (conversationId 키). Optional until all backends implement it. */
+  workspaceState?: WorkspaceStateStore;
 }
 
 /**
@@ -53,6 +56,7 @@ export function warnDevStores(
     ['audit', provider.audit],
     ['toolContext', provider.toolContext],
     ['artifact', provider.artifact],
+    ['workspaceState', provider.workspaceState],
   ];
   for (const [name, store] of stores) {
     if (isDescribable(store)) {

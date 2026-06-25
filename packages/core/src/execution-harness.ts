@@ -79,8 +79,10 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly workspaceProvider?: WorkspaceProvider;
   private readonly transcript?: TranscriptStore;
   private readonly conversationId?: string;
-  /** The recorder for the currently-active execute() — used by steer(). Single active execution assumed (same as pendingSteers). */
+  /** The recorder for the currently-active execute() — used by steer(). Concurrent execute() calls are not supported when transcript recording is enabled (same single-active assumption as pendingSteers). */
   private activeRecorder: TranscriptRecorder | null = null;
+  /** In-flight steer record() promises for the active execute() — awaited before flush so steers aren't lost. */
+  private activeSteerWrites: Promise<void>[] = [];
   /**
    * Active controllers per concurrent execute() call. abort() aborts ALL of them.
    * Per-call structure means concurrent executions don't trample each other's state.
@@ -117,6 +119,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
       ? new TranscriptRecorder(this.transcript, this.conversationId)
       : null;
     this.activeRecorder = recorder;
+    this.activeSteerWrites = [];
     if (recorder && !input.resumeContext) {
       try { await recorder.recordUserInput(input); } catch { /* best-effort */ }
     }
@@ -250,9 +253,11 @@ export class LocalExecutionHarness implements ExecutionHarness {
     } finally {
       idle.clear();
       if (recorder) {
+        try { await Promise.all(this.activeSteerWrites); } catch { /* best-effort */ }
         try { await recorder.flush(); } catch { /* best-effort */ }
       }
       this.activeRecorder = null;
+      this.activeSteerWrites = [];
       // Close the underlying generator so any remaining `yield`s are aborted.
       // This is what prevents the architecture from continuing to run after timeout.
       if (loopGen) {
@@ -298,7 +303,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
     if (!trimmed) return this.activeControllers.size > 0;
     if (this.activeControllers.size === 0) return false;
     this.pendingSteers.push({ role: 'user', content: trimmed });
-    void this.activeRecorder?.recordSteer(trimmed);
+    const steerWrite = this.activeRecorder?.recordSteer(trimmed);
+    if (steerWrite) this.activeSteerWrites.push(steerWrite.catch(() => {}));
     return true;
   }
 }

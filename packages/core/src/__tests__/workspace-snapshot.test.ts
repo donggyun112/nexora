@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   LocalTarSnapshotBackend,
   NoopSnapshotBackend,
+  fingerprintRoot,
 } from '../workspace-snapshot.js';
 
 const tmpRoots: string[] = [];
@@ -51,5 +52,30 @@ describe('NoopSnapshotBackend', () => {
     const backend = new NoopSnapshotBackend();
     expect(backend.kind).toBe('noop');
     expect(await backend.restorable('anything')).toBe(false);
+  });
+});
+
+describe('fingerprintRoot', () => {
+  it('is stable for identical content and changes when a file changes', async () => {
+    const dir = await mkTmp('nexora-fp-');
+    await fsp.mkdir(path.join(dir, 'nested'), { recursive: true });
+    await fsp.writeFile(path.join(dir, 'a.txt'), 'one');
+    await fsp.writeFile(path.join(dir, 'nested', 'b.txt'), 'two');
+
+    const first = await fingerprintRoot(dir);
+    const again = await fingerprintRoot(dir);
+    expect(again).toBe(first);
+
+    await fsp.writeFile(path.join(dir, 'nested', 'b.txt'), 'changed');
+    const after = await fingerprintRoot(dir);
+    expect(after).not.toBe(first);
+  });
+
+  it('changes when a file is added', async () => {
+    const dir = await mkTmp('nexora-fp-');
+    await fsp.writeFile(path.join(dir, 'a.txt'), 'one');
+    const before = await fingerprintRoot(dir);
+    await fsp.writeFile(path.join(dir, 'c.txt'), 'three');
+    expect(await fingerprintRoot(dir)).not.toBe(before);
   });
 });

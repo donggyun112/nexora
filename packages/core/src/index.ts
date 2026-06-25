@@ -83,7 +83,7 @@ export { AsrtSandboxClient } from './asrt-sandbox-client.js';
 export type { AsrtSandboxClientOptions } from './asrt-sandbox-client.js';
 export { createSandboxProvider, SANDBOX_SECRET_DENYLIST } from './sandbox-provider.js';
 export type { SandboxProviderOptions } from './sandbox-provider.js';
-export { LocalTarSnapshotBackend, NoopSnapshotBackend } from './workspace-snapshot.js';
+export { LocalTarSnapshotBackend, NoopSnapshotBackend, fingerprintRoot } from './workspace-snapshot.js';
 
 export { AgentRunner } from './runner.js';
 export type { AgentRunnerOptions } from './runner.js';

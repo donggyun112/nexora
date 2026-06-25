@@ -30,7 +30,7 @@ import type {
   SnapshotBackend,
 } from '@dongkseo/contracts';
 import { safeUtf8Prefix } from '@dongkseo/contracts';
-import { NoopSnapshotBackend } from './workspace-snapshot.js';
+import { NoopSnapshotBackend, fingerprintRoot } from './workspace-snapshot.js';
 import {
   resolveWorkspacePath,
   safeWorkspaceSegment,
@@ -136,7 +136,13 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
       ? await this.createRunRoot(id)
       : await this.resolveExistingRoot(state.root);
     if (state.ref && (await this.snapshotBackend.restorable(state.ref))) {
-      await this.snapshotBackend.restore(state.ref, root);
+      // Fixed root may still be live; a per-run root is always fresh (no live fp).
+      const live = this.perRun ? undefined : await fingerprintRoot(root);
+      if (live !== undefined && live === state.fingerprint) {
+        // HOT: live fixed root unchanged since the last snapshot → skip restore.
+      } else {
+        await this.snapshotBackend.restore(state.ref, root); // COLD
+      }
     }
     return this.buildSession(id, root);
   }
@@ -280,9 +286,10 @@ class AsrtSandboxSession implements WorkspaceSession {
   async snapshot(): Promise<WorkspaceSnapshot> {
     const createdAt = new Date().toISOString();
     const metadata = { mode: this.mode };
+    const fingerprint = await fingerprintRoot(this.root);
     if (this.snapshotBackend.kind === 'noop') {
       // No durable backend: the snapshot only points at the still-live root.
-      return { id: this.id, backend: 'inline-root', root: this.root, createdAt, metadata };
+      return { id: this.id, backend: 'inline-root', root: this.root, createdAt, fingerprint, metadata };
     }
     const ref = await this.snapshotBackend.persist(this.id, this.root);
     return {
@@ -291,6 +298,7 @@ class AsrtSandboxSession implements WorkspaceSession {
       ref,
       root: this.root,
       createdAt,
+      fingerprint,
       metadata,
     };
   }

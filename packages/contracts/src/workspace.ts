@@ -45,6 +45,12 @@ export interface WorkspaceSnapshot {
   /** Live root, when still on disk — enables fast-path reuse without a restore. */
   root?: string;
   createdAt?: string;
+  /**
+   * SHA256 of the root's contents at snapshot time. On resume, a live fixed
+   * root whose fingerprint still matches lets us skip the restore (hot path);
+   * a mismatch (or a fresh per-run root) forces a tar restore (cold path).
+   */
+  fingerprint?: string;
   metadata?: Record<string, unknown>;
 }
 

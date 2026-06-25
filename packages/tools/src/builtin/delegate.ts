@@ -669,45 +669,14 @@ async function pumpBackgroundChild(args: {
   timeoutMs?: number;
 }): Promise<void> {
   const { jobId, childName, runtime, input, jobRegistry, onSubagentEvent, steerSelf, deliverResult, logger, timeoutMs } = args;
-  const childInput: AgentInput = {
-    prompt: typeof input === 'string' ? input : JSON.stringify(input),
-  };
 
-  // Bound a hung child: abort its runtime after timeoutMs. The abort unwinds the
-  // execute() loop below; `timedOut` distinguishes that from normal completion
+  // Drive the child runtime to completion. drainRuntime bounds a hung child via
+  // timeoutMs (abort + `timedOut`), distinguishing that from normal completion
   // and from an explicit cancel_subagent.
-  let timedOut = false;
-  const timer =
-    timeoutMs && timeoutMs > 0
-      ? setTimeout(() => {
-          timedOut = true;
-          runtime.abort();
-        }, timeoutMs)
-      : null;
-  timer?.unref?.();
-
-  let content = '';
-  let isError = false;
-  try {
-    for await (const event of runtime.execute(childInput)) {
-      onSubagentEvent?.(childName, event);
-      if (event.type === 'done') content = event.content;
-      else if (event.type === 'error') {
-        content = event.message;
-        isError = true;
-      }
-    }
-  } catch (err) {
-    content = err instanceof Error ? err.message : String(err);
-    isError = true;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-
-  if (timedOut) {
-    content = `Background subagent "${childName}" exceeded ${timeoutMs}ms and was aborted.`;
-    isError = true;
-  }
+  const { content, isError } = await drainRuntime(childName, runtime, input, {
+    onEvent: onSubagentEvent ? (e) => onSubagentEvent(childName, e) : undefined,
+    timeoutMs,
+  });
 
   // settle() is a no-op if the job was already marked cancelled by cancel_subagent.
   jobRegistry.settle(jobId, isError ? 'error' : 'done', Date.now());

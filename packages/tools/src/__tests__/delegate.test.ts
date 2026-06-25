@@ -336,6 +336,36 @@ describe('delegate tool', () => {
     expect(result.type).toBe('text');
     if (result.type === 'text') expect(result.text).toContain('ok');
   });
+
+  it('async background subagent folds its result into the live turn via steerSelf', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([]);
+    const steered: string[] = [];
+    const compiled = {
+      type: 'compiled' as const,
+      name: 'worker',
+      description: 'w',
+      runtime: {
+        abort: () => {},
+        async *execute() {
+          yield { type: 'done', content: 'bg done', toolCalls: [] };
+        },
+      },
+    };
+    const tool = createDelegateTool({
+      transport, registry, subagents: [compiled as never], callerAgentName: 'parent',
+    });
+    const ctx = { ...makeCtx(), steerSelf: (m: string) => { steered.push(m); return true; } };
+    const result = await tool.execute('d-async', {
+      capability: 'worker', input: 'go', waitForResult: 'async',
+    }, ctx);
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toContain('background job');
+    // allow the detached pump microtasks to flush
+    await new Promise((r) => setTimeout(r, 10));
+    expect(steered.some((m) => m.includes('bg done'))).toBe(true);
+  });
 });
 
 function fakeRuntime(events: AgentEvent[], opts: { hang?: boolean } = {}): AgentRuntime {

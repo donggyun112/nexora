@@ -191,3 +191,18 @@ describe('ToolContextStoreJson', () => {
     expect(deleted).toBe(1);
   });
 });
+
+describe('TranscriptStoreJson', () => {
+  it('provider exposes a transcript store', async () => {
+    const provider = createJsonStoreProvider(tmpDir);
+    expect(provider.transcript).toBeDefined();
+    await provider.transcript.appendEntry({
+      type: 'user', uuid: 'u1', parentUuid: null, conversationId: 'c',
+      schemaVersion: 'v2', timestamp: '2026-06-25T00:00:00Z', content: [{ type: 'text', text: 'hi' }],
+    });
+    await provider.transcript.flush();
+    const got = [];
+    for await (const e of provider.transcript.getEntries('c')) got.push(e);
+    expect(got).toHaveLength(1);
+  });
+});

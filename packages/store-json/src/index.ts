@@ -29,6 +29,7 @@ export { TreeConversationStoreJson } from './session-tree.js';
 export { ArtifactChannelJson } from './artifact.js';
 
 import { ConversationStoreJson } from './conversation.js';
+import { TranscriptStoreJson } from './transcript.js';
 import { KnowledgeStoreJson } from './knowledge.js';
 import { ScheduleStoreJson } from './schedule.js';
 import { ContextStoreJson } from './context-store.js';
@@ -40,6 +41,7 @@ import { ArtifactChannelJson } from './artifact.js';
 
 export interface JsonStoreProvider {
   conversation: ConversationStoreJson;
+  transcript: TranscriptStoreJson;
   knowledge: KnowledgeStoreJson;
   schedule: ScheduleStoreJson;
   context: ContextStoreJson;
@@ -54,6 +56,7 @@ export interface JsonStoreProvider {
 export function createJsonStoreProvider(dataDir: string): JsonStoreProvider {
   return {
     conversation: new ConversationStoreJson(dataDir),
+    transcript: new TranscriptStoreJson(dataDir),
     knowledge: new KnowledgeStoreJson(dataDir),
     schedule: new ScheduleStoreJson(dataDir),
     context: new ContextStoreJson(dataDir),

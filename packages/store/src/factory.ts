@@ -14,6 +14,7 @@ import type {
   ArtifactChannel,
   TreeConversationStore,
   SuspendedTurnStore,
+  TranscriptStore,
   DescribableStore,
   StoreBackendInfo,
   AgentLogger,
@@ -32,6 +33,8 @@ export interface StoreProvider {
   suspendedTurn: SuspendedTurnStore;
   /** Session tree store (optional — only available with PG backend or store-json) */
   sessionTree?: TreeConversationStore;
+  /** Rich append-only transcript store (system of record). Optional until all backends implement it. */
+  transcript?: TranscriptStore;
 }
 
 /**

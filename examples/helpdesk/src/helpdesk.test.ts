@@ -45,13 +45,21 @@ import type { RunningAgent } from '@dongkseo/core';
 
 // ─── Mock LLM ──────────────────────────────────────────────────────────────
 
+// Single source of truth so stream() and complete() can't drift apart — a real
+// provider streams the same text it would return from complete(). The react
+// architecture drives stream() and streamLlm prefers done.content, so the
+// streamed content is what the E2E assertion below sees.
+const MOCK_HELPDESK_RESPONSE =
+  'This is a mock helpdesk response. In production, the agent would read your codebase and answer.';
+
 class MockHelpdeskLLM implements LLMProvider {
   async *stream(): AsyncGenerator<LLMChunk> {
-    yield { type: 'done', content: 'mock', stopReason: 'end_turn' };
+    yield { type: 'text_delta', delta: MOCK_HELPDESK_RESPONSE };
+    yield { type: 'done', content: MOCK_HELPDESK_RESPONSE, stopReason: 'end_turn' };
   }
   async complete(_msgs: LLMMessage[], _opts?: LLMOptions): Promise<LLMResponse> {
     return {
-      content: 'This is a mock helpdesk response. In production, the agent would read your codebase and answer.',
+      content: MOCK_HELPDESK_RESPONSE,
       model: 'mock',
       stopReason: 'end_turn',
     };

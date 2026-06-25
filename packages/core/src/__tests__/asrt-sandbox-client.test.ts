@@ -246,3 +246,67 @@ describe('AsrtSandboxClient', () => {
     }
   });
 });
+
+describe('AsrtSandboxClient.resume fingerprint hot/cold', () => {
+  function makeBackend() {
+    return {
+      kind: 'test-tar',
+      persist: vi.fn(async () => 'ref-1'),
+      restore: vi.fn(async () => {}),
+      restorable: vi.fn(async () => true),
+    };
+  }
+
+  it('skips restore when the fixed root is unchanged (HOT)', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-hot-'));
+    try {
+      const backend = makeBackend();
+      const client = new AsrtSandboxClient({ perRun: false, root, snapshotBackend: backend });
+      const session = await client.create();
+      await fsp.writeFile(path.join(root, 'file.txt'), 'v1');
+      const snap = await session.snapshot();
+      expect(snap.fingerprint).toBeTruthy();
+
+      await client.resume(snap); // root untouched since snapshot
+      expect(backend.restore).not.toHaveBeenCalled();
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('restores when the fixed root changed since snapshot (COLD)', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-cold-'));
+    try {
+      const backend = makeBackend();
+      const client = new AsrtSandboxClient({ perRun: false, root, snapshotBackend: backend });
+      const session = await client.create();
+      await fsp.writeFile(path.join(root, 'file.txt'), 'v1');
+      const snap = await session.snapshot();
+
+      await fsp.writeFile(path.join(root, 'file.txt'), 'v2-mutated');
+      await client.resume(snap);
+      expect(backend.restore).toHaveBeenCalledTimes(1);
+    } finally {
+      await fsp.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('always restores for a fresh per-run root (COLD)', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-perrun-'));
+    try {
+      const backend = makeBackend();
+      const client = new AsrtSandboxClient({ perRun: true, baseDir, snapshotBackend: backend });
+      const session = await client.create();
+      await fsp.writeFile(path.join(session.root, 'file.txt'), 'v1');
+      const snap = await session.snapshot();
+
+      await client.resume(snap); // fresh mkdtemp → live fingerprint undefined
+      expect(backend.restore).toHaveBeenCalledTimes(1);
+    } finally {
+      await fsp.rm(baseDir, { recursive: true, force: true });
+    }
+  });
+});

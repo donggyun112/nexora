@@ -27,6 +27,7 @@ export { ToolContextStoreJson } from './tool-context.js';
 export { SuspendedTurnStoreJson } from './suspended-turn.js';
 export { TreeConversationStoreJson } from './session-tree.js';
 export { ArtifactChannelJson } from './artifact.js';
+export { WorkspaceStateStoreJson } from './workspace-state.js';
 
 import { ConversationStoreJson } from './conversation.js';
 import { TranscriptStoreJson } from './transcript.js';
@@ -38,6 +39,7 @@ import { ToolContextStoreJson } from './tool-context.js';
 import { SuspendedTurnStoreJson } from './suspended-turn.js';
 import { TreeConversationStoreJson } from './session-tree.js';
 import { ArtifactChannelJson } from './artifact.js';
+import { WorkspaceStateStoreJson } from './workspace-state.js';
 
 export interface JsonStoreProvider {
   conversation: ConversationStoreJson;
@@ -49,6 +51,7 @@ export interface JsonStoreProvider {
   toolContext: ToolContextStoreJson;
   suspendedTurn: SuspendedTurnStoreJson;
   artifact: ArtifactChannelJson;
+  workspaceState: WorkspaceStateStoreJson;
   sessionTree: TreeConversationStoreJson;
 }
 
@@ -64,6 +67,7 @@ export function createJsonStoreProvider(dataDir: string): JsonStoreProvider {
     toolContext: new ToolContextStoreJson(dataDir),
     suspendedTurn: new SuspendedTurnStoreJson(dataDir),
     artifact: new ArtifactChannelJson(dataDir),
+    workspaceState: new WorkspaceStateStoreJson(dataDir),
     sessionTree: new TreeConversationStoreJson(dataDir),
   };
 }

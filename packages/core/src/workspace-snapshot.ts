@@ -98,3 +98,44 @@ function runTar(args: string[]): Promise<void> {
     });
   });
 }
+
+/**
+ * Deterministic SHA256 fingerprint of a directory tree's contents. Walks every
+ * regular file (sorted by relative path) and folds each path + bytes into one
+ * digest, so the result changes iff any file is added, removed, or modified.
+ * Drives the hot path on resume (live root unchanged → skip restore).
+ *
+ * v1 is a full-content hash with no exclusions; see design 9.2 for lighter
+ * alternatives (mtime+size, exclude patterns) once workspaces grow large.
+ */
+export async function fingerprintRoot(dir: string): Promise<string> {
+  const hash = crypto.createHash('sha256');
+  const files = await collectFilesRelative(dir, dir);
+  files.sort();
+  for (const rel of files) {
+    hash.update(rel);
+    hash.update('\0');
+    hash.update(await fsp.readFile(path.join(dir, rel)));
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+async function collectFilesRelative(root: string, dir: string): Promise<string[]> {
+  const out: string[] = [];
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return out; // missing dir → empty fingerprint contribution
+  }
+  for (const entry of entries) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...(await collectFilesRelative(root, abs)));
+    } else if (entry.isFile()) {
+      out.push(path.relative(root, abs));
+    }
+  }
+  return out;
+}

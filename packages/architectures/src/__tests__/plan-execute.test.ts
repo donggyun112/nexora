@@ -142,4 +142,32 @@ describe('PlanExecuteArchitecture — plan-mode gating', () => {
 
     expect(events.some(e => e.type === 'done')).toBe(true);
   });
+
+  it('accumulates LLM usage across plan and execute phases', async () => {
+    const llm = new MockLLMProvider([
+      {
+        text: 'plan',
+        toolCalls: [{ id: 'p1', name: 'submit_research_plan', arguments: { plan: '...' } }],
+        usage: { promptTokens: 10, completionTokens: 4, cachedTokens: 2 },
+      },
+      {
+        text: 'final',
+        usage: { promptTokens: 20, completionTokens: 8, cachedTokens: 1 },
+      },
+    ]);
+    const tools = new Map<string, (i: unknown) => Promise<unknown>>([
+      ['submit_research_plan', async () => ({ type: 'text' as const, text: 'plan recorded' })],
+    ]);
+    const services = servicesWithToolList(llm, tools, ['submit_research_plan']);
+    const arch = createPlanExecuteArchitecture({
+      exitPlanTool: 'submit_research_plan',
+      model: 'mock-model',
+    });
+
+    const events = await collect(arch.loop(services, { prompt: 'go' }));
+    const done = events.find((e): e is Extract<AgentEvent, { type: 'done' }> => e.type === 'done');
+
+    expect(done?.usage).toEqual({ promptTokens: 30, completionTokens: 12, cachedTokens: 3 });
+    expect(done?.model).toBe('mock-model');
+  });
 });

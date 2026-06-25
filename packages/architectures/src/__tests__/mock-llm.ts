@@ -17,6 +17,7 @@ export interface MockResponse {
   text: string;
   toolCalls?: { id: string; name: string; arguments: unknown }[];
   thinking?: string;
+  usage?: LLMResponse['usage'];
   throwError?: string;
 }
 
@@ -46,7 +47,7 @@ export class MockLLMProvider implements LLMProvider {
       yield { type: 'tool_call_start', id: tc.id, name: tc.name };
       yield { type: 'tool_call_delta', id: tc.id, delta: JSON.stringify(tc.arguments ?? {}) };
     }
-    yield { type: 'done', content: r.text, stopReason: r.toolCalls?.length ? 'tool_use' : 'end_turn' };
+    yield { type: 'done', content: r.text, stopReason: r.toolCalls?.length ? 'tool_use' : 'end_turn', usage: r.usage };
   }
 
   async complete(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse> {
@@ -59,6 +60,7 @@ export class MockLLMProvider implements LLMProvider {
       stopReason: r.toolCalls?.length ? 'tool_use' : 'end_turn',
       toolCalls: r.toolCalls,
       thinking: r.thinking,
+      usage: r.usage,
     };
   }
 }

@@ -111,6 +111,8 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
       const allToolCalls: { name: string; input: unknown }[] = [];
       let lastContent = '';
+      const turnUsage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
+      let sawUsage = false;
 
       const absorbSteers = async (): Promise<number> => {
         const steers = services.drainSteers?.() ?? [];
@@ -148,6 +150,12 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         }
 
         lastContent = response.content;
+        if (response.usage) {
+          turnUsage.promptTokens += response.usage.promptTokens ?? 0;
+          turnUsage.completionTokens += response.usage.completionTokens ?? 0;
+          turnUsage.cachedTokens += response.usage.cachedTokens ?? 0;
+          sawUsage = true;
+        }
 
         // thinking/text 는 streamLlm 이 델타로 이미 방출 — 여기서 재방출하지 않는다.
 
@@ -155,7 +163,13 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
           history.push({ role: 'assistant', content: response.content });
           await services.memory.append({ role: 'assistant', content: response.content });
           if ((await absorbSteers()) > 0) continue;
-          yield { type: 'done', content: response.content, toolCalls: allToolCalls };
+          yield {
+            type: 'done',
+            content: response.content,
+            toolCalls: allToolCalls,
+            usage: sawUsage ? turnUsage : undefined,
+            model: options.model,
+          };
           return;
         }
 
@@ -222,7 +236,13 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         sanitizeToolPairsInPlace(history);
       }
 
-      yield { type: 'done', content: lastContent || '(max iterations reached)', toolCalls: allToolCalls };
+      yield {
+        type: 'done',
+        content: lastContent || '(max iterations reached)',
+        toolCalls: allToolCalls,
+        usage: sawUsage ? turnUsage : undefined,
+        model: options.model,
+      };
     },
   };
 }

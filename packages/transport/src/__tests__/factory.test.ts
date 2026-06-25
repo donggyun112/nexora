@@ -1,6 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createTransport } from '../factory.js';
 import type { RedisLike, RedisStreamsLike } from '../index.js';
+
+// ioredis is an OPTIONAL peer dep. The "not installed" test must simulate its
+// absence deterministically — relying on the real environment is flaky (ioredis
+// is resolvable in this workspace). Make the lazy `import('ioredis')` reject so
+// the factory's loadIoredis() catch fires. Tests that inject Redis clients
+// never import ioredis, so this mock does not affect them.
+vi.mock('ioredis', () => {
+  throw new Error("Cannot find module 'ioredis'");
+});
 
 describe('createTransport', () => {
   it('defaults to LocalTransport when no kind is given', async () => {

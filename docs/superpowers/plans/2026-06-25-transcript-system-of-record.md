@@ -227,11 +227,16 @@ describe('toLLMMessages', () => {
       { role: 'user', content: [{ type: 'image', data: 'BYTES', mimeType: 'image/png' }] },
     ]);
   });
-  it('removes a dangling tool_use whose result never arrived', async () => {
+  it('completes a dangling tool_use with a stub tool_result on replay', async () => {
+    // sanitizeToolPairsInPlace injects a stub tool_result for an orphaned tool_call
+    // (it does NOT drop it) — keeps the pair valid for the provider.
     const entries: TranscriptEntry[] = [
       { ...base, type: 'assistant', uuid: 'a1', parentUuid: null, content: [{ type: 'tool_use', id: 'c1', name: 'x', input: {} }] },
     ];
-    expect(await toLLMMessages(entries, noImages)).toEqual([]);
+    expect(await toLLMMessages(entries, noImages)).toEqual([
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'c1', name: 'x', arguments: {} }] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'c1', content: '[result lost during context compaction]', isError: false }] },
+    ]);
   });
 });
 ```

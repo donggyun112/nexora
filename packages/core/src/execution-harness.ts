@@ -10,6 +10,8 @@ import type {
   AgentEvent,
   AgentInput,
   AgentLogger,
+  BackgroundTaskRegistry,
+  BackgroundTaskResult,
   ExecutionHarness,
   LLMMessage,
   LLMOptions,
@@ -23,6 +25,7 @@ import type {
   WorkspaceProvider,
   WorkspaceSession,
 } from '@dongkseo/contracts';
+import { InMemoryBackgroundTaskRegistry } from '@dongkseo/contracts';
 import { TranscriptRecorder } from './transcript-recorder.js';
 import {
   MiddlewarePipeline,
@@ -56,6 +59,10 @@ export interface LocalExecutionHarnessOptions {
   transcript?: TranscriptStore;
   /** Conversation key for transcript recording. */
   conversationId?: string;
+  /** Shared background-task registry injected into every tool ToolContext. Defaults to a per-harness InMemoryBackgroundTaskRegistry. */
+  backgroundTasks?: BackgroundTaskRegistry;
+  /** Post-turn result sink for background tasks, forwarded to ToolContext.deliverResult. */
+  deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
@@ -79,6 +86,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly workspaceProvider?: WorkspaceProvider;
   private readonly transcript?: TranscriptStore;
   private readonly conversationId?: string;
+  private readonly backgroundTasks: BackgroundTaskRegistry;
+  private readonly deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
   /** The recorder for the currently-active execute() — used by steer(). Concurrent execute() calls are not supported when transcript recording is enabled (same single-active assumption as pendingSteers). */
   private activeRecorder: TranscriptRecorder | null = null;
   /** In-flight steer record() promises for the active execute() — awaited before flush so steers aren't lost. */
@@ -107,6 +116,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.workspaceProvider = options.workspaceProvider;
     this.transcript = options.transcript;
     this.conversationId = options.conversationId;
+    this.backgroundTasks = options.backgroundTasks ?? new InMemoryBackgroundTaskRegistry();
+    this.deliverResult = options.deliverResult;
   }
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
@@ -159,6 +170,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
           ...baseToolContext,
           ...(workspace ? { workdir: workspace.root, workspace } : {}),
           steerSelf: (message: string) => this.steer(message),
+          backgroundTasks: this.backgroundTasks,
+          deliverResult: this.deliverResult,
         });
       }
 

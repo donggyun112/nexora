@@ -1,7 +1,7 @@
 # 워크스페이스 연속성 — snapshot 오케스트레이션 & conversation 바인딩 설계
 
 - **날짜**: 2026-06-25
-- **상태**: 설계 기록 (구현 대기) — draft
+- **상태**: 구현 완료 (2026-06-25) — `docs/superpowers/plans/2026-06-25-workspace-continuity.md` 참조
 - **범위**: nexora framework — `packages/contracts`, `packages/core`, `packages/store-json`, `packages/store-pg`
 - **선행 문서**: `docs/superpowers/specs/2026-06-24-runtime-isolation-adoption-design.md` (워크스페이스 수명 = 대화-단위 고정 root)
 - **레퍼런스**: `references/openai-agents-python` (`src/agents/sandbox/**`, `src/agents/run_state.py`)

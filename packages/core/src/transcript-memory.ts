@@ -1,4 +1,4 @@
-import type { TranscriptStore, LLMMessage } from '@dongkseo/contracts';
+import type { TranscriptStore, LLMMessage, MemoryProvider } from '@dongkseo/contracts';
 import { toLLMMessages } from './transcript-mapping.js';
 import type { Compactor } from './compaction.js';
 
@@ -6,7 +6,7 @@ export interface TranscriptMemoryProviderOptions {
   compactor?: Compactor;
 }
 
-export class TranscriptMemoryProvider {
+export class TranscriptMemoryProvider implements MemoryProvider {
   constructor(
     private readonly store: TranscriptStore,
     private readonly conversationId: string,

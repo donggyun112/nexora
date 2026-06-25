@@ -17,8 +17,8 @@ export interface AgentInput {
 
   files?: FileContent[];
 
-  /** 이전 대화 히스토리 */
-  history?: ChatMessage[];
+  /** 이전 대화 히스토리 (rich — tool/image 블록 포함) */
+  history?: LLMMessage[];
 
   /** 요청자 식별 (추적용) */
   requesterId?: string;
@@ -272,10 +272,10 @@ export interface ToolDefinitionSummary {
 
 export interface MemoryProvider {
   /** 메시지 추가 */
-  append(message: ChatMessage): Promise<void>;
+  append(message: LLMMessage): Promise<void>;
 
   /** 히스토리 조회 */
-  getHistory(limit?: number): Promise<ChatMessage[]>;
+  getHistory(limit?: number): Promise<LLMMessage[]>;
 
   /** 컨텍스트 압축 (기존 compaction.ts 역할) */
   compact(): Promise<string | null>;

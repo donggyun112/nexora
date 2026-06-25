@@ -277,7 +277,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
 /** memory가 없을 때 사용하는 null 구현 */
 class NullMemory implements MemoryProvider {
   async append(): Promise<void> {}
-  async getHistory(): Promise<[]> { return []; }
+  async getHistory(): Promise<LLMMessage[]> { return []; }
   async compact(): Promise<null> { return null; }
   async clear(): Promise<void> {}
 }

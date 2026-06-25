@@ -18,6 +18,7 @@ import type {
   InboundMessage,
   OutboundChunk,
   FileContent,
+  LLMMessage,
 } from '@dongkseo/contracts';
 
 export interface HttpAdapterOptions {
@@ -260,7 +261,7 @@ function normalizeInbound(
     images,
     files,
     history: Array.isArray(body.history)
-      ? body.history.filter(isChatMessage)
+      ? body.history.filter(isChatMessage).map((m): LLMMessage => ({ role: m.role, content: m.content }))
       : undefined,
     tenantId,
     conversationId: typeof body.conversationId === 'string' ? body.conversationId : undefined,

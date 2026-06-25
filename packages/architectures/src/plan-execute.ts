@@ -93,20 +93,14 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
           }],
         });
       } else {
-        const memoryHistory = await services.memory.getHistory();
-        for (const msg of memoryHistory) {
-          history.push({ role: msg.role, content: msg.content });
-        }
-        for (const prev of input.history ?? []) {
-          history.push({ role: prev.role, content: prev.content });
-        }
+        history.push(...await services.memory.getHistory());
+        history.push(...(input.history ?? []));
         // 이전 turn 이 실려있으면 계획은 이미 첫 turn 에 했다 → EXECUTE 로 시작.
         if (history.length > 0) phase = 'execute';
 
         const promptText = phase === 'plan' && planPrompt ? `${input.prompt}\n\n${planPrompt}` : input.prompt;
         const userContent = userContentForInput(input, promptText);
         history.push({ role: 'user', content: userContent });
-        await services.memory.append({ role: 'user', content: input.prompt });
       }
 
       const allToolCalls: { name: string; input: unknown }[] = [];
@@ -118,9 +112,6 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         const steers = services.drainSteers?.() ?? [];
         for (const s of steers) {
           history.push(s);
-          if (typeof s.content === 'string') {
-            await services.memory.append({ role: 'user', content: s.content });
-          }
         }
         return steers.length;
       };
@@ -161,7 +152,6 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
           history.push({ role: 'assistant', content: response.content });
-          await services.memory.append({ role: 'assistant', content: response.content });
           if ((await absorbSteers()) > 0) continue;
           yield {
             type: 'done',

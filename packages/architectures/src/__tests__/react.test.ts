@@ -232,6 +232,27 @@ describe('ReactArchitecture', () => {
     const done = events.find(e => e.type === 'done');
     expect(done).toBeDefined();
   });
+
+  it('seeds rich history (tool blocks) from memory.getHistory into the LLM call', async () => {
+    const richHistory: LLMMessage[] = [
+      { role: 'assistant', content: [{ type: 'tool_call', id: 'c1', name: 'read', arguments: {} }] },
+      { role: 'tool_result', content: [{ type: 'tool_result', id: 'c1', content: 'FILE', isError: false }] },
+    ];
+    const llm = new MockLLMProvider([{ text: 'done', toolCalls: [] }]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>();
+    const services = makeServices(llm, tools, {
+      memory: { append: async () => {}, getHistory: async () => richHistory, compact: async () => null, clear: async () => {} },
+    });
+    const react = createReactArchitecture();
+    await collect(react.loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+    const firstMessages = llm.callLog[0].messages;
+    // the two rich history messages appear (in order) before the current user prompt
+    expect(firstMessages).toContainEqual(richHistory[0]);
+    expect(firstMessages).toContainEqual(richHistory[1]);
+    const userIdx = firstMessages.findIndex(m => m.role === 'user');
+    const asstIdx = firstMessages.findIndex(m => m.role === 'assistant');
+    expect(asstIdx).toBeLessThan(userIdx); // history precedes the new user turn
+  });
 });
 
 describe('ReAct suspend', () => {

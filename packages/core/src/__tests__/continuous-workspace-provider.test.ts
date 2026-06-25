@@ -138,6 +138,24 @@ describe('ContinuousWorkspaceProvider', () => {
     expect(inner.acquire).toHaveBeenCalledTimes(1);
     expect(session.id).toBe('fresh');
   });
+
+  it('falls back to fresh acquire when store.load throws (store unavailable)', async () => {
+    const store: WorkspaceStateStore = {
+      load: vi.fn(async () => { throw new Error('store unavailable'); }),
+      save: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    };
+    const inner = {
+      acquire: vi.fn(async () => makeSession('fresh')),
+      resume: vi.fn(async () => makeSession('resumed')),
+    };
+    const provider = new ContinuousWorkspaceProvider(inner, store, 'conv-1');
+
+    const session = await provider.acquire();
+    expect(inner.acquire).toHaveBeenCalledTimes(1);
+    expect(inner.resume).not.toHaveBeenCalled();
+    expect(session.id).toBe('fresh');
+  });
 });
 
 describe('ContinuousWorkspaceProvider end-to-end (real client + tar)', () => {

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createDelegateTool } from '../builtin/delegate.js';
 import {
-  BackgroundJobRegistry,
-  createCheckSubagentsTool,
-  createCancelSubagentTool,
-} from '../builtin/background-subagents.js';
+  createCheckTasksTool,
+  createCancelTasksTool,
+} from '../builtin/background-tasks.js';
+import { InMemoryBackgroundTaskRegistry } from '@dongkseo/contracts';
 import type {
   EventTransport,
   MessageEnvelope,
@@ -141,9 +141,9 @@ describe('background subagent (delegate waitForResult:"async")', () => {
     const registry = makeRegistry([]);
     const runtime = makeRuntime({ events: [doneEvent('late-result')] });
 
-    let resolveDeliver: (v: { content: string; isError: boolean; childName: string }) => void;
-    const delivered = new Promise<{ content: string; isError: boolean; childName: string }>((r) => { resolveDeliver = r; });
-    const deliverResult = vi.fn((r: { jobId: string; childName: string; content: string; isError: boolean }) => { resolveDeliver(r); });
+    let resolveDeliver: (v: { content: string; isError: boolean; label: string }) => void;
+    const delivered = new Promise<{ content: string; isError: boolean; label: string }>((r) => { resolveDeliver = r; });
+    const deliverResult = vi.fn((r: { taskId: string; kind: string; label: string; content: string; isError: boolean }) => { resolveDeliver(r); });
     const steerSelf = vi.fn(() => false); // parent turn is gone
 
     const tool = createDelegateTool({
@@ -158,7 +158,7 @@ describe('background subagent (delegate waitForResult:"async")', () => {
     const r = await delivered;
     expect(r.content).toBe('late-result');
     expect(r.isError).toBe(false);
-    expect(r.childName).toBe('child');
+    expect(r.label).toBe('child');
     expect(steerSelf).toHaveBeenCalledOnce();
     expect(deliverResult).toHaveBeenCalledOnce();
   });
@@ -187,21 +187,21 @@ describe('background subagent (delegate waitForResult:"async")', () => {
 
     const steerSelf = vi.fn(() => true);
     const deliverResult = vi.fn();
-    const jobRegistry = new BackgroundJobRegistry();
+    const jobRegistry = new InMemoryBackgroundTaskRegistry();
 
     const tool = createDelegateTool({
       transport, registry, jobRegistry, deliverResult,
       subagents: [{ type: 'compiled', name: 'child', description: 'c', runtime }],
     });
-    const cancelTool = createCancelSubagentTool({ registry: jobRegistry });
+    const cancelTool = createCancelTasksTool({ registry: jobRegistry });
 
     const res = await tool.execute('j4',
       { capability: 'child', input: { prompt: 'go' }, waitForResult: 'async' },
       { ...baseCtx(), steerSelf });
     expect(res.type).toBe('text');
-    const jobId = jobRegistry.list()[0]!.jobId;
+    const jobId = jobRegistry.list()[0]!.taskId;
 
-    const cancelRes = await cancelTool.execute('c1', { job_id: jobId }, baseCtx());
+    const cancelRes = await cancelTool.execute('c1', { task_id: jobId }, baseCtx());
     expect(cancelRes.type).toBe('text');
 
     releaseGate!();
@@ -215,7 +215,7 @@ describe('background subagent (delegate waitForResult:"async")', () => {
   it('check_subagents lists launched jobs sharing the registry', async () => {
     const transport = new FakeTransport();
     const registry = makeRegistry([]);
-    const jobRegistry = new BackgroundJobRegistry();
+    const jobRegistry = new InMemoryBackgroundTaskRegistry();
     const runtime = makeRuntime({ events: [doneEvent('done')] });
     const steerSelf = vi.fn(() => true);
 
@@ -223,7 +223,7 @@ describe('background subagent (delegate waitForResult:"async")', () => {
       transport, registry, jobRegistry,
       subagents: [{ type: 'compiled', name: 'child', description: 'c', runtime }],
     });
-    const checkTool = createCheckSubagentsTool({ registry: jobRegistry });
+    const checkTool = createCheckTasksTool({ registry: jobRegistry });
 
     await tool.execute('j5', { capability: 'child', input: {}, waitForResult: 'async' }, { ...baseCtx(), steerSelf });
     await new Promise((r) => setTimeout(r, 10));
@@ -233,7 +233,7 @@ describe('background subagent (delegate waitForResult:"async")', () => {
     if (res.type === 'text') {
       const jobs = JSON.parse(res.text);
       expect(jobs).toHaveLength(1);
-      expect(jobs[0].childName).toBe('child');
+      expect(jobs[0].label).toBe('child');
       expect(jobs[0].status).toBe('done');
     }
   });
@@ -298,24 +298,6 @@ describe('background subagent (delegate waitForResult:"async")', () => {
     const msg = await steered;
     expect(msg).toContain('background subagent "slow" failed');
     expect(msg).toMatch(/exceeded 20ms/);
-  });
-
-  it('caps retained settled jobs (prune) while keeping running ones', async () => {
-    const reg = new BackgroundJobRegistry(2);
-    const rt = (): AgentRuntime => makeRuntime({ events: [] });
-    for (let i = 0; i < 5; i++) {
-      reg.register({ jobId: `s${i}`, childName: 'c', capability: 'cap', runtime: rt(), startedAt: i });
-      reg.settle(`s${i}`, 'done', 100 + i);
-    }
-    // A running job must never be evicted.
-    reg.register({ jobId: 'run', childName: 'c', capability: 'cap', runtime: rt(), startedAt: 99 });
-
-    const jobs = reg.list();
-    const settled = jobs.filter((j) => j.status !== 'running');
-    expect(settled).toHaveLength(2);
-    // Oldest-settled evicted; newest two retained.
-    expect(settled.map((j) => j.jobId).sort()).toEqual(['s3', 's4']);
-    expect(jobs.some((j) => j.jobId === 'run' && j.status === 'running')).toBe(true);
   });
 
   it('falls back to legacy fire-and-forget when async target has no caller-owned runtime', async () => {

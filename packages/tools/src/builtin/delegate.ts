@@ -36,7 +36,8 @@ import {
 } from '@dongkseo/contracts';
 import { createApprovalGateMiddleware } from '../handraise/approval-middleware.js';
 import type { ApprovalGateOptions } from '../handraise/approval-middleware.js';
-import { BackgroundJobRegistry } from './background-subagents.js';
+import { InMemoryBackgroundTaskRegistry } from '@dongkseo/contracts';
+import type { BackgroundTaskRegistry, BackgroundTaskResult } from '@dongkseo/contracts';
 
 // ─── Subagent types (deepagents pattern) ────────────────────────────────
 
@@ -90,13 +91,8 @@ export type PeerRuntimeFactory = (
   meta: { delegationDepth: number; callerAgent: string },
 ) => AgentRuntime | Promise<AgentRuntime>;
 
-/** The settled result of a background subagent, delivered when the parent turn already ended. */
-export interface BackgroundSubagentResult {
-  jobId: string;
-  childName: string;
-  content: string;
-  isError: boolean;
-}
+/** @deprecated Use BackgroundTaskResult. Kept for delegate's export surface. */
+export type BackgroundSubagentResult = BackgroundTaskResult;
 
 export interface DelegateToolOptions {
   transport: EventTransport;
@@ -161,7 +157,7 @@ export interface DelegateToolOptions {
    * and cancel the children it launched. Defaults to a private instance (jobs
    * still run, but the control tools won't see them).
    */
-  jobRegistry?: BackgroundJobRegistry;
+  jobRegistry?: BackgroundTaskRegistry;
   /**
    * Delivers a background subagent's result when the parent turn has already
    * ended (so `ctx.steerSelf` can no longer fold it into the live turn). The app
@@ -219,7 +215,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     onSubagentEvent,
     approvalGate,
     peerRuntimeFactory,
-    jobRegistry = new BackgroundJobRegistry(),
+    jobRegistry = new InMemoryBackgroundTaskRegistry(),
     deliverResult,
     backgroundJobTimeoutMs,
   } = options;
@@ -285,7 +281,13 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       return errorResult(`Failed to build background subagent for "${params.capability}"`);
     }
 
-    if (!ctx.steerSelf && !deliverResult) {
+    // Prefer the runtime-injected registry/sink (tool-neutral, shared with the
+    // check_tasks/cancel_task control tools); fall back to the per-tool options.
+    // Note: `registry` (the AgentRegistry) is a different thing — don't shadow it.
+    const taskRegistry = ctx.backgroundTasks ?? jobRegistry;
+    const sink = ctx.deliverResult ?? deliverResult;
+
+    if (!ctx.steerSelf && !sink) {
       return errorResult(
         'Background subagents need a steerable parent loop or a deliverResult sink; ' +
           'neither is available in this runtime. Use waitForResult:"sync" instead.',
@@ -293,12 +295,12 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     }
 
     const jobId = messageId();
-    jobRegistry.register({
-      jobId,
-      childName,
-      capability: params.capability,
-      runtime: childRuntime,
+    taskRegistry.register({
+      taskId: jobId,
+      kind: 'subagent',
+      label: childName,
       startedAt: Date.now(),
+      abort: () => childRuntime.abort(),
     });
     ctx.logger.info('delegate.background.launched', {
       jobId,
@@ -312,10 +314,10 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       childName,
       runtime: childRuntime,
       input: params.input,
-      jobRegistry,
+      jobRegistry: taskRegistry,
       onSubagentEvent,
       steerSelf: ctx.steerSelf,
-      deliverResult,
+      deliverResult: sink,
       logger: ctx.logger,
       timeoutMs: backgroundJobTimeoutMs,
     });
@@ -323,7 +325,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     return textResult(
       `[subagent ${childName}] launched as background job ${jobId}. ` +
         `Keep working — its result arrives in this turn if you're still active, otherwise as a follow-up. ` +
-        `Use check_subagents for status, or cancel_subagent with job id "${jobId}" to stop it.`,
+        `Use check_tasks for status, or cancel_task with task id "${jobId}" to stop it.`,
     );
   }
 
@@ -651,10 +653,10 @@ async function pumpBackgroundChild(args: {
   childName: string;
   runtime: AgentRuntime;
   input: unknown;
-  jobRegistry: BackgroundJobRegistry;
+  jobRegistry: BackgroundTaskRegistry;
   onSubagentEvent?: (name: string, event: AgentEvent) => void;
   steerSelf?: (message: string) => boolean;
-  deliverResult?: (result: BackgroundSubagentResult) => void | Promise<void>;
+  deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
   logger: ToolLogger;
   timeoutMs?: number;
 }): Promise<void> {
@@ -672,7 +674,7 @@ async function pumpBackgroundChild(args: {
   jobRegistry.settle(jobId, isError ? 'error' : 'done', Date.now());
   if (jobRegistry.get(jobId)?.status === 'cancelled') return;
 
-  const result: BackgroundSubagentResult = { jobId, childName, content: content || '(no output)', isError };
+  const result: BackgroundTaskResult = { taskId: jobId, kind: 'subagent', label: childName, content: content || '(no output)', isError };
   const message = formatChildResult(result);
 
   // Fold into the parent's live turn; steerSelf returns false once that turn ends.
@@ -697,7 +699,7 @@ async function pumpBackgroundChild(args: {
   });
 }
 
-function formatChildResult(result: BackgroundSubagentResult): string {
+function formatChildResult(result: BackgroundTaskResult): string {
   const status = result.isError ? 'failed' : 'completed';
-  return `[background subagent "${result.childName}" ${status}] (job ${result.jobId})\n${result.content}`;
+  return `[background subagent "${result.label}" ${status}] (job ${result.taskId})\n${result.content}`;
 }

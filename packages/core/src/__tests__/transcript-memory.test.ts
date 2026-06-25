@@ -42,4 +42,37 @@ describe('TranscriptMemoryProvider', () => {
     await mem.clear();
     expect(store.entries).toEqual([]);
   });
+
+  it('compact() calls compactor, appends a summary entry, and getHistory() returns only the summary', async () => {
+    const store = fakeStore([
+      { ...base, type: 'user', uuid: 'u1', parentUuid: null, content: [{ type: 'text', text: 'hello' }] },
+      { ...base, type: 'assistant', uuid: 'a1', parentUuid: 'u1', content: [{ type: 'text', text: 'hi there' }] },
+    ]);
+    const compactor = {
+      compact: async () => ({
+        summary: 'SUMMARY',
+        newMessages: [],
+        beforeCount: 0,
+        afterCount: 0,
+        beforeTokens: 0,
+        afterTokens: 0,
+      }),
+    };
+    const mem = new TranscriptMemoryProvider(store, 'c', { compactor });
+    const result = await mem.compact();
+    expect(result).toBe('SUMMARY');
+
+    // A summary-type entry was appended
+    const summaryEntry = store.entries.find(e => e.type === 'summary');
+    expect(summaryEntry).toBeDefined();
+    if (summaryEntry?.type === 'summary') {
+      expect(summaryEntry.summary).toBe('SUMMARY');
+      // supersedesUpToUuid points to the last seeded entry (a1)
+      expect(summaryEntry.supersedesUpToUuid).toBe('a1');
+    }
+
+    // getHistory() after compact returns only [{ role: 'user', content: 'SUMMARY' }]
+    const history = await mem.getHistory();
+    expect(history).toEqual([{ role: 'user', content: 'SUMMARY' }]);
+  });
 });

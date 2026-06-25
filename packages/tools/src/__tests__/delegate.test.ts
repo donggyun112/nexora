@@ -11,6 +11,9 @@ import type {
   AgentRegistry,
   AgentCard,
   ToolContext,
+  AgentRuntime,
+  AgentInput,
+  AgentEvent,
 } from '@dongkseo/contracts';
 import { matchTopic, messageId } from '@dongkseo/contracts';
 
@@ -332,5 +335,111 @@ describe('delegate tool', () => {
 
     expect(result.type).toBe('text');
     if (result.type === 'text') expect(result.text).toContain('ok');
+  });
+
+  it('async background subagent folds its result into the live turn via steerSelf', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([]);
+    const steered: string[] = [];
+    const compiled = {
+      type: 'compiled' as const,
+      name: 'worker',
+      description: 'w',
+      runtime: {
+        abort: () => {},
+        async *execute() {
+          yield { type: 'done', content: 'bg done', toolCalls: [] };
+        },
+      },
+    };
+    const tool = createDelegateTool({
+      transport, registry, subagents: [compiled as never], callerAgentName: 'parent',
+    });
+    const ctx = { ...makeCtx(), steerSelf: (m: string) => { steered.push(m); return true; } };
+    const result = await tool.execute('d-async', {
+      capability: 'worker', input: 'go', waitForResult: 'async',
+    }, ctx);
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toContain('background job');
+    // allow the detached pump microtasks to flush
+    await new Promise((r) => setTimeout(r, 10));
+    expect(steered.some((m) => m.includes('bg done'))).toBe(true);
+  });
+});
+
+function fakeRuntime(events: AgentEvent[], opts: { hang?: boolean } = {}): AgentRuntime {
+  let aborted = false;
+  let releaseHang: (() => void) | undefined;
+  return {
+    // abort() must terminate a hung run, the way a real runtime does.
+    abort: () => { aborted = true; releaseHang?.(); },
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async *execute(_input: AgentInput): AsyncGenerator<AgentEvent> {
+      for (const e of events) {
+        if (aborted) return;
+        yield e;
+      }
+      if (opts.hang) {
+        // wait until abort() releases us, then end the run (no further yields)
+        await new Promise<void>((res) => { releaseHang = res; });
+      }
+    },
+  } as unknown as AgentRuntime;
+}
+
+// drainRuntime is an internal helper exercised through the public delegate
+// surface: the sync path (runRuntime) and the background path
+// (pumpBackgroundChild) below cover its done / error / timeout behavior.
+describe('delegate runtime drain (sync + background)', () => {
+  function compiledSubagent(runtime: AgentRuntime) {
+    return { type: 'compiled' as const, name: 'worker', description: 'w', runtime };
+  }
+
+  it('sync delegate returns the child final content as text', async () => {
+    const tool = createDelegateTool({
+      transport: new FakeTransport(),
+      registry: makeRegistry([]),
+      callerAgentName: 'parent',
+      subagents: [compiledSubagent(
+        fakeRuntime([{ type: 'done', content: 'sync answer', toolCalls: [] } as AgentEvent]),
+      ) as never],
+    });
+    const result = await tool.execute('d-sync-ok', { capability: 'worker', input: 'go' }, makeCtx());
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toBe('sync answer');
+  });
+
+  it('sync delegate maps a child error event to an error ToolResult with the subagent prefix', async () => {
+    const tool = createDelegateTool({
+      transport: new FakeTransport(),
+      registry: makeRegistry([]),
+      callerAgentName: 'parent',
+      subagents: [compiledSubagent(
+        fakeRuntime([{ type: 'error', message: 'kaboom' } as AgentEvent]),
+      ) as never],
+    });
+    const result = await tool.execute('d-sync-err', { capability: 'worker', input: 'go' }, makeCtx());
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toBe('subagent "worker": kaboom');
+  });
+
+  it('background subagent that hangs is aborted at backgroundJobTimeoutMs and folded as an error', async () => {
+    const steered: string[] = [];
+    const tool = createDelegateTool({
+      transport: new FakeTransport(),
+      registry: makeRegistry([]),
+      callerAgentName: 'parent',
+      backgroundJobTimeoutMs: 20,
+      subagents: [compiledSubagent(fakeRuntime([], { hang: true })) as never],
+    });
+    const ctx = { ...makeCtx(), steerSelf: (m: string) => { steered.push(m); return true; } };
+    const result = await tool.execute('d-timeout', {
+      capability: 'worker', input: 'go', waitForResult: 'async',
+    }, ctx);
+
+    expect(result.type).toBe('text'); // launched immediately
+    await new Promise((r) => setTimeout(r, 40));
+    expect(steered.some((m) => m.includes('exceeded 20ms'))).toBe(true);
   });
 });

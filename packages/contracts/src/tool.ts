@@ -1,5 +1,6 @@
 import type { TenantAgentScope } from './context.js';
 import type { WorkspaceSession } from './workspace.js';
+import type { BackgroundTaskRegistry, BackgroundTaskResult } from './background-task.js';
 
 /**
  * ToolDefinition — 도구 계약.
@@ -100,6 +101,21 @@ export interface ToolContext {
    * the parent's turn without blocking it.
    */
   steerSelf?: (message: string) => boolean;
+
+  /**
+   * Shared per-runtime background-task registry. Any tool that launches detached
+   * work registers it here so the parent can observe/cancel it via check_tasks /
+   * cancel_task. Undefined when the runtime doesn't support background tasks.
+   */
+  backgroundTasks?: BackgroundTaskRegistry;
+
+  /**
+   * Post-turn result sink. When a background task settles after the parent turn
+   * has ended (steerSelf returned false / is absent), the result is delivered
+   * here. The app wires this to start a new turn carrying the result. Undefined
+   * → the result is logged and dropped.
+   */
+  deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
 }
 
 export interface SecretAccessor {

@@ -144,6 +144,15 @@ export type {
 export { textResult, errorResult, suspendResult } from './tool.js';
 
 export type {
+  BackgroundTaskStatus,
+  BackgroundTask,
+  BackgroundTaskSnapshot,
+  BackgroundTaskResult,
+  BackgroundTaskRegistry,
+} from './background-task.js';
+export { InMemoryBackgroundTaskRegistry } from './background-task.js';
+
+export type {
   WorkspaceAccessMode,
   WorkspaceMountAccess,
   WorkspaceMountKind,

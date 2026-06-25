@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createDelegateTool, __drainRuntimeForTest as drainRuntime } from '../builtin/delegate.js';
+import { createDelegateTool } from '../builtin/delegate.js';
 import { InMemoryApprovalPolicyStore } from '../handraise/index.js';
 import type {
   EventTransport,
@@ -388,52 +388,58 @@ function fakeRuntime(events: AgentEvent[], opts: { hang?: boolean } = {}): Agent
   } as unknown as AgentRuntime;
 }
 
-describe('drainRuntime', () => {
-  it('returns the last done content with isError=false', async () => {
-    const rt = fakeRuntime([
-      { type: 'done', content: 'final answer', toolCalls: [] } as AgentEvent,
-    ]);
-    const out = await drainRuntime('child', rt, { prompt: 'hi' });
-    expect(out).toEqual({ content: 'final answer', isError: false, timedOut: false });
-  });
+// drainRuntime is an internal helper exercised through the public delegate
+// surface: the sync path (runRuntime) and the background path
+// (pumpBackgroundChild) below cover its done / error / timeout behavior.
+describe('delegate runtime drain (sync + background)', () => {
+  function compiledSubagent(runtime: AgentRuntime) {
+    return { type: 'compiled' as const, name: 'worker', description: 'w', runtime };
+  }
 
-  it('marks isError and carries the message on an error event', async () => {
-    const rt = fakeRuntime([
-      { type: 'error', message: 'boom' } as AgentEvent,
-    ]);
-    const out = await drainRuntime('child', rt, { prompt: 'hi' });
-    expect(out).toEqual({ content: 'boom', isError: true, timedOut: false });
-  });
-
-  it('relays events via onEvent', async () => {
-    const seen: string[] = [];
-    const rt = fakeRuntime([
-      { type: 'done', content: 'x', toolCalls: [] } as AgentEvent,
-    ]);
-    await drainRuntime('child', rt, 'plain string', {
-      onEvent: (e) => seen.push(e.type),
+  it('sync delegate returns the child final content as text', async () => {
+    const tool = createDelegateTool({
+      transport: new FakeTransport(),
+      registry: makeRegistry([]),
+      callerAgentName: 'parent',
+      subagents: [compiledSubagent(
+        fakeRuntime([{ type: 'done', content: 'sync answer', toolCalls: [] } as AgentEvent]),
+      ) as never],
     });
-    expect(seen).toEqual(['done']);
+    const result = await tool.execute('d-sync-ok', { capability: 'worker', input: 'go' }, makeCtx());
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toBe('sync answer');
   });
 
-  it('aborts and reports timedOut when timeoutMs elapses', async () => {
-    const rt = fakeRuntime([], { hang: true });
-    const out = await drainRuntime('slow', rt, { prompt: 'hi' }, { timeoutMs: 20 });
-    expect(out.timedOut).toBe(true);
-    expect(out.isError).toBe(true);
-    expect(out.content).toContain('exceeded 20ms');
+  it('sync delegate maps a child error event to an error ToolResult with the subagent prefix', async () => {
+    const tool = createDelegateTool({
+      transport: new FakeTransport(),
+      registry: makeRegistry([]),
+      callerAgentName: 'parent',
+      subagents: [compiledSubagent(
+        fakeRuntime([{ type: 'error', message: 'kaboom' } as AgentEvent]),
+      ) as never],
+    });
+    const result = await tool.execute('d-sync-err', { capability: 'worker', input: 'go' }, makeCtx());
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toBe('subagent "worker": kaboom');
   });
 
-  it('serializes a non-string input to JSON for the prompt', async () => {
-    let receivedPrompt: unknown;
-    const rt = {
-      abort: () => {},
-      async *execute(input: AgentInput) {
-        receivedPrompt = input.prompt;
-        yield { type: 'done', content: 'ok', toolCalls: [] } as AgentEvent;
-      },
-    } as unknown as AgentRuntime;
-    await drainRuntime('child', rt, { a: 1 });
-    expect(receivedPrompt).toBe(JSON.stringify({ a: 1 }));
+  it('background subagent that hangs is aborted at backgroundJobTimeoutMs and folded as an error', async () => {
+    const steered: string[] = [];
+    const tool = createDelegateTool({
+      transport: new FakeTransport(),
+      registry: makeRegistry([]),
+      callerAgentName: 'parent',
+      backgroundJobTimeoutMs: 20,
+      subagents: [compiledSubagent(fakeRuntime([], { hang: true })) as never],
+    });
+    const ctx = { ...makeCtx(), steerSelf: (m: string) => { steered.push(m); return true; } };
+    const result = await tool.execute('d-timeout', {
+      capability: 'worker', input: 'go', waitForResult: 'async',
+    }, ctx);
+
+    expect(result.type).toBe('text'); // launched immediately
+    await new Promise((r) => setTimeout(r, 40));
+    expect(steered.some((m) => m.includes('exceeded 20ms'))).toBe(true);
   });
 });

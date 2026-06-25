@@ -575,15 +575,8 @@ async function runRuntime(
   params: DelegateParams,
   onEvent?: (event: AgentEvent) => void,
 ): Promise<ToolResult> {
-  const input: AgentInput = {
-    prompt: typeof params.input === 'string' ? params.input : JSON.stringify(params.input),
-  };
-  let content = '';
-  for await (const event of runtime.execute(input)) {
-    onEvent?.(event);
-    if (event.type === 'done') content = event.content;
-    else if (event.type === 'error') return errorResult(`subagent "${name}": ${event.message}`);
-  }
+  const { content, isError } = await drainRuntime(name, runtime, params.input, { onEvent });
+  if (isError) return errorResult(`subagent "${name}": ${content}`);
   return textResult(content || '(no response)');
 }
 
@@ -644,9 +637,6 @@ async function drainRuntime(
 
   return { content, isError, timedOut };
 }
-
-// TEMPORARY: removed in the "route sync through drainRuntime" commit (Task 3).
-export { drainRuntime as __drainRuntimeForTest };
 
 // ─── Background subagent pump ───────────────────────────────────────────────
 

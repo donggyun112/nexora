@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createDelegateTool } from '../builtin/delegate.js';
+import { createDelegateTool, __drainRuntimeForTest as drainRuntime } from '../builtin/delegate.js';
 import { InMemoryApprovalPolicyStore } from '../handraise/index.js';
 import type {
   EventTransport,
@@ -11,6 +11,9 @@ import type {
   AgentRegistry,
   AgentCard,
   ToolContext,
+  AgentRuntime,
+  AgentInput,
+  AgentEvent,
 } from '@dongkseo/contracts';
 import { matchTopic, messageId } from '@dongkseo/contracts';
 
@@ -332,5 +335,75 @@ describe('delegate tool', () => {
 
     expect(result.type).toBe('text');
     if (result.type === 'text') expect(result.text).toContain('ok');
+  });
+});
+
+function fakeRuntime(events: AgentEvent[], opts: { hang?: boolean } = {}): AgentRuntime {
+  let aborted = false;
+  let releaseHang: (() => void) | undefined;
+  return {
+    // abort() must terminate a hung run, the way a real runtime does.
+    abort: () => { aborted = true; releaseHang?.(); },
+    // eslint-disable-next-line @typescript-eslint/require-await
+    async *execute(_input: AgentInput): AsyncGenerator<AgentEvent> {
+      for (const e of events) {
+        if (aborted) return;
+        yield e;
+      }
+      if (opts.hang) {
+        // wait until abort() releases us, then end the run (no further yields)
+        await new Promise<void>((res) => { releaseHang = res; });
+      }
+    },
+  } as unknown as AgentRuntime;
+}
+
+describe('drainRuntime', () => {
+  it('returns the last done content with isError=false', async () => {
+    const rt = fakeRuntime([
+      { type: 'done', content: 'final answer', toolCalls: [] } as AgentEvent,
+    ]);
+    const out = await drainRuntime('child', rt, { prompt: 'hi' });
+    expect(out).toEqual({ content: 'final answer', isError: false, timedOut: false });
+  });
+
+  it('marks isError and carries the message on an error event', async () => {
+    const rt = fakeRuntime([
+      { type: 'error', message: 'boom' } as AgentEvent,
+    ]);
+    const out = await drainRuntime('child', rt, { prompt: 'hi' });
+    expect(out).toEqual({ content: 'boom', isError: true, timedOut: false });
+  });
+
+  it('relays events via onEvent', async () => {
+    const seen: string[] = [];
+    const rt = fakeRuntime([
+      { type: 'done', content: 'x', toolCalls: [] } as AgentEvent,
+    ]);
+    await drainRuntime('child', rt, 'plain string', {
+      onEvent: (e) => seen.push(e.type),
+    });
+    expect(seen).toEqual(['done']);
+  });
+
+  it('aborts and reports timedOut when timeoutMs elapses', async () => {
+    const rt = fakeRuntime([], { hang: true });
+    const out = await drainRuntime('slow', rt, { prompt: 'hi' }, { timeoutMs: 20 });
+    expect(out.timedOut).toBe(true);
+    expect(out.isError).toBe(true);
+    expect(out.content).toContain('exceeded 20ms');
+  });
+
+  it('serializes a non-string input to JSON for the prompt', async () => {
+    let receivedPrompt: unknown;
+    const rt = {
+      abort: () => {},
+      async *execute(input: AgentInput) {
+        receivedPrompt = input.prompt;
+        yield { type: 'done', content: 'ok', toolCalls: [] } as AgentEvent;
+      },
+    } as unknown as AgentRuntime;
+    await drainRuntime('child', rt, { a: 1 });
+    expect(receivedPrompt).toBe(JSON.stringify({ a: 1 }));
   });
 });

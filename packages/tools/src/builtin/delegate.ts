@@ -587,6 +587,67 @@ async function runRuntime(
   return textResult(content || '(no response)');
 }
 
+interface DrainOutcome {
+  content: string;
+  isError: boolean;
+  timedOut: boolean;
+}
+
+/**
+ * Drives an AgentRuntime to completion and returns its outcome. Shared core for
+ * both the sync delegate path (runRuntime) and the background path
+ * (pumpBackgroundChild). Applies NO content fallback — callers apply their own.
+ * When opts.timeoutMs is set, a hung child is aborted and reported via timedOut.
+ */
+async function drainRuntime(
+  name: string,
+  runtime: AgentRuntime,
+  input: unknown,
+  opts: { onEvent?: (event: AgentEvent) => void; timeoutMs?: number } = {},
+): Promise<DrainOutcome> {
+  const agentInput: AgentInput = {
+    prompt: typeof input === 'string' ? input : JSON.stringify(input),
+  };
+
+  let timedOut = false;
+  const timer =
+    opts.timeoutMs && opts.timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          runtime.abort();
+        }, opts.timeoutMs)
+      : null;
+  timer?.unref?.();
+
+  let content = '';
+  let isError = false;
+  try {
+    for await (const event of runtime.execute(agentInput)) {
+      opts.onEvent?.(event);
+      if (event.type === 'done') content = event.content;
+      else if (event.type === 'error') {
+        content = event.message;
+        isError = true;
+      }
+    }
+  } catch (err) {
+    content = err instanceof Error ? err.message : String(err);
+    isError = true;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  if (timedOut) {
+    content = `Background subagent "${name}" exceeded ${opts.timeoutMs}ms and was aborted.`;
+    isError = true;
+  }
+
+  return { content, isError, timedOut };
+}
+
+// TEMPORARY: removed in the "route sync through drainRuntime" commit (Task 3).
+export { drainRuntime as __drainRuntimeForTest };
+
 // ─── Background subagent pump ───────────────────────────────────────────────
 
 /**

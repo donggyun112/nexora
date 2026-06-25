@@ -19,9 +19,11 @@ import type {
   ToolDefinition,
   ToolExecutor,
   ToolResult,
+  TranscriptStore,
   WorkspaceProvider,
   WorkspaceSession,
 } from '@dongkseo/contracts';
+import { TranscriptRecorder } from './transcript-recorder.js';
 import {
   MiddlewarePipeline,
   type AgentMiddleware,
@@ -50,6 +52,10 @@ export interface LocalExecutionHarnessOptions {
   onSuspend?: RuntimeServices['onSuspend'];
   /** Optional workspace provider. When set, tools receive a per-run workspace session. */
   workspaceProvider?: WorkspaceProvider;
+  /** Rich transcript store (system of record). With conversationId, the harness records every turn. */
+  transcript?: TranscriptStore;
+  /** Conversation key for transcript recording. */
+  conversationId?: string;
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
@@ -71,6 +77,12 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly idleTimeoutMs: number;
   private readonly onSuspend?: RuntimeServices['onSuspend'];
   private readonly workspaceProvider?: WorkspaceProvider;
+  private readonly transcript?: TranscriptStore;
+  private readonly conversationId?: string;
+  /** The recorder for the currently-active execute() — used by steer(). Concurrent execute() calls are not supported when transcript recording is enabled (same single-active assumption as pendingSteers). */
+  private activeRecorder: TranscriptRecorder | null = null;
+  /** In-flight steer record() promises for the active execute() — awaited before flush so steers aren't lost. */
+  private activeSteerWrites: Promise<void>[] = [];
   /**
    * Active controllers per concurrent execute() call. abort() aborts ALL of them.
    * Per-call structure means concurrent executions don't trample each other's state.
@@ -93,6 +105,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.onSuspend = options.onSuspend;
     this.workspaceProvider = options.workspaceProvider;
+    this.transcript = options.transcript;
+    this.conversationId = options.conversationId;
   }
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
@@ -100,6 +114,15 @@ export class LocalExecutionHarness implements ExecutionHarness {
     // stop work when timeout fires or abort() is called.
     const controller = new AbortController();
     this.activeControllers.add(controller);
+
+    const recorder = (this.transcript && this.conversationId)
+      ? new TranscriptRecorder(this.transcript, this.conversationId)
+      : null;
+    this.activeRecorder = recorder;
+    this.activeSteerWrites = [];
+    if (recorder && !input.resumeContext) {
+      try { await recorder.recordUserInput(input); } catch { /* best-effort */ }
+    }
 
     const collectedEvents: AgentEvent[] = [];
     const toolInputs = new Map<string, unknown>();
@@ -175,6 +198,10 @@ export class LocalExecutionHarness implements ExecutionHarness {
         idle.reset();
         collectedEvents.push(event);
 
+        if (recorder) {
+          try { await recorder.onEvent(event); } catch { /* best-effort */ }
+        }
+
         if (event.type === 'tool_call') {
           toolInputs.set(event.id, event.input);
           const tool = (services.tools as { get?: (name: string) => unknown }).get?.(event.name);
@@ -225,6 +252,12 @@ export class LocalExecutionHarness implements ExecutionHarness {
       }
     } finally {
       idle.clear();
+      if (recorder) {
+        try { await Promise.all(this.activeSteerWrites); } catch { /* best-effort */ }
+        try { await recorder.flush(); } catch { /* best-effort */ }
+      }
+      this.activeRecorder = null;
+      this.activeSteerWrites = [];
       // Close the underlying generator so any remaining `yield`s are aborted.
       // This is what prevents the architecture from continuing to run after timeout.
       if (loopGen) {
@@ -270,6 +303,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
     if (!trimmed) return this.activeControllers.size > 0;
     if (this.activeControllers.size === 0) return false;
     this.pendingSteers.push({ role: 'user', content: trimmed });
+    const steerWrite = this.activeRecorder?.recordSteer(trimmed);
+    if (steerWrite) this.activeSteerWrites.push(steerWrite.catch(() => {}));
     return true;
   }
 }
@@ -277,7 +312,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
 /** memory가 없을 때 사용하는 null 구현 */
 class NullMemory implements MemoryProvider {
   async append(): Promise<void> {}
-  async getHistory(): Promise<[]> { return []; }
+  async getHistory(): Promise<LLMMessage[]> { return []; }
   async compact(): Promise<null> { return null; }
   async clear(): Promise<void> {}
 }

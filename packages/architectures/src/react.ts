@@ -75,20 +75,14 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         // memory.append for resume is intentionally skipped — the user-facing turn was
         // already recorded in ConversationStore (memory) during the original execution.
       } else {
-        // Normal entry: existing setup (unchanged)
-        // 1. 이전 대화 히스토리
-        const memoryHistory = await services.memory.getHistory();
-        for (const msg of memoryHistory) {
-          history.push({ role: msg.role, content: msg.content });
-        }
-        for (const prev of input.history ?? []) {
-          history.push({ role: prev.role, content: prev.content });
-        }
+        // Normal entry: push rich history directly (tool/image 블록 그대로)
+        // 1. 이전 대화 히스토리 (rich — tool/image 블록 그대로)
+        history.push(...await services.memory.getHistory());
+        history.push(...(input.history ?? []));
 
         // 2. 현재 사용자 입력
         const userContent = userContentForInput(input);
         history.push({ role: 'user', content: userContent });
-        await services.memory.append({ role: 'user', content: input.prompt });
       }
 
       const allToolCalls: { name: string; input: unknown }[] = [];
@@ -98,15 +92,12 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
       const turnUsage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
       let sawUsage = false;
 
-      // 실행 중 주입(steer)된 user 메시지를 history + memory 에 도착순으로 합류시킨다.
+      // 실행 중 주입(steer)된 user 메시지를 history 에 도착순으로 합류시킨다.
       // tool_result 뒤 user 메시지는 toolImageMessages 와 동일한 시퀀스라 안전.
       const absorbSteers = async (): Promise<number> => {
         const steers = services.drainSteers?.() ?? [];
         for (const s of steers) {
           history.push(s);
-          if (typeof s.content === 'string') {
-            await services.memory.append({ role: 'user', content: s.content });
-          }
         }
         return steers.length;
       };
@@ -151,7 +142,6 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         // 도구 호출이 없으면 종료 — 단, 종료 직전 주입된 steer 가 있으면 끝내지 않고 이어간다.
         if (!response.toolCalls || response.toolCalls.length === 0) {
           history.push({ role: 'assistant', content: response.content });
-          await services.memory.append({ role: 'assistant', content: response.content });
           if ((await absorbSteers()) > 0) {
             continue;
           }

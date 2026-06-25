@@ -3,7 +3,7 @@
 // 섹션 맵 (에이전트용: 무엇이 어느 파일에 있는지 — 정확한 타입은 해당 파일을 signatures 모드로)
 //   LLM Provider   ./llm (./llm/pi-ai, ./llm/fallback)   PiAiProvider, FallbackLLMProvider
 //   Tool Executor  ./tool-executor   CoreToolExecutor, formatToolResult, coerceToolArgs
-//   Memory         ./memory          CoreMemoryProvider
+//   Memory         ./transcript-memory   TranscriptMemoryProvider
 //   Compaction     ./compaction      TwoStageCompactor, estimateTokens, shouldCompact
 //   Middleware     ./middleware      MiddlewarePipeline, loggingMiddleware, toolFilterMiddleware
 //   Runner         ./runner          AgentRunner          ./bootstrap   bootstrapAgent, RunningAgent
@@ -30,8 +30,10 @@ export type {
   BatchToolResult,
 } from './tool-executor.js';
 
-export { CoreMemoryProvider } from './memory.js';
-export type { CoreMemoryProviderOptions } from './memory.js';
+export { TranscriptMemoryProvider } from './transcript-memory.js';
+export type { TranscriptMemoryProviderOptions } from './transcript-memory.js';
+export { TranscriptRecorder } from './transcript-recorder.js';
+export { toLLMMessages, llmContentToBlocks } from './transcript-mapping.js';
 
 export {
   TwoStageCompactor,

@@ -31,6 +31,7 @@ export { TranscriptStorePg } from './transcript.js';
 export { SuspendedTurnStorePg } from './suspended-turn.js';
 export { TreeConversationStorePg } from './session-tree.js';
 export { ArtifactChannelPg } from './artifact.js';
+export { WorkspaceStateStorePg } from './workspace-state.js';
 
 export { createRedisRateLimiter } from './redis-rate-limiter.js';
 export type {
@@ -56,6 +57,7 @@ import { ToolContextStorePg } from './tool-context.js';
 import { TranscriptStorePg } from './transcript.js';
 import { SuspendedTurnStorePg } from './suspended-turn.js';
 import { ArtifactChannelPg } from './artifact.js';
+import { WorkspaceStateStorePg } from './workspace-state.js';
 
 export interface PgStoreProvider {
   conversation: ConversationStorePg;
@@ -67,6 +69,7 @@ export interface PgStoreProvider {
   transcript: TranscriptStorePg;
   suspendedTurn: SuspendedTurnStorePg;
   artifact: ArtifactChannelPg;
+  workspaceState: WorkspaceStateStorePg;
 }
 
 /** Create all core stores from a single Postgres connection. */
@@ -81,5 +84,6 @@ export function createPgStoreProvider(sql: Sql): PgStoreProvider {
     transcript: new TranscriptStorePg(sql),
     suspendedTurn: new SuspendedTurnStorePg(sql),
     artifact: new ArtifactChannelPg(sql),
+    workspaceState: new WorkspaceStateStorePg(sql),
   };
 }

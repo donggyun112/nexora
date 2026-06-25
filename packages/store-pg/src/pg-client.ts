@@ -214,4 +214,11 @@ async function migrate(sql: Sql): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_nexora_artifacts_expires ON nexora_artifacts(expires_at)
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS nexora_workspace_state (
+      conversation_id TEXT PRIMARY KEY,
+      data            JSONB NOT NULL
+    )
+  `;
 }

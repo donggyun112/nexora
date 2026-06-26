@@ -395,3 +395,43 @@ describe('watch_task', () => {
     if (res.type === 'error') expect(res.message).toMatch(/not supported/i);
   });
 });
+
+describe('check_tasks / cancel_task registry source', () => {
+  function addTask(reg: InMemoryBackgroundTaskRegistry, id: string) {
+    reg.register({ taskId: id, kind: 'subagent', label: id, startedAt: 1, abort: () => {} });
+  }
+
+  it('prefers ctx.backgroundTasks (harness-injected) over the constructor fallback', async () => {
+    const injected = new InMemoryBackgroundTaskRegistry();
+    addTask(injected, 'harness-task');
+    const fallback = new InMemoryBackgroundTaskRegistry();
+    addTask(fallback, 'fallback-task');
+
+    // Constructed with a fallback, but the runtime injects its own registry.
+    const check = createCheckTasksTool({ registry: fallback });
+    const res = await check.execute('c1', {}, { ...baseCtx(), backgroundTasks: injected } as ToolContext);
+
+    expect(res.type).toBe('text');
+    if (res.type === 'text') {
+      expect(res.text).toContain('harness-task');
+      expect(res.text).not.toContain('fallback-task');
+    }
+  });
+
+  it('works with no constructor argument when the runtime injects a registry', async () => {
+    const injected = new InMemoryBackgroundTaskRegistry();
+    addTask(injected, 'only-task');
+    const cancel = createCancelTasksTool(); // no options — relies on ctx.backgroundTasks
+    const res = await cancel.execute('x1', { task_id: 'only-task' }, { ...baseCtx(), backgroundTasks: injected } as ToolContext);
+
+    expect(res.type).toBe('text');
+    expect(injected.get('only-task')?.status).toBe('cancelled');
+  });
+
+  it('errors when neither ctx.backgroundTasks nor a fallback registry is present', async () => {
+    const check = createCheckTasksTool();
+    const res = await check.execute('c2', {}, baseCtx());
+    expect(res.type).toBe('error');
+    if (res.type === 'error') expect(res.message).toMatch(/not supported/i);
+  });
+});

@@ -51,6 +51,9 @@ export interface BackgroundTaskRegistry {
   cancel(taskId: string): boolean;
   list(): BackgroundTaskSnapshot[];
   get(taskId: string): BackgroundTask | null;
+  /** Subscribe to terminal state transitions (settle/cancel). Returns an
+   *  unsubscribe fn. Fires AFTER the task's status is updated; register does not fire. */
+  subscribe(listener: (taskId: string, status: BackgroundTaskStatus) => void): () => void;
 }
 
 /**
@@ -62,6 +65,7 @@ export interface BackgroundTaskRegistry {
  */
 export class InMemoryBackgroundTaskRegistry implements BackgroundTaskRegistry {
   private readonly tasks = new Map<string, BackgroundTask>();
+  private readonly listeners = new Set<(taskId: string, status: BackgroundTaskStatus) => void>();
 
   constructor(private readonly maxSettledRetained = 50) {}
 
@@ -83,6 +87,7 @@ export class InMemoryBackgroundTaskRegistry implements BackgroundTaskRegistry {
     task.settledAt = settledAt;
     task.abort = null;
     this.pruneSettled();
+    this.notify(taskId, status);
   }
 
   cancel(taskId: string): boolean {
@@ -94,6 +99,7 @@ export class InMemoryBackgroundTaskRegistry implements BackgroundTaskRegistry {
     task.abort = null;
     abort();
     this.pruneSettled();
+    this.notify(taskId, 'cancelled');
     return true;
   }
 
@@ -114,5 +120,20 @@ export class InMemoryBackgroundTaskRegistry implements BackgroundTaskRegistry {
 
   get(taskId: string): BackgroundTask | null {
     return this.tasks.get(taskId) ?? null;
+  }
+
+  subscribe(listener: (taskId: string, status: BackgroundTaskStatus) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  private notify(taskId: string, status: BackgroundTaskStatus): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(taskId, status);
+      } catch {
+        // Isolate a bad listener — it must not break settle/cancel.
+      }
+    }
   }
 }

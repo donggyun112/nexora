@@ -92,4 +92,4 @@ ctx_read(path="packages/otel/src/index.ts",                mode="map")   # 전�
 cd packages/otel && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

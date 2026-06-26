@@ -96,4 +96,4 @@ ctx_read(path="packages/contracts/src/store.ts", mode="signatures")
 cd packages/store-pg && DATABASE_URL=postgres://... pnpm test:integration
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

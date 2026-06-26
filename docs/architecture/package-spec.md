@@ -55,7 +55,7 @@
 | ProviderFallback | auto-work-flow provider-fallback.ts |
 | TokenEstimation | compaction.ts estimateTokens() |
 
-**의존성:** @nexora/contracts
+**의존성:** @dongkseo/contracts
 
 ---
 
@@ -89,7 +89,7 @@ tools/
     └── server.ts   ← 내부 도구 → MCP 서버 노출
 ```
 
-**의존성:** @nexora/contracts
+**의존성:** @dongkseo/contracts
 
 ---
 
@@ -109,7 +109,7 @@ tools/
 
 커스텀 아키텍처는 `AgentArchitecture` 인터페이스를 구현해 외부에서 정의 가능.
 
-**의존성:** @nexora/contracts
+**의존성:** @dongkseo/contracts
 
 ---
 
@@ -132,7 +132,7 @@ tools/
 | KnowledgeLoader | knowledge.tool.ts + AGENTS.md |
 | TenantConfigResolver | jira-guilds.ts → DB 기반으로 전환 |
 
-**의존성:** @nexora/contracts, @nexora/store
+**의존성:** @dongkseo/contracts, @dongkseo/store
 
 ---
 
@@ -159,7 +159,7 @@ tools/
 - topic/capability 기반 publish/subscribe만 허용
 - 모든 메시지에 tenantId 필수
 
-**의존성:** @nexora/contracts
+**의존성:** @dongkseo/contracts
 
 ---
 
@@ -202,7 +202,7 @@ tools/
 - 에이전트별 로컬 경로 강제: agents/{agent}/data/
 - 공유 JSON 금지
 
-**의존성:** @nexora/contracts
+**의존성:** @dongkseo/contracts
 
 ---
 
@@ -227,7 +227,7 @@ tools/
 - 에이전트 내부에서 다른 에이전트 직접 위임 금지
 - 흐름은 workflow 정의로만 연결
 
-**의존성:** @nexora/contracts, @nexora/transport
+**의존성:** @dongkseo/contracts, @dongkseo/transport
 
 ---
 
@@ -251,7 +251,7 @@ tools/
 - 어댑터는 메시지 전달만 (DB 역할 금지)
 - InboundMessage → Gateway → Agent
 
-**의존성:** @nexora/contracts
+**의존성:** @dongkseo/contracts
 
 ---
 

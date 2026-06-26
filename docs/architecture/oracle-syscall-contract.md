@@ -171,7 +171,7 @@ interface NexoraOracle {
 }
 ```
 
-This interface belongs in `@nexora/contracts` once the draft stabilizes. The
+This interface belongs in `@dongkseo/contracts` once the draft stabilizes. The
 implementation can begin as policy functions in core/orchestrator and later move
 behind a dedicated package if the logic becomes large.
 

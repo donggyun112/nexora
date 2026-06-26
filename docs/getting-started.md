@@ -13,7 +13,7 @@
 ```bash
 mkdir my-project && cd my-project
 pnpm init
-pnpm add @nexora/contracts @nexora/core @nexora/cli
+pnpm add @dongkseo/contracts @dongkseo/core @dongkseo/cli
 
 # Scaffold an agent
 npx nexora create agent my-agent --tools read,grep
@@ -43,22 +43,22 @@ curl → HttpAdapter → LocalTransport → your agent → ReAct loop
 ```
 
 Three packages did everything:
-- `@nexora/contracts` — types
-- `@nexora/core` — runtime
-- `@nexora/cli` — scaffold + dev server
+- `@dongkseo/contracts` — types
+- `@dongkseo/core` — runtime
+- `@dongkseo/cli` — scaffold + dev server
 
 ## Step 3: Add capabilities (when you need them)
 
 | I want to... | Do this |
 |---|---|
-| **Serve multiple customers** | `pnpm add @nexora/context` → create `context/tenants/{id}/tenant.json` |
-| **Chain agents into a workflow** | `pnpm add @nexora/orchestrator` → define a `WorkflowContract` |
-| **Connect to Discord** | `pnpm add @nexora/adapters` → use `DiscordAdapter` |
-| **Track costs** | Use `InMemoryBudgetTracker` + `createBudgetMiddleware` (already in `@nexora/core`) |
-| **Multiple agents in one channel** | `pnpm add @nexora/conversation` → `TurnManager` |
-| **Agent asks a human** | `handraise` tool (already in `@nexora/tools` via `@nexora/cli`) |
+| **Serve multiple customers** | `pnpm add @dongkseo/context` → create `context/tenants/{id}/tenant.json` |
+| **Chain agents into a workflow** | `pnpm add @dongkseo/orchestrator` → define a `WorkflowContract` |
+| **Connect to Discord** | `pnpm add @dongkseo/adapters` → use `DiscordAdapter` |
+| **Track costs** | Use `InMemoryBudgetTracker` + `createBudgetMiddleware` (already in `@dongkseo/core`) |
+| **Multiple agents in one channel** | `pnpm add @dongkseo/conversation` → `TurnManager` |
+| **Agent asks a human** | `handraise` tool (already in `@dongkseo/tools` via `@dongkseo/cli`) |
 | **Agent delegates to another** | `delegate` tool (same) |
-| **Trace in Jaeger** | `pnpm add @nexora/otel` → wrap transport with `OTelTransport` |
+| **Trace in Jaeger** | `pnpm add @dongkseo/otel` → wrap transport with `OTelTransport` |
 
 **Don't add packages preemptively.** Start with the 3-package core. Add one at a time.
 

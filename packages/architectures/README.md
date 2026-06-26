@@ -110,4 +110,4 @@ ctx_read(path="packages/architectures/src/index.ts",         mode="map")   # 전
 cd packages/architectures && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

@@ -86,4 +86,4 @@ re-export된 `TenantConfigStore`/`TenantConfig`/`DEFAULT_LIMITS`의 정본은 `@
 cd packages/tenancy && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

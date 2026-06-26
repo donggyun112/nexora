@@ -104,4 +104,4 @@ ctx_read(path="packages/skills/src/index.ts",          mode="map")   # 전체 ex
 cd pkgs/skills && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

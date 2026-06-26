@@ -86,4 +86,4 @@ ctx_read(path="packages/store-json/src/session-tree.ts", mode="signatures")
 cd packages/store-json && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

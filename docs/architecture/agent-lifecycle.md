@@ -41,16 +41,16 @@ agents/dev-agent/index.ts (독립 프로세스)
   │
   ├── 1. agent.config.ts 로드
   │
-  ├── 2. @nexora/core AgentRunner 초기화
+  ├── 2. @dongkseo/core AgentRunner 초기화
   │     ├── LLMProvider 설정 (provider-fallback)
   │     ├── ToolExecutor 생성 (도구 조립)
   │     ├── MemoryProvider 생성 (store 연결)
   │     └── Middleware 파이프라인 조립
   │
-  ├── 3. @nexora/context ContextLoader 초기화
+  ├── 3. @dongkseo/context ContextLoader 초기화
   │     └── 테넌트별 시스템 프롬프트 캐시
   │
-  ├── 4. @nexora/transport 연결
+  ├── 4. @dongkseo/transport 연결
   │     ├── subscribes 토픽 구독
   │     └── AgentCard를 registry에 등록
   │

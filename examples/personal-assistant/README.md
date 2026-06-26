@@ -12,10 +12,10 @@ resume after a crash. None of that is possible with a raw LLM SDK.
 ## The 30-line version
 
 ```typescript
-import { ConversationRoom, TurnManager } from '@nexora/conversation';
-import { DiscordAdapter } from '@nexora/adapters';
-import { PiAiProvider } from '@nexora/core';
-import { defineAgent, topic } from '@nexora/contracts';
+import { ConversationRoom, TurnManager } from '@dongkseo/conversation';
+import { DiscordAdapter } from '@dongkseo/adapters';
+import { PiAiProvider } from '@dongkseo/core';
+import { defineAgent, topic } from '@dongkseo/contracts';
 
 const card = defineAgent({
   name: 'assistant',

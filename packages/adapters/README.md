@@ -121,4 +121,4 @@ ctx_read packages/adapters/src/codex-auth.ts      --mode signatures   # resolveC
 cd packages/adapters && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

@@ -33,29 +33,29 @@ curl localhost:3000/messages -d '{"content": "hello"}'
 You only need **3 packages** to run your first agent:
 
 ```
-@nexora/core          — agent runtime + LLM providers
-@nexora/contracts     — shared types
-@nexora/transport     — message bus (LocalTransport for dev)
+@dongkseo/core          — agent runtime + LLM providers
+@dongkseo/contracts     — shared types
+@dongkseo/transport     — message bus (LocalTransport for dev)
 ```
 
 That's it. Everything else is optional and added when you need it.
 
 | When you need... | Add... |
 |---|---|
-| Per-tenant personas and limits | `@nexora/context` |
-| Workflow chains with retry/checkpoint | `@nexora/orchestrator` |
-| HTTP API entry point | `@nexora/adapters` + `@nexora/gateway` |
-| Multi-agent conversation (who answers?) | `@nexora/conversation` |
-| Agent delegates to another agent | `delegate` tool (in `@nexora/tools`) |
-| Agent asks a human when stuck | `handraise` tool (in `@nexora/tools`) |
-| Tracing in Jaeger/Tempo | `@nexora/otel` |
-| Cost control | `BudgetTracker` (in `@nexora/core`) |
-| Discord/Slack/Paperclip | `@nexora/adapters` |
-| Scaffold + dev server | `@nexora/cli` |
-| Self-learning agent skills (YAML+MD) | `@nexora/skills` |
-| External agents as a worker fleet | `@nexora/fleet` |
-| Production store (PostgreSQL) | `@nexora/store-pg` |
-| Plugin-style extensibility | `NexoraExtension` + `ExtensionLoader` (in `@nexora/core`) |
+| Per-tenant personas and limits | `@dongkseo/context` |
+| Workflow chains with retry/checkpoint | `@dongkseo/orchestrator` |
+| HTTP API entry point | `@dongkseo/adapters` + `@dongkseo/gateway` |
+| Multi-agent conversation (who answers?) | `@dongkseo/conversation` |
+| Agent delegates to another agent | `delegate` tool (in `@dongkseo/tools`) |
+| Agent asks a human when stuck | `handraise` tool (in `@dongkseo/tools`) |
+| Tracing in Jaeger/Tempo | `@dongkseo/otel` |
+| Cost control | `BudgetTracker` (in `@dongkseo/core`) |
+| Discord/Slack/Paperclip | `@dongkseo/adapters` |
+| Scaffold + dev server | `@dongkseo/cli` |
+| Self-learning agent skills (YAML+MD) | `@dongkseo/skills` |
+| External agents as a worker fleet | `@dongkseo/fleet` |
+| Production store (PostgreSQL) | `@dongkseo/store-pg` |
+| Plugin-style extensibility | `NexoraExtension` + `ExtensionLoader` (in `@dongkseo/core`) |
 
 See the [full getting started guide](docs/getting-started.md) — zero to running agent in 5 steps.
 
@@ -100,23 +100,23 @@ Adapter (HTTP / Discord / Slack)
 
 | Package | Purpose |
 |---|---|
-| `@nexora/contracts` | Shared interfaces, ID helpers, budget, goal, registry contracts |
-| `@nexora/core` | AgentRunner, LLM providers, ToolExecutor, Compaction, Middleware, Bootstrap, Schema, Lint, Budget, ExtensionLoader |
-| `@nexora/transport` | LocalTransport, RedisTransport, RedisStreamsTransport, InMemoryDurableTransport, TracingTransport, DLQTransport |
-| `@nexora/context` | PersonaLoader, SkillLoader, TenantConfigStore, CoreContextLoader |
-| `@nexora/store` / `@nexora/store-json` | 6-store abstraction + JSON file implementations |
-| `@nexora/store-pg` | PostgreSQL production store (all 6 stores + session tree + auto-migration) |
-| `@nexora/orchestrator` | WorkflowEngine (checkpoint/resume) + CronScheduler |
-| `@nexora/fleet` | Worker registry, capability matching, dispatch, broadcast/fan-out, HTTP worker invoker |
-| `@nexora/architectures` | ReAct |
-| `@nexora/tools` | ToolRegistry + ToolsetRegistry + 9 builtins + MCP bridge + handraise + delegate |
-| `@nexora/skills` | Self-learning skills system (SKILL.md format, SkillLoader, SkillRegistry, SkillCreator) |
-| `@nexora/conversation` | ConversationRoom, TurnManager (turn-taking protocol) |
-| `@nexora/otel` | OTelTransport (W3C TraceContext), agent span middleware |
-| `@nexora/adapters` | HttpAdapter, DiscordAdapter, SlackAdapter, PaperclipAdapter |
-| `@nexora/gateway` | GatewayRouter, StreamingGatewayRouter, API key auth, rate limiter |
-| `@nexora/registry` | InMemoryAgentRegistry |
-| `@nexora/cli` | `create agent`, `dev`, `doctor`, `dlq`, `budget`, `handraise`, `export`, `import` |
+| `@dongkseo/contracts` | Shared interfaces, ID helpers, budget, goal, registry contracts |
+| `@dongkseo/core` | AgentRunner, LLM providers, ToolExecutor, Compaction, Middleware, Bootstrap, Schema, Lint, Budget, ExtensionLoader |
+| `@dongkseo/transport` | LocalTransport, RedisTransport, RedisStreamsTransport, InMemoryDurableTransport, TracingTransport, DLQTransport |
+| `@dongkseo/context` | PersonaLoader, SkillLoader, TenantConfigStore, CoreContextLoader |
+| `@dongkseo/store` / `@dongkseo/store-json` | 6-store abstraction + JSON file implementations |
+| `@dongkseo/store-pg` | PostgreSQL production store (all 6 stores + session tree + auto-migration) |
+| `@dongkseo/orchestrator` | WorkflowEngine (checkpoint/resume) + CronScheduler |
+| `@dongkseo/fleet` | Worker registry, capability matching, dispatch, broadcast/fan-out, HTTP worker invoker |
+| `@dongkseo/architectures` | ReAct |
+| `@dongkseo/tools` | ToolRegistry + ToolsetRegistry + 9 builtins + MCP bridge + handraise + delegate |
+| `@dongkseo/skills` | Self-learning skills system (SKILL.md format, SkillLoader, SkillRegistry, SkillCreator) |
+| `@dongkseo/conversation` | ConversationRoom, TurnManager (turn-taking protocol) |
+| `@dongkseo/otel` | OTelTransport (W3C TraceContext), agent span middleware |
+| `@dongkseo/adapters` | HttpAdapter, DiscordAdapter, SlackAdapter, PaperclipAdapter |
+| `@dongkseo/gateway` | GatewayRouter, StreamingGatewayRouter, API key auth, rate limiter |
+| `@dongkseo/registry` | InMemoryAgentRegistry |
+| `@dongkseo/cli` | `create agent`, `dev`, `doctor`, `dlq`, `budget`, `handraise`, `export`, `import` |
 
 </details>
 

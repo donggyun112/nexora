@@ -64,4 +64,54 @@ describe('InMemoryBackgroundTaskRegistry', () => {
     expect(ids).toContain('s2');    // newest settled kept
     expect(ids).not.toContain('s1'); // oldest settled evicted
   });
+
+  it('subscribe fires on settle with the new terminal status', () => {
+    const r = reg();
+    const seen: Array<[string, string]> = [];
+    r.subscribe((taskId, status) => seen.push([taskId, status]));
+    r.register({ taskId: 't1', kind: 'k', label: 'a', startedAt: 1, abort: () => {} });
+    expect(seen).toEqual([]); // register does not fire
+    r.settle('t1', 'done', 5);
+    expect(seen).toEqual([['t1', 'done']]);
+  });
+
+  it('subscribe fires on cancel with status cancelled', () => {
+    const r = reg();
+    const seen: Array<[string, string]> = [];
+    r.register({ taskId: 't1', kind: 'k', label: 'a', startedAt: 1, abort: () => {} });
+    r.subscribe((taskId, status) => seen.push([taskId, status]));
+    r.cancel('t1');
+    expect(seen).toEqual([['t1', 'cancelled']]);
+  });
+
+  it('does not fire for a no-op settle (already settled / unknown)', () => {
+    const r = reg();
+    r.register({ taskId: 't1', kind: 'k', label: 'a', startedAt: 1, abort: () => {} });
+    r.settle('t1', 'done', 5);
+    const seen: string[] = [];
+    r.subscribe((taskId) => seen.push(taskId));
+    r.settle('t1', 'error', 9); // no-op (already settled)
+    r.settle('nope', 'done', 1); // no-op (unknown)
+    expect(seen).toEqual([]);
+  });
+
+  it('unsubscribe stops further notifications', () => {
+    const r = reg();
+    const seen: string[] = [];
+    const off = r.subscribe((taskId) => seen.push(taskId));
+    r.register({ taskId: 't1', kind: 'k', label: 'a', startedAt: 1, abort: () => {} });
+    off();
+    r.settle('t1', 'done', 5);
+    expect(seen).toEqual([]);
+  });
+
+  it('isolates a throwing listener so settle still notifies others', () => {
+    const r = reg();
+    const seen: string[] = [];
+    r.subscribe(() => { throw new Error('bad listener'); });
+    r.subscribe((taskId) => seen.push(taskId));
+    r.register({ taskId: 't1', kind: 'k', label: 'a', startedAt: 1, abort: () => {} });
+    expect(() => r.settle('t1', 'done', 5)).not.toThrow();
+    expect(seen).toEqual(['t1']);
+  });
 });

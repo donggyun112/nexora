@@ -50,6 +50,7 @@ export type {
 export {
   createCheckTasksTool,
   createCancelTasksTool,
+  createWatchTaskTool,
 } from './background-tasks.js';
 export type { TaskControlToolOptions } from './background-tasks.js';
 

@@ -3,6 +3,7 @@ import { createDelegateTool } from '../builtin/delegate.js';
 import {
   createCheckTasksTool,
   createCancelTasksTool,
+  createWatchTaskTool,
 } from '../builtin/background-tasks.js';
 import { InMemoryBackgroundTaskRegistry } from '@dongkseo/contracts';
 import type {
@@ -314,5 +315,83 @@ describe('background subagent (delegate waitForResult:"async")', () => {
     expect(res.type).toBe('text');
     if (res.type === 'text') expect(res.text).toMatch(/async/i);
     expect(steerSelf).not.toHaveBeenCalled(); // legacy path doesn't use the steer channel
+  });
+});
+
+describe('watch_task', () => {
+  function ctxWith(reg: InMemoryBackgroundTaskRegistry, extra: Partial<ToolContext> = {}): ToolContext {
+    return { ...baseCtx(), backgroundTasks: reg, ...extra } as ToolContext;
+  }
+  function addTask(reg: InMemoryBackgroundTaskRegistry, id: string) {
+    reg.register({ taskId: id, kind: 'subagent', label: id, startedAt: 1, abort: () => {} });
+  }
+
+  it('fires via steerSelf when all watched tasks settle (mode=all, default)', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    addTask(reg, 't1'); addTask(reg, 't2');
+    const steered: string[] = [];
+    const tool = createWatchTaskTool();
+    const res = await tool.execute('w1', { task_ids: ['t1', 't2'] },
+      ctxWith(reg, { steerSelf: (m: string) => { steered.push(m); return true; } }));
+    expect(res.type).toBe('text');
+    if (res.type === 'text') expect(res.text).toMatch(/Watching 2 task/);
+
+    reg.settle('t1', 'done', 10);
+    expect(steered).toEqual([]); // not all terminal yet
+    reg.settle('t2', 'error', 11);
+    expect(steered).toHaveLength(1);
+    expect(steered[0]).toContain('t1=done');
+    expect(steered[0]).toContain('t2=error');
+  });
+
+  it('mode=any fires on the first settle', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    addTask(reg, 't1'); addTask(reg, 't2');
+    const steered: string[] = [];
+    const tool = createWatchTaskTool();
+    await tool.execute('w2', { task_ids: ['t1', 't2'], mode: 'any' },
+      ctxWith(reg, { steerSelf: (m: string) => { steered.push(m); return true; } }));
+    reg.settle('t1', 'done', 10);
+    expect(steered).toHaveLength(1);
+  });
+
+  it('fires immediately if already satisfied', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    addTask(reg, 't1');
+    reg.settle('t1', 'done', 10);
+    const steered: string[] = [];
+    const tool = createWatchTaskTool();
+    const res = await tool.execute('w3', { task_ids: ['t1'] },
+      ctxWith(reg, { steerSelf: (m: string) => { steered.push(m); return true; } }));
+    expect(steered).toHaveLength(1);
+    if (res.type === 'text') expect(res.text).toMatch(/already settled/);
+  });
+
+  it('falls back to deliverResult when steerSelf returns false', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    addTask(reg, 't1');
+    const delivered: Array<{ content: string; isError: boolean }> = [];
+    const tool = createWatchTaskTool();
+    await tool.execute('w4', { task_ids: ['t1'] },
+      ctxWith(reg, { steerSelf: () => false, deliverResult: (r) => { delivered.push(r); } }));
+    reg.settle('t1', 'error', 10);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].isError).toBe(true); // a watched task errored
+  });
+
+  it('rejects unknown task ids without arming', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    addTask(reg, 't1');
+    const tool = createWatchTaskTool();
+    const res = await tool.execute('w5', { task_ids: ['t1', 'ghost'] }, ctxWith(reg));
+    expect(res.type).toBe('error');
+    if (res.type === 'error') expect(res.message).toContain('ghost');
+  });
+
+  it('errors when the runtime has no background-task registry', async () => {
+    const tool = createWatchTaskTool();
+    const res = await tool.execute('w6', { task_ids: ['t1'] }, baseCtx());
+    expect(res.type).toBe('error');
+    if (res.type === 'error') expect(res.message).toMatch(/not supported/i);
   });
 });

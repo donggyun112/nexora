@@ -152,8 +152,8 @@ export type {
 } from './background-task.js';
 export { InMemoryBackgroundTaskRegistry } from './background-task.js';
 
-export type { TriggerSpec, ArmedTrigger } from './trigger.js';
-export { armTrigger } from './trigger.js';
+export type { TriggerSpec, ArmedTrigger, EventSource, MonitorSnapshot, TriggerHost } from './trigger.js';
+export { armTrigger, createIntervalSource, InMemoryTriggerHost } from './trigger.js';
 
 export type {
   WorkspaceAccessMode,

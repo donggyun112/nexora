@@ -21,6 +21,9 @@ export interface BackgroundTask {
   settledAt?: number;
   /** Live cancellation handle — present only while running, cleared on settle. */
   abort: (() => void) | null;
+  /** Live handle to the task's captured output (e.g. background shell stdout).
+   *  Present only for tasks that stream output. */
+  readOutput?: () => string;
 }
 
 export interface BackgroundTaskSnapshot {
@@ -46,7 +49,7 @@ export interface BackgroundTaskResult {
  * tool(s) and the check_tasks / cancel_task control tools.
  */
 export interface BackgroundTaskRegistry {
-  register(task: { taskId: string; kind: string; label: string; startedAt: number; abort: () => void }): void;
+  register(task: { taskId: string; kind: string; label: string; startedAt: number; abort: () => void; readOutput?: () => string }): void;
   settle(taskId: string, status: Exclude<BackgroundTaskStatus, 'running'>, settledAt: number): void;
   cancel(taskId: string): boolean;
   list(): BackgroundTaskSnapshot[];
@@ -69,7 +72,7 @@ export class InMemoryBackgroundTaskRegistry implements BackgroundTaskRegistry {
 
   constructor(private readonly maxSettledRetained = 50) {}
 
-  register(task: { taskId: string; kind: string; label: string; startedAt: number; abort: () => void }): void {
+  register(task: { taskId: string; kind: string; label: string; startedAt: number; abort: () => void; readOutput?: () => string }): void {
     this.tasks.set(task.taskId, {
       taskId: task.taskId,
       kind: task.kind,
@@ -77,6 +80,7 @@ export class InMemoryBackgroundTaskRegistry implements BackgroundTaskRegistry {
       status: 'running',
       startedAt: task.startedAt,
       abort: task.abort,
+      readOutput: task.readOutput,
     });
   }
 
@@ -115,7 +119,7 @@ export class InMemoryBackgroundTaskRegistry implements BackgroundTaskRegistry {
   list(): BackgroundTaskSnapshot[] {
     return Array.from(this.tasks.values())
       .sort((a, b) => a.startedAt - b.startedAt)
-      .map(({ abort: _abort, ...snap }) => snap);
+      .map(({ abort: _abort, readOutput: _readOutput, ...snap }) => snap);
   }
 
   get(taskId: string): BackgroundTask | null {

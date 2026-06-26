@@ -52,6 +52,16 @@ describe('InMemoryBackgroundTaskRegistry', () => {
     expect(r.cancel('missing')).toBe(false);
   });
 
+  it('stores and exposes a readOutput handle via get(), absent from list snapshot', () => {
+    const r = reg();
+    let buf = 'hello';
+    r.register({ taskId: 't1', kind: 'bash', label: 'echo', startedAt: 1, abort: () => {}, readOutput: () => buf });
+    expect(r.get('t1')?.readOutput?.()).toBe('hello');
+    buf = 'hello world';
+    expect(r.get('t1')?.readOutput?.()).toBe('hello world'); // live handle
+    expect('readOutput' in (r.list()[0] as object)).toBe(false);
+  });
+
   it('evicts oldest settled tasks beyond the retention cap; keeps running', () => {
     const r = reg(1);
     r.register({ taskId: 'run', kind: 'k', label: 'r', startedAt: 1, abort: () => {} });

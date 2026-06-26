@@ -8,7 +8,7 @@
  */
 
 import type { BackgroundTaskRegistry, BackgroundTaskStatus, ToolContext, ToolDefinition, ToolResult } from '@dongkseo/contracts';
-import { textResult, errorResult } from '@dongkseo/contracts';
+import { textResult, errorResult, armTrigger } from '@dongkseo/contracts';
 
 export interface TaskControlToolOptions {
   registry: BackgroundTaskRegistry;
@@ -129,18 +129,17 @@ export function createWatchTaskTool(): ToolDefinition {
         ctx.logger.warn('watch_task.notify_dropped', { taskIds, reason: 'no steerSelf and no deliverResult' });
       };
 
-      if (satisfied()) {
-        fire();
-        return textResult(`Watched ${taskIds.length} task(s) — already settled; notified now.`);
-      }
-
-      const unsubscribe = registry.subscribe(() => {
-        if (satisfied()) {
-          unsubscribe();
-          fire();
-        }
+      const { firedImmediately } = armTrigger({
+        subscribe: (onEvent) => registry.subscribe(() => onEvent()),
+        isSatisfied: satisfied,
+        onFire: fire,
+        recurring: false,
       });
-      return textResult(`Watching ${taskIds.length} task(s) (mode=${mode}); you'll be notified when they settle.`);
+      return textResult(
+        firedImmediately
+          ? `Watched ${taskIds.length} task(s) — already settled; notified now.`
+          : `Watching ${taskIds.length} task(s) (mode=${mode}); you'll be notified when they settle.`,
+      );
     },
   };
 }

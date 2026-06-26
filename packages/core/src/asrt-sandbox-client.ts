@@ -262,7 +262,7 @@ class AsrtSandboxSession implements WorkspaceSession {
     });
   }
 
-  async run(command: SandboxCommand): Promise<SandboxCommandResult> {
+  async wrapCommand(command: SandboxCommand): Promise<{ argv: string[]; env: Record<string, string | undefined> }> {
     if (command.argv.length === 0) {
       throw new Error('Sandbox command argv must not be empty');
     }
@@ -273,9 +273,14 @@ class AsrtSandboxSession implements WorkspaceSession {
       this.config,
       command.signal,
     );
+    return { argv, env: mergeSandboxEnv(command.env ?? {}, env) };
+  }
+
+  async run(command: SandboxCommand): Promise<SandboxCommandResult> {
+    const { argv, env } = await this.wrapCommand(command);
     return spawnAndCollect({
       argv,
-      env: mergeSandboxEnv(command.env ?? {}, env),
+      env,
       cwd: command.cwd ?? this.root,
       timeoutMs: command.timeoutMs,
       signal: command.signal,

@@ -43,6 +43,30 @@ describe('exec run_in_background', () => {
     expect(reg.get(id)?.status).toBe('cancelled');
   });
 
+  it('sandboxes the detached process via workspace.wrapCommand (no host-spawn escape)', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    const exec = createExecTool({ allowList: ['echo'] });
+    const read = createReadTaskOutputTool();
+
+    // 워크스페이스가 있으면 detached(background) 프로세스도 래핑된 argv 로 spawn 돼야 한다 —
+    // 래핑을 건너뛰면 jail 밖 호스트 실행(RCE)이 된다. 래퍼가 argv 를 바꾸는지로 검증한다.
+    const wrapCommand = async (command: { argv: string[]; env?: Record<string, string> }) => ({
+      argv: ['echo', 'WRAPPED', ...command.argv.slice(1)],
+      env: { ...(command.env ?? {}) },
+    });
+    const wsCtx = { ...ctx(reg), workspace: { wrapCommand } } as unknown as ToolContext;
+
+    const res = await exec.execute('e-wrap', { argv: ['echo', 'hello-bg'], run_in_background: true }, wsCtx);
+    expect(res.type).toBe('text');
+    const id = reg.list()[0]!.taskId;
+
+    await sleep(200);
+    const out = await read.execute('r-wrap', { task_id: id }, ctx(reg));
+    expect(out.type).toBe('text');
+    // 래핑된 argv 가 실제로 실행됐다 — detached 도 jail 을 거쳤다는 증거.
+    if (out.type === 'text') expect(out.text).toContain('WRAPPED hello-bg');
+  });
+
   it('errors when run_in_background without a registry', async () => {
     const exec = createExecTool({ allowList: ['echo'] });
     const res = await exec.execute('e3', { argv: ['echo', 'x'], run_in_background: true },

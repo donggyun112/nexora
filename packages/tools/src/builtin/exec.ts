@@ -258,8 +258,21 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
           return errorResult('run_in_background needs a background-task registry (not supported in this runtime).');
         }
         const taskId = messageId();
+        // Sandbox the detached process too. run() (foreground) jails via ctx.workspace.run;
+        // a detached background spawn skips that path, so under an active sandbox an
+        // unwrapped background exec would escape the jail (host RCE). When the workspace can
+        // wrap a command, spawn the sandbox-wrapped argv/env instead of the raw program.
+        let bgProgram = program;
+        let bgArgs = args;
+        let bgEnv: Record<string, string | undefined> = env;
+        if (ctx.workspace?.wrapCommand) {
+          const wrapped = await ctx.workspace.wrapCommand({ argv: [program, ...args], cwd: workdir, env });
+          bgProgram = wrapped.argv[0] ?? program;
+          bgArgs = wrapped.argv.slice(1);
+          bgEnv = wrapped.env;
+        }
         // Detached: not bound to ctx.signal — survives the turn; stopped via cancel_task.
-        const child = spawn(program, args, { cwd: workdir, env, shell: false });
+        const child = spawn(bgProgram, bgArgs, { cwd: workdir, env: bgEnv, shell: false });
         let out = '';
         const onData = (chunk: Buffer): void => {
           out += chunk.toString('utf8');

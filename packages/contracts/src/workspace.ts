@@ -96,6 +96,13 @@ export interface WorkspaceSession {
   mounts: WorkspaceMount[];
   resolve(path: string, options?: WorkspaceResolveOptions): Promise<ResolvedWorkspacePath>;
   run?(command: SandboxCommand): Promise<SandboxCommandResult>;
+  /**
+   * 샌드박스 격리를 적용한 argv/env 를 반환한다(실행은 하지 않음). run() 은 결과를 await 하는
+   * foreground 모델이라 detached(background) 실행에는 맞지 않으므로, 호출자가 직접 detached
+   * spawn 하되 run() 과 동일한 jail(네트워크 차단·비밀 denylist·워크스페이스 격리)을 적용할 수
+   * 있게 래핑만 제공한다. 미구현(비샌드박스 세션)이면 호출자가 비격리로 폴백한다.
+   */
+  wrapCommand?(command: SandboxCommand): Promise<{ argv: string[]; env: Record<string, string | undefined> }>;
   snapshot?(): Promise<WorkspaceSnapshot>;
   cleanup(): Promise<void>;
 }

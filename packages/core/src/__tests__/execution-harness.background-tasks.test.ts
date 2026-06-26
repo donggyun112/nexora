@@ -66,4 +66,13 @@ describe('LocalExecutionHarness background-task wiring', () => {
     for await (const _ev of harness.execute({ prompt: 'go' })) { /* drain */ }
     expect(captured.ctx?.backgroundTasks).toBeDefined();
   });
+
+  it('injects a triggers host into the tool ToolContext', async () => {
+    const captured: { ctx?: ToolContext } = {};
+    const tools = new CoreToolExecutor({ tools: [probeTool(captured)], context: baseCtx });
+    const harness = new LocalExecutionHarness({ architecture: probeArchitecture(), llm: nullLLM, tools });
+    for await (const _ev of harness.execute({ prompt: 'go' })) { /* drain */ }
+    expect(captured.ctx?.triggers).toBeDefined();
+    expect(typeof captured.ctx?.triggers?.arm).toBe('function');
+  });
 });

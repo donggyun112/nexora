@@ -9,6 +9,7 @@
 
 import { scaffoldAgent } from './scaffold.js';
 import { runDev } from './dev.js';
+import { runTestServe } from './test-serve.js';
 import { runHeadless, runListModels } from './headless.js';
 import { exportPackage, importPackage } from './portability.js';
 import { runDoctor, viewDlq, viewBudget, viewHandraises } from './ops.js';
@@ -117,6 +118,12 @@ async function main(): Promise<void> {
     const model = typeof args.flags.model === 'string' ? args.flags.model : 'claude-sonnet-4-5';
 
     await runDev({ port, contextDir, agentsDir, model });
+    return;
+  }
+
+  if (args.command === 'test-serve') {
+    const port = typeof args.flags.port === 'string' ? parseInt(args.flags.port, 10) : 3000;
+    await runTestServe({ port });
     return;
   }
 
@@ -229,6 +236,7 @@ function printHelp(): void {
 Usage:
   nexora create agent <name> [options]    Scaffold a new agent
   nexora dev [options]                    Start all agents + gateway
+  nexora test-serve [--port <n>]          Boot a keyless, deterministic service for e2e testing
   nexora doctor [options]                 Health check: agents, context, deps
   nexora ops dlq [--data <dir>]          List dead-letter queue entries
   nexora ops budget [--data <dir>]       Show budget status per scope

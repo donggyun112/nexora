@@ -451,6 +451,27 @@ importers:
 
   platform/cli:
     devDependencies:
+      '@dongkseo/adapters':
+        specifier: workspace:^
+        version: link:../../packages/adapters
+      '@dongkseo/architectures':
+        specifier: workspace:^
+        version: link:../../packages/architectures
+      '@dongkseo/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
+      '@dongkseo/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@dongkseo/gateway':
+        specifier: workspace:^
+        version: link:../gateway
+      '@dongkseo/tools':
+        specifier: workspace:^
+        version: link:../../packages/tools
+      '@dongkseo/transport':
+        specifier: workspace:^
+        version: link:../../packages/transport
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17

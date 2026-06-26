@@ -94,7 +94,7 @@ function parseHeadlessArgs(argv: string[]): HeadlessArgs {
  * Exits non-zero when the turn fails so Multica records a failed task.
  */
 export async function runHeadless(argv: string[]): Promise<void> {
-  const { AgentRunner, CoreToolExecutor, PiAiProvider, drivePi } =
+  const { AgentRunner, CoreToolExecutor, PiAiProvider, drivePi, InMemoryBudgetTracker, createBudgetMiddleware } =
     (await import('@dongkseo/core' as string)) as typeof import('@dongkseo/core');
   const { createReactArchitecture } =
     (await import('@dongkseo/architectures' as string)) as typeof import('@dongkseo/architectures');
@@ -143,12 +143,25 @@ export async function runHeadless(argv: string[]): Promise<void> {
 
     const tools = [createReadTool(), createGrepTool(), createWriteTool(), createEditTool()];
 
+    // Feed the middleware pipeline (previously plumbed into the harness but left
+    // empty). Cost recording only, with the default NOOP logger — headless stdout
+    // is reserved for the pi wire protocol, so no middleware may write there.
+    const budgetTracker = new InMemoryBudgetTracker();
+
     runner = new AgentRunner({
       architecture: createReactArchitecture({
         systemPrompt: parsed.systemPrompt,
         model: parsed.model,
       }),
       llm,
+      middlewares: [
+        createBudgetMiddleware({
+          tracker: budgetTracker,
+          agentName: 'headless',
+          tenantId: 'default',
+          model: parsed.model,
+        }),
+      ],
       tools: new CoreToolExecutor({
         tools,
         context: {

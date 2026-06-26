@@ -11,14 +11,33 @@ import type { BackgroundTaskRegistry, BackgroundTaskStatus, ToolContext, ToolDef
 import { textResult, errorResult, armTrigger } from '@dongkseo/contracts';
 
 export interface TaskControlToolOptions {
-  registry: BackgroundTaskRegistry;
+  /**
+   * Fallback registry used only when the runtime does NOT inject one on the
+   * ToolContext (`ctx.backgroundTasks`). In the normal harness path the
+   * injected registry wins, so these tools observe the SAME tasks that
+   * `delegate`, `watch_task`, and background exec register. Provide this only
+   * for standalone use outside an execution harness (e.g. unit tests).
+   */
+  registry?: BackgroundTaskRegistry;
+}
+
+/**
+ * Resolve the background-task registry these tools operate on. Prefers the
+ * harness-injected `ctx.backgroundTasks` (so all background-task tools share
+ * one registry) and falls back to an explicitly-provided one.
+ */
+function resolveRegistry(
+  ctx: ToolContext,
+  options?: TaskControlToolOptions,
+): BackgroundTaskRegistry | undefined {
+  return ctx.backgroundTasks ?? options?.registry;
 }
 
 /**
  * `check_tasks` — list the background tasks this agent launched, with their
  * status. Lets the agent decide whether to wait, proceed, or cancel.
  */
-export function createCheckTasksTool(options: TaskControlToolOptions): ToolDefinition {
+export function createCheckTasksTool(options?: TaskControlToolOptions): ToolDefinition {
   return {
     name: 'check_tasks',
     description:
@@ -28,8 +47,10 @@ export function createCheckTasksTool(options: TaskControlToolOptions): ToolDefin
     isReadOnly: true,
     isConcurrencySafe: true,
     isDestructive: false,
-    async execute(_callId: string, _rawInput: unknown, _ctx: ToolContext): Promise<ToolResult> {
-      const tasks = options.registry.list();
+    async execute(_callId: string, _rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
+      const registry = resolveRegistry(ctx, options);
+      if (!registry) return errorResult('Background tasks are not supported in this runtime.');
+      const tasks = registry.list();
       if (tasks.length === 0) return textResult('No background tasks.');
       return textResult(JSON.stringify(tasks));
     },
@@ -40,7 +61,7 @@ export function createCheckTasksTool(options: TaskControlToolOptions): ToolDefin
  * `cancel_task` — abort a running background task by id. The parent holds this
  * leash; cancelling invokes the task's registered abort handle.
  */
-export function createCancelTasksTool(options: TaskControlToolOptions): ToolDefinition {
+export function createCancelTasksTool(options?: TaskControlToolOptions): ToolDefinition {
   return {
     name: 'cancel_task',
     description: 'Abort a running background task by its id (from check_tasks).',
@@ -54,12 +75,14 @@ export function createCancelTasksTool(options: TaskControlToolOptions): ToolDefi
     isReadOnly: false,
     isConcurrencySafe: false,
     isDestructive: true,
-    async execute(_callId: string, rawInput: unknown, _ctx: ToolContext): Promise<ToolResult> {
+    async execute(_callId: string, rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
+      const registry = resolveRegistry(ctx, options);
+      if (!registry) return errorResult('Background tasks are not supported in this runtime.');
       const taskId = (rawInput as { task_id?: unknown })?.task_id;
       if (typeof taskId !== 'string' || !taskId.trim()) {
         return errorResult('task_id is required');
       }
-      const ok = options.registry.cancel(taskId.trim());
+      const ok = registry.cancel(taskId.trim());
       return ok
         ? textResult(`Cancelled task ${taskId.trim()}.`)
         : errorResult(`No running task with id ${taskId.trim()}.`);

@@ -62,6 +62,9 @@ export {
   createWatchOutputTool,
 } from './schedule-monitor.js';
 
+export { monitoringToolDefinitions, registerMonitoringTools } from './monitoring-bundle.js';
+export type { MonitoringToolBundleOptions } from './monitoring-bundle.js';
+
 export { createSkillManageTool } from './skill-manage.js';
 export type { SkillManageToolOptions } from './skill-manage.js';
 

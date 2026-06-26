@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { armTrigger } from '../trigger.js';
+import { describe, it, expect, vi } from 'vitest';
+import { armTrigger, createIntervalSource, InMemoryTriggerHost } from '../trigger.js';
 
 /** Fake source: tests drive events manually via emit(). */
 function fakeSource() {
@@ -55,5 +55,75 @@ describe('armTrigger', () => {
     ok = true;
     src.emit();
     expect(fires).toBe(0);
+  });
+});
+
+describe('createIntervalSource', () => {
+  it('emits to subscribers on each interval and stops on unsubscribe', () => {
+    vi.useFakeTimers();
+    try {
+      const src = createIntervalSource(1000);
+      let ticks = 0;
+      const off = src.subscribe(() => { ticks++; });
+      vi.advanceTimersByTime(3000);
+      expect(ticks).toBe(3);
+      off();
+      vi.advanceTimersByTime(2000);
+      expect(ticks).toBe(3); // unsubscribed
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('InMemoryTriggerHost', () => {
+  it('arms a recurring timer monitor, fires up to maxFires, then auto-drops from list', () => {
+    vi.useFakeTimers();
+    try {
+      const host = new InMemoryTriggerHost();
+      let fires = 0;
+      const id = host.arm({
+        label: 'check-x', source: createIntervalSource(1000),
+        onFire: () => { fires++; }, recurring: true, maxFires: 2, fireOnArm: false, now: 0,
+      });
+      expect(host.list().map((m) => m.id)).toEqual([id]);
+      vi.advanceTimersByTime(5000);
+      expect(fires).toBe(2);            // capped
+      expect(host.list()).toEqual([]);  // auto-removed after maxFires
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancel stops the timer and removes the monitor', () => {
+    vi.useFakeTimers();
+    try {
+      const host = new InMemoryTriggerHost();
+      let fires = 0;
+      const id = host.arm({ label: 'm', source: createIntervalSource(1000), onFire: () => { fires++; }, recurring: true, maxFires: 100, fireOnArm: false, now: 0 });
+      vi.advanceTimersByTime(1000);
+      expect(fires).toBe(1);
+      expect(host.cancel(id)).toBe(true);
+      vi.advanceTimersByTime(5000);
+      expect(fires).toBe(1);            // timer torn down
+      expect(host.list()).toEqual([]);
+      expect(host.cancel(id)).toBe(false); // already gone
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ttlMs auto-cancels the monitor after the deadline', () => {
+    vi.useFakeTimers();
+    try {
+      const host = new InMemoryTriggerHost();
+      let fires = 0;
+      host.arm({ label: 'm', source: createIntervalSource(1000), onFire: () => { fires++; }, recurring: true, maxFires: 100, ttlMs: 2500, fireOnArm: false, now: 0 });
+      vi.advanceTimersByTime(10_000);
+      expect(fires).toBe(2);            // only ticks before ttl (1000, 2000)
+      expect(host.list()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

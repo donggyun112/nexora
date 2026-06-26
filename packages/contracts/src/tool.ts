@@ -1,6 +1,7 @@
 import type { TenantAgentScope } from './context.js';
 import type { WorkspaceSession } from './workspace.js';
 import type { BackgroundTaskRegistry, BackgroundTaskResult } from './background-task.js';
+import type { TriggerHost } from './trigger.js';
 
 /**
  * ToolDefinition — 도구 계약.
@@ -116,6 +117,13 @@ export interface ToolContext {
    * → the result is logged and dropped.
    */
   deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
+
+  /**
+   * Per-runtime trigger host: owns armed monitors (timer/event triggers) so they
+   * survive across turns and can be listed/cancelled. Undefined when the runtime
+   * doesn't support monitors.
+   */
+  triggers?: TriggerHost;
 }
 
 export interface SecretAccessor {

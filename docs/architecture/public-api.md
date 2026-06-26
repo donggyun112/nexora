@@ -9,9 +9,9 @@ Use these. We won't break them without a major version bump + migration guide.
 
 | Package | What you import | Why |
 |---|---|---|
-| `@nexora/contracts` | `defineAgent`, `topic`, ID helpers, all interface types | The vocabulary. Everything depends on this. |
-| `@nexora/core` | `AgentRunner`, `bootstrapAgent`, `PiAiProvider`, `FallbackLLMProvider`, `CoreToolExecutor`, `createSchemaValidator`, `InMemoryBudgetTracker`, `createBudgetMiddleware` | The engine. Runs agents. |
-| `@nexora/cli` | `nexora create agent`, `nexora dev`, `nexora export/import` | The DX entry point. |
+| `@dongkseo/contracts` | `defineAgent`, `topic`, ID helpers, all interface types | The vocabulary. Everything depends on this. |
+| `@dongkseo/core` | `AgentRunner`, `bootstrapAgent`, `PiAiProvider`, `FallbackLLMProvider`, `CoreToolExecutor`, `createSchemaValidator`, `InMemoryBudgetTracker`, `createBudgetMiddleware` | The engine. Runs agents. |
+| `@dongkseo/cli` | `nexora create agent`, `nexora dev`, `nexora export/import` | The DX entry point. |
 
 ## Tier 2: Official extensions (stable, but opt-in)
 
@@ -19,14 +19,14 @@ Use when you need the specific capability. Same stability promise as Tier 1.
 
 | Package | When to add |
 |---|---|
-| `@nexora/transport` | You need Redis, durable delivery, DLQ, or tracing transport |
-| `@nexora/context` | You need multi-tenant persona/limits/skills loading |
-| `@nexora/tools` | You need builtin tools beyond what you define yourself |
-| `@nexora/adapters` | You need HTTP, Discord, Slack, or Paperclip entry points |
-| `@nexora/gateway` | You need request routing or SSE streaming |
-| `@nexora/orchestrator` | You need workflow chains with checkpoint/resume |
-| `@nexora/fleet` | You need external OpenClaw, Hermes, Claude Code, or custom workers in one capability fleet |
-| `@nexora/architectures` | You need the ReAct architecture (or a base to build a custom one) |
+| `@dongkseo/transport` | You need Redis, durable delivery, DLQ, or tracing transport |
+| `@dongkseo/context` | You need multi-tenant persona/limits/skills loading |
+| `@dongkseo/tools` | You need builtin tools beyond what you define yourself |
+| `@dongkseo/adapters` | You need HTTP, Discord, Slack, or Paperclip entry points |
+| `@dongkseo/gateway` | You need request routing or SSE streaming |
+| `@dongkseo/orchestrator` | You need workflow chains with checkpoint/resume |
+| `@dongkseo/fleet` | You need external OpenClaw, Hermes, Claude Code, or custom workers in one capability fleet |
+| `@dongkseo/architectures` | You need the ReAct architecture (or a base to build a custom one) |
 
 ## Tier 3: Advanced / internal (may change)
 
@@ -35,10 +35,10 @@ advanced users who are willing to track changes.
 
 | Package | Why it's Tier 3 |
 |---|---|
-| `@nexora/conversation` | Turn-taking protocol is novel; API surface will likely shrink |
-| `@nexora/otel` | Depends on OTel SDK internals; W3C bridge is new |
-| `@nexora/store` / `@nexora/store-json` | JSON file stores are dev-only; will be replaced by durable backends |
-| `@nexora/registry` | AgentCard registry only; fleet worker registry lives in `@nexora/fleet` |
+| `@dongkseo/conversation` | Turn-taking protocol is novel; API surface will likely shrink |
+| `@dongkseo/otel` | Depends on OTel SDK internals; W3C bridge is new |
+| `@dongkseo/store` / `@dongkseo/store-json` | JSON file stores are dev-only; will be replaced by durable backends |
+| `@dongkseo/registry` | AgentCard registry only; fleet worker registry lives in `@dongkseo/fleet` |
 
 ## Rule
 

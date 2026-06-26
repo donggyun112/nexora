@@ -100,4 +100,4 @@ ctx_read(path="packages/core/src/pi-headless.ts",   mode="signatures")   # drive
 cd packages/core && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

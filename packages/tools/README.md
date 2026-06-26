@@ -97,4 +97,4 @@ ctx_read(path="packages/tools/src/mcp/index.ts",        mode="map")         # MC
 cd packages/tools && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

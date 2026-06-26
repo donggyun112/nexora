@@ -84,4 +84,4 @@ ctx_read(path="packages/contracts/src/index.ts",   mode="map")   # 전체 export
 cd packages/contracts && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

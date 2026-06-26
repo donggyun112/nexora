@@ -104,4 +104,4 @@ ctx_read(path="packages/store-memory/src/index.ts",               mode="map")   
 cd packages/store-memory && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

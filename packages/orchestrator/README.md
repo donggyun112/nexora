@@ -116,4 +116,4 @@ ctx_read(path="packages/orchestrator/src/index.ts",                mode="map")  
 cd packages/orchestrator && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

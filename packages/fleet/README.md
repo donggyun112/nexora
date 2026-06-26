@@ -104,4 +104,4 @@ ctx_read(path="packages/fleet/src/index.ts", mode="signatures")   # 클래스/�
 cd packages/fleet && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

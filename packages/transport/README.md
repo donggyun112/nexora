@@ -114,4 +114,4 @@ ctx_read(path="packages/contracts/src/transport.ts", mode="signatures")
 cd packages/transport && pnpm test
 ```
 
-Part of the [Nexora](../../README.md) multi-tenant agent framework.
+Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

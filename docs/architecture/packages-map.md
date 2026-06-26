@@ -25,7 +25,7 @@
 | OTel 트레이싱 | `@dongkseo/otel` | `OTelTransport`, agent span middleware | `ctx_read("packages/otel/src/index.ts", mode="map")` |
 | HTTP/Discord/Slack 입구 | `@dongkseo/adapters` | `HttpAdapter`, `DiscordAdapter`, `SlackAdapter`, `PaperclipAdapter` | `ctx_read("packages/adapters/src/index.ts", mode="map")` |
 | 게이트웨이 라우팅·인증·레이트리밋 | `@dongkseo/gateway` | `GatewayRouter`, `StreamingGatewayRouter`, `createApiKeyAuth`, `createRateLimiter` | `ctx_read("platform/gateway/src/index.ts", mode="map")` |
-| 에이전트 레지스트리 | `@dongkseo/registry` | `InMemoryAgentRegistry` | `ctx_read("platform/registry/src/index.ts", mode="map")` |
+| 에이전트 레지스트리(인메모리/Redis)·팩토리·capability 라우팅 | `@dongkseo/registry` | `InMemoryAgentRegistry`, `RedisAgentRegistry`, `createAgentRegistry`, `createCapabilityRegistry` | `ctx_read("platform/registry/src/index.ts", mode="map")` |
 | 스캐폴드·dev 서버·운영 CLI | `@dongkseo/cli` (bin `nexora`) | `scaffoldAgent`, `runDev`, `runDoctor` …; 명령 `nexora create/dev/doctor/dlq/budget/handraise/export/import` | `ctx_read("platform/cli/src/index.ts", mode="map")` |
 
 ## 의존 방향 (정적 deps)
@@ -60,6 +60,7 @@ graph TD
   gateway --> registry
   registry --> contracts
 ```
+> `cli`는 정적 deps가 없어 위 그래프에 노드를 두지 않았다(런타임 간선은 아래 주석 참고).
 
 텍스트 인접목록(에이전트가 그래프 렌더 없이 읽는 용):
 ```

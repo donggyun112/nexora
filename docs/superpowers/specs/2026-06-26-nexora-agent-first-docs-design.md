@@ -27,14 +27,14 @@ Nexora의 각 서브모듈 문서(README)를 **coding agent가 소스를 열지 
 
 3. **① platform stub 3개.** `platform/cli`·`gateway`·`registry` README가 18줄(제목·Install·Tests뿐). 실제로는 기능이 많음(gateway: router·streaming-router·middleware; registry: InMemoryAgentRegistry; cli: create/dev/doctor/dlq/budget/handraise/export/import). 에이전트에게 아무 정보도 못 줌.
 
-대조군: `packages/*` 14개 `@dongkseo/*` README는 이미 충실한 공통 템플릿(무엇/아닌가 · 핵심개념표 · 사용레시피 · API표면 · 유지보수)을 따르며 이름도 정확. **이 템플릿이 목표 품질의 기준선이자 정본.**
+대조군: `packages/*` 17개 `@dongkseo/*` README는 이미 충실한 공통 템플릿(무엇/아닌가 · 핵심개념표 · 사용레시피 · API표면 · 유지보수)을 따르며 이름도 정확. **이 템플릿이 목표 품질의 기준선이자 정본.**
 
 ## 3. 비목표 (Non-goals)
 
 - 패키지 **rename 안 함**(`@dongkseo`→`@nexora`로 코드 변경 X). 문서만 교정.
 - 사람 온보딩용 산문/튜토리얼 확장 안 함. 스타일은 현행 밀도 높은 agent 지향 유지(사용자가 "사람이 읽기 어려움"은 문제로 꼽지 않음).
 - 과거 기록물 재작성 안 함: `docs/superpowers/plans/*`, `plan/**` 는 point-in-time 기록 → 손대지 않음.
-- 리치 14개 README의 **줄단위 전수 감사 안 함**(스팟체크만; 진짜 drift 발견 시 해당 패키지만 교정).
+- 리치 17개 README의 **줄단위 전수 감사 안 함**(스팟체크만; 진짜 drift 발견 시 해당 패키지만 교정).
 
 ## 4. 품질 기준 (Agent-consumability checklist)
 
@@ -84,7 +84,7 @@ Nexora의 각 서브모듈 문서(README)를 **coding agent가 소스를 열지 
 
 ### P2 — 골격 일관성 + 템플릿 문서화
 - 정본 골격을 `docs/architecture/README-template.md`(또는 동급)로 1장 명문화 → 신규 패키지가 표류하지 않게.
-- 리치 14개 README는 골격 준수 **스팟체크**만(이름은 이미 정확). 누락 슬롯만 보강.
+- 리치 17개 README는 골격 준수 **스팟체크**만(이름은 이미 정확). 누락 슬롯만 보강.
 
 ## 6. 정본 README 골격 (Canonical skeleton)
 
@@ -125,5 +125,5 @@ Part of the [Nexora](../../README.md) … · [Package map](../../docs/architectu
 3. `packages-map.md` 작성(표+그래프+흐름).
 4. platform stub 3개 확장(골격).
 5. 루트 `AGENTS.md` 작성, README 푸터에 지도 링크 추가.
-6. `README-template.md` 명문화 + 리치 14개 스팟체크 보강.
+6. `README-template.md` 명문화 + 리치 17개 스팟체크 보강.
 7. 검증(§7) 후 단일 PR/커밋.

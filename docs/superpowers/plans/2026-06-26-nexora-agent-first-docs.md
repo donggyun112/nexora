@@ -501,7 +501,7 @@ git commit -m "docs(p1): expand platform cli/gateway/registry READMEs to canonic
 
 **Files:**
 - Create: `AGENTS.md`
-- Modify: 14개 리치 README(`packages/*/README.md`)의 푸터 (platform 3개는 Task 3에서 이미 링크 추가됨)
+- Modify: 17개 리치 README(`packages/*/README.md`)의 푸터 (platform 3개는 Task 3에서 이미 링크 추가됨)
 - Test: 도달성 grep
 
 **Interfaces:**
@@ -544,7 +544,7 @@ pnpm add @dongkseo/contracts @dongkseo/core @dongkseo/transport
 모든 패키지 README는 동일 골격을 따른다: **무엇인가/아닌가 · 핵심 개념 · 사용 레시피 · API 표면 · 유지보수 · Tests**. 템플릿: [`docs/architecture/README-template.md`](docs/architecture/README-template.md).
 ````
 
-- [ ] **Step 3: 리치 README 14개 푸터에 지도 링크 추가**
+- [ ] **Step 3: 리치 README 17개 푸터에 지도 링크 추가**
 
 기존 공통 푸터 줄에 지도 링크를 덧붙인다(이미 링크가 있으면 건너뜀):
 ```bash
@@ -577,7 +577,7 @@ git commit -m "docs(p1): add root AGENTS.md entrypoint and link package map in R
 
 ---
 
-## Task 5: P2 — README 골격 템플릿 명문화 + 리치 14개 스팟체크
+## Task 5: P2 — README 골격 템플릿 명문화 + 리치 17개 스팟체크
 
 **Files:**
 - Create: `docs/architecture/README-template.md`

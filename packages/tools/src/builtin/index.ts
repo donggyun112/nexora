@@ -54,6 +54,12 @@ export {
 } from './background-tasks.js';
 export type { TaskControlToolOptions } from './background-tasks.js';
 
+export {
+  createScheduleMonitorTool,
+  createCancelMonitorTool,
+  createListMonitorsTool,
+} from './schedule-monitor.js';
+
 export { createSkillManageTool } from './skill-manage.js';
 export type { SkillManageToolOptions } from './skill-manage.js';
 

@@ -10,7 +10,7 @@
  *   curl localhost:3000/messages -d '{"content": "hello"}'
  */
 
-import { defineAgent, topic } from '@dongkseo/contracts';
+import { defineAgent, topic, messageId, traceId, spanId, conversationId } from '@dongkseo/contracts';
 import { bootstrapAgent, AgentRunner, CoreToolExecutor } from '@dongkseo/core';
 import { createReactArchitecture } from '@dongkseo/architectures';
 import {
@@ -172,6 +172,22 @@ for (const card of [coder, reviewer, pm]) {
         }),
         llm,
         onSuspend,
+        // Idle-wake last mile: when a background task / monitor settles after the
+        // agent's turn ended (steerSelf returned false), re-invoke this agent by
+        // publishing the result to its own request topic — bootstrap runs a fresh
+        // turn with the message as the prompt. Closes the autonomous self-wake loop.
+        deliverResult: async (r) => {
+          await transport.publish({
+            id: messageId(),
+            topic: card.subscribes[0],
+            type: 'request',
+            payload: { prompt: r.content },
+            metadata: {
+              traceId: traceId(), spanId: spanId(), conversationId: conversationId(),
+              tenantId: 'default', timestamp: Date.now(),
+            },
+          });
+        },
         tools: new CoreToolExecutor({
           tools: toolsFor[card.name],
           context: {

@@ -30,7 +30,7 @@
 
 import { spawn } from 'node:child_process';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
-import { textResult, errorResult, safeUtf8Prefix, safeUtf8Suffix } from '@dongkseo/contracts';
+import { textResult, errorResult, safeUtf8Prefix, safeUtf8Suffix, messageId } from '@dongkseo/contracts';
 import { buildToolEnv } from './tool-env.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -166,11 +166,12 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
             : 'DISABLED in this exec configuration. Use argv instead.',
         },
         timeoutMs: { type: 'number', description: 'Override default timeout (1000-600000)' },
+        run_in_background: { type: 'boolean', description: 'Run detached: returns a task id immediately; poll output with read_task_output, manage with check_tasks/cancel_task/watch_task.' },
       },
       required: [],
     },
     execute: async (_id, input, ctx): Promise<ToolResult> => {
-      const params = input as { argv?: unknown; command?: unknown; timeoutMs?: unknown };
+      const params = input as { argv?: unknown; command?: unknown; timeoutMs?: unknown; run_in_background?: unknown };
 
       // Resolve mode + child process arguments.
       let program: string;
@@ -250,6 +251,45 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
       }
 
       const workdir = ctx.workspace?.root ?? ctx.workdir;
+
+      if (params.run_in_background === true) {
+        const registry = ctx.backgroundTasks;
+        if (!registry) {
+          return errorResult('run_in_background needs a background-task registry (not supported in this runtime).');
+        }
+        const taskId = messageId();
+        // Detached: not bound to ctx.signal — survives the turn; stopped via cancel_task.
+        const child = spawn(program, args, { cwd: workdir, env, shell: false });
+        let out = '';
+        const onData = (chunk: Buffer): void => {
+          out += chunk.toString('utf8');
+          if (out.length > MAX_OUTPUT_BYTES) out = out.slice(out.length - MAX_OUTPUT_BYTES); // keep tail
+        };
+        child.stdout?.on('data', onData);
+        child.stderr?.on('data', onData);
+        child.on('error', (err) => {
+          out += `\n[spawn error: ${err.message}]`;
+          registry.settle(taskId, 'error', Date.now());
+        });
+        child.on('close', (code) => {
+          registry.settle(taskId, code === 0 ? 'done' : 'error', Date.now());
+        });
+        registry.register({
+          taskId,
+          kind: 'bash',
+          label,
+          startedAt: Date.now(),
+          abort: () => { child.kill(); },
+          readOutput: () => out,
+        });
+        ctx.logger.info('exec.background.launched', { taskId, program, label });
+        return textResult(
+          `Launched background task ${taskId}: ${label}. ` +
+          `Poll output with read_task_output (id "${taskId}"), status with check_tasks, ` +
+          `stop with cancel_task, or get notified on completion with watch_task.`,
+        );
+      }
+
       if (ctx.workspace?.run) {
         try {
           const result = await ctx.workspace.run({

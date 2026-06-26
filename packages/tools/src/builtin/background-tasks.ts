@@ -68,6 +68,36 @@ export function createCancelTasksTool(options: TaskControlToolOptions): ToolDefi
 }
 
 /**
+ * `read_task_output` — read the captured stdout/stderr of a background task
+ * (e.g. a background shell). Polls the task's live output buffer.
+ */
+export function createReadTaskOutputTool(): ToolDefinition {
+  return {
+    name: 'read_task_output',
+    description: 'Read the captured output (stdout/stderr) of a background task by its id (from check_tasks).',
+    parameters: {
+      type: 'object',
+      required: ['task_id'],
+      properties: { task_id: { type: 'string', description: 'Task id from check_tasks / a launched background task.' } },
+    } as unknown as Record<string, unknown>,
+    isReadOnly: true,
+    isConcurrencySafe: true,
+    isDestructive: false,
+    async execute(_callId: string, rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
+      const registry = ctx.backgroundTasks;
+      if (!registry) return errorResult('Background tasks are not supported in this runtime.');
+      const taskId = (rawInput as { task_id?: unknown }).task_id;
+      if (typeof taskId !== 'string' || !taskId.trim()) return errorResult('task_id is required.');
+      const task = registry.get(taskId.trim());
+      if (!task) return errorResult(`No task with id ${taskId.trim()}.`);
+      if (!task.readOutput) return errorResult(`Task ${taskId.trim()} has no captured output.`);
+      const out = task.readOutput();
+      return textResult(out.length > 0 ? out : '(no output yet)');
+    },
+  };
+}
+
+/**
  * `watch_task` — arm a non-blocking, one-shot trigger on background tasks.
  * When the watched tasks settle (mode 'all' or 'any'), a status message is
  * folded into the agent's turn via steerSelf, or delivered as a follow-up via

@@ -10,8 +10,18 @@
 
 import os from 'node:os';
 import path from 'node:path';
+import { SandboxManager } from '@anthropic-ai/sandbox-runtime';
 import type { SnapshotBackend } from '@dongkseo/contracts';
 import { AsrtSandboxClient } from './asrt-sandbox-client.js';
+
+/**
+ * OS 격리(seatbelt/bubblewrap)가 이 호스트에서 지원되는지. 미지원 호스트(예: bwrap/ripgrep
+ * 없는 Linux, WSL1)에서는 sandbox provider 의 acquire 가 매 턴 throw 한다 — 소비자는 부트 시
+ * 이걸로 확인해 격리 없이 조용히 도는 대신 명확히 실패(또는 명시적 비활성)하게 한다.
+ */
+export function isSandboxSupported(): boolean {
+  return SandboxManager.isSupportedPlatform();
+}
 
 /**
  * 항상 읽기 차단되는 비밀 경로(홈 기준 절대경로). 소비자 denyRead는 여기에 병합되며

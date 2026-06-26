@@ -81,7 +81,7 @@ export { HostWorkspaceProvider } from './workspace-provider.js';
 export type { HostWorkspaceProviderOptions } from './workspace-provider.js';
 export { AsrtSandboxClient } from './asrt-sandbox-client.js';
 export type { AsrtSandboxClientOptions } from './asrt-sandbox-client.js';
-export { createSandboxProvider, SANDBOX_SECRET_DENYLIST } from './sandbox-provider.js';
+export { createSandboxProvider, SANDBOX_SECRET_DENYLIST, isSandboxSupported } from './sandbox-provider.js';
 export type { SandboxProviderOptions } from './sandbox-provider.js';
 export { LocalTarSnapshotBackend, NoopSnapshotBackend, fingerprintRoot } from './workspace-snapshot.js';
 export { ContinuousWorkspaceProvider } from './continuous-workspace-provider.js';

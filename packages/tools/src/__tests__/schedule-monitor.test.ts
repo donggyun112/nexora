@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createScheduleMonitorTool, createCancelMonitorTool, createListMonitorsTool } from '../builtin/schedule-monitor.js';
-import { InMemoryTriggerHost } from '@dongkseo/contracts';
+import { createScheduleMonitorTool, createCancelMonitorTool, createListMonitorsTool, createWatchOutputTool } from '../builtin/schedule-monitor.js';
+import { InMemoryTriggerHost, InMemoryBackgroundTaskRegistry } from '@dongkseo/contracts';
 import type { ToolContext } from '@dongkseo/contracts';
 
 function ctx(host: InMemoryTriggerHost, extra: Partial<ToolContext> = {}): ToolContext {
@@ -68,5 +68,68 @@ describe('schedule_monitor', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('watch_output', () => {
+  function regCtx(reg: InMemoryBackgroundTaskRegistry, host: InMemoryTriggerHost, steer?: (m: string) => boolean): ToolContext {
+    return {
+      tenantId: 't', workdir: '/tmp', secrets: { get: async () => undefined },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      backgroundTasks: reg, triggers: host, steerSelf: steer,
+    } as ToolContext;
+  }
+
+  it('fires when the pattern later appears in task output (one-shot, then tears down)', async () => {
+    vi.useFakeTimers();
+    try {
+      const reg = new InMemoryBackgroundTaskRegistry();
+      const host = new InMemoryTriggerHost();
+      let out = 'starting build...';
+      reg.register({ taskId: 't1', kind: 'bash', label: 'build', startedAt: 0, abort: () => {}, readOutput: () => out });
+      const woke: string[] = [];
+      const tool = createWatchOutputTool();
+      const res = await tool.execute('w1', { task_id: 't1', pattern: 'ERROR', poll_ms: 1000 },
+        regCtx(reg, host, (m) => { woke.push(m); return true; }));
+      expect(res.type).toBe('text');
+
+      vi.advanceTimersByTime(2000);
+      expect(woke).toHaveLength(0);            // no match yet
+      out = 'oops: ERROR: build failed';
+      vi.advanceTimersByTime(1000);
+      expect(woke).toHaveLength(1);
+      expect(woke[0]).toContain('ERROR');
+      expect(host.list()).toEqual([]);         // one-shot torn down
+      vi.advanceTimersByTime(5000);
+      expect(woke).toHaveLength(1);            // no re-fire
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires immediately if the output already matches', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    const host = new InMemoryTriggerHost();
+    reg.register({ taskId: 't2', kind: 'bash', label: 'b', startedAt: 0, abort: () => {}, readOutput: () => 'already ERROR here' });
+    const woke: string[] = [];
+    const tool = createWatchOutputTool();
+    await tool.execute('w2', { task_id: 't2', pattern: 'ERROR' }, regCtx(reg, host, (m) => { woke.push(m); return true; }));
+    expect(woke).toHaveLength(1);
+  });
+
+  it('rejects invalid regex / unknown task / output-less task / no runtime support', async () => {
+    const reg = new InMemoryBackgroundTaskRegistry();
+    const host = new InMemoryTriggerHost();
+    reg.register({ taskId: 't3', kind: 'bash', label: 'b', startedAt: 0, abort: () => {} }); // no readOutput
+    const tool = createWatchOutputTool();
+    const noOut = await tool.execute('w3', { task_id: 't3', pattern: 'x' }, regCtx(reg, host));
+    expect(noOut.type).toBe('error');
+    const unknown = await tool.execute('w4', { task_id: 'ghost', pattern: 'x' }, regCtx(reg, host));
+    expect(unknown.type).toBe('error');
+    const badRe = await tool.execute('w5', { task_id: 't3', pattern: '(' }, regCtx(reg, host));
+    expect(badRe.type).toBe('error');
+    const noHost = await tool.execute('w6', { task_id: 't3', pattern: 'x' },
+      { tenantId: 't', workdir: '/tmp', secrets: { get: async () => undefined }, logger: { info() {}, warn() {}, error() {} }, backgroundTasks: reg } as ToolContext);
+    expect(noHost.type).toBe('error');
   });
 });

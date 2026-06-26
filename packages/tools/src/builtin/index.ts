@@ -59,6 +59,7 @@ export {
   createScheduleMonitorTool,
   createCancelMonitorTool,
   createListMonitorsTool,
+  createWatchOutputTool,
 } from './schedule-monitor.js';
 
 export { createSkillManageTool } from './skill-manage.js';

@@ -45,9 +45,15 @@ export async function runDev(options: DevOptions): Promise<void> {
     CoreToolExecutor,
     bootstrapAgent,
     PiAiProvider,
+    InMemoryBudgetTracker,
+    createBudgetMiddleware,
+    loggingMiddleware,
   } = await import('@dongkseo/core' as string) as typeof import('@dongkseo/core');
   const { createReactArchitecture } = await import('@dongkseo/architectures' as string) as typeof import('@dongkseo/architectures');
-  const { createReadTool, createGrepTool, createWriteTool, createEditTool } = await import('@dongkseo/tools' as string) as typeof import('@dongkseo/tools');
+  const {
+    createReadTool, createGrepTool, createWriteTool, createEditTool,
+    monitoringToolDefinitions,
+  } = await import('@dongkseo/tools' as string) as typeof import('@dongkseo/tools');
   const { HttpAdapter } = await import('@dongkseo/adapters' as string) as typeof import('@dongkseo/adapters');
   const { GatewayRouter } = await import('@dongkseo/gateway' as string) as typeof import('@dongkseo/gateway');
   const { topic } = await import('@dongkseo/contracts' as string) as typeof import('@dongkseo/contracts');
@@ -90,7 +96,10 @@ export async function runDev(options: DevOptions): Promise<void> {
   }
   const contextLoader = new CoreContextLoader({
     root: contextDir,
-    defaultTools: ['read', 'grep', 'write', 'edit'],
+    defaultTools: [
+      'read', 'grep', 'write', 'edit',
+      'schedule_monitor', 'cancel_monitor', 'list_monitors',
+    ],
     workdirBase: process.cwd(),
   });
 
@@ -100,7 +109,22 @@ export async function runDev(options: DevOptions): Promise<void> {
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
 
-  const allTools = [createReadTool(), createGrepTool(), createWriteTool(), createEditTool()];
+  // Cost recording across the whole dev session. No policy is attached, so this
+  // never blocks — it just accrues cost per turn through the middleware pipeline
+  // (the seam that was previously wired into the harness but never fed).
+  const budgetTracker = new InMemoryBudgetTracker();
+
+  // Self-wake monitors only (schedule_monitor/cancel_monitor/list_monitors),
+  // wired from the harness-injected ctx.triggers. The background-task
+  // *observation* tools (watch_task/check_tasks/read_task_output/…) are
+  // deliberately excluded: the dev golden path has no task *producer* (no
+  // exec/delegate), so they'd be inert. Grants in defaultTools mirror this
+  // exactly — no registered-but-ungranted tools. Add a producer (exec/delegate)
+  // and switch to monitoringToolDefinitions() for the full bundle.
+  const allTools = [
+    createReadTool(), createGrepTool(), createWriteTool(), createEditTool(),
+    ...monitoringToolDefinitions({ backgroundTasks: false }),
+  ];
   const runningAgents: { name: string; shutdown: () => Promise<void> }[] = [];
 
   // ── Boot each agent ────────────────────────────────────────────────────
@@ -132,6 +156,19 @@ export async function runDev(options: DevOptions): Promise<void> {
               maxTokens: context.limits.maxTokens,
             }),
             llm,
+            // Middleware pipeline — previously plumbed into the harness but never
+            // fed. Logs each LLM call and records per-turn cost into the shared
+            // tracker (no policy → observe-only, never blocks).
+            middlewares: [
+              loggingMiddleware(console),
+              createBudgetMiddleware({
+                tracker: budgetTracker,
+                agentName: card.name,
+                tenantId: context.tenantId,
+                model: context.limits.model || options.model,
+                logger: console,
+              }),
+            ],
             tools: new CoreToolExecutor({
               tools,
               context: {
@@ -220,6 +257,15 @@ ${runningAgents.map(a => `║    · ${a.name.padEnd(46)}║`).join('\n')}
     for (const agent of runningAgents) {
       await agent.shutdown();
     }
+    // Surface accrued cost — the budget middleware feeds the tracker each turn,
+    // so without this the input seam is live but the output is a dead end.
+    let sessionTotal = 0;
+    for (const agent of runningAgents) {
+      const spent = await budgetTracker.getSpend({ type: 'agent', agentName: agent.name }, { type: 'lifetime' });
+      if (spent > 0) console.log(`  cost: ${agent.name} $${spent.toFixed(4)}`);
+      sessionTotal += spent;
+    }
+    if (sessionTotal > 0) console.log(`  cost: session total $${sessionTotal.toFixed(4)}`);
     await createdRegistry.close();
     await createdTransport.close();
     console.log('Done.');

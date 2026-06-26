@@ -1,6 +1,6 @@
 {
   "name": "@dongkseo/cli",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,6 +19,13 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "devDependencies": {
+    "@dongkseo/adapters": "workspace:^",
+    "@dongkseo/architectures": "workspace:^",
+    "@dongkseo/contracts": "workspace:^",
+    "@dongkseo/core": "workspace:^",
+    "@dongkseo/gateway": "workspace:^",
+    "@dongkseo/tools": "workspace:^",
+    "@dongkseo/transport": "workspace:^",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   },

@@ -22,6 +22,8 @@
     "ajv": "^8.18.0"
   },
   "devDependencies": {
+    "@dongkseo/store-json": "workspace:^",
+    "@dongkseo/tools": "workspace:^",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0"
   },

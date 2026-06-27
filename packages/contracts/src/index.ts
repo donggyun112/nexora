@@ -335,4 +335,10 @@ export type {
   AttachmentRef,
 } from './transcript.js';
 
-export type { ChannelAdapter, ChannelThreadsCapability } from './channel-adapter.js';
+export type {
+  ChannelAdapter,
+  ChannelThreadsCapability,
+  ChannelTypingCapability,
+  ChannelDeliveryCapability,
+  ChannelAttachment,
+} from './channel-adapter.js';

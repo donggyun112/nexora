@@ -8,9 +8,11 @@
  * `threads` 는 "선언 = 능력 + 필요한 콜백 전부" — capability 만 켜고 콜백이
  * 비는 조합(스레드가 무로그로 죽는 silent failure)을 타입으로 차단한다.
  *
- * 결과 게시·typing indicator 등 UI affordance 는 토픽 pub/sub 와
- * getDiscordAdapter 경유로 남아 있음 — 일반화는 별도 결정
- * (wiki/decisions/2026-06-09-multichannel-persistence-architecture.md P2 비-범위).
+ * `typing`·`delivery` 는 채널 중립 UI affordance — 선언한 채널만 그 능력을 가진다.
+ * 런타임은 `getChannelAdapter(channel)?.<capability>` 존재로 게이트하고(어댑터 인스턴스
+ * 직접 참조 금지), 미선언이면 호출을 건너뛴다(표시 생략 = 데이터 유실 아님).
+ * tool-스트리밍·HITL handraise 처럼 페이로드가 앱/렌더러에 종속된 affordance 는
+ * 소비 앱이 이 포트를 확장해 선언한다(프레임워크 비-범위).
  */
 
 import type { ToolDefinition } from './tool.js';
@@ -35,9 +37,32 @@ export interface ChannelThreadsCapability {
   ): void;
 }
 
+/** delivery capability 가 채널에 게시하는 파일. 프레임워크 중립(Buffer 대신 Uint8Array). */
+export interface ChannelAttachment {
+  filename: string;
+  content: string | Uint8Array;
+  /** 첨부와 함께 보낼 본문 텍스트(있으면). */
+  body?: string;
+}
+
+/** 진행 중(typing) 표시. 채널이 지원하면 선언. */
+export interface ChannelTypingCapability {
+  /** 해당 채널에서 "작업 중" 신호를 1회 갱신(fire-and-forget). */
+  markWorking(channelId: string): void;
+}
+
+/** 생성물(마크다운·이미지 등) 채널 게시. 채널이 지원하면 선언. */
+export interface ChannelDeliveryCapability {
+  postAttachment(channelId: string, attachment: ChannelAttachment): Promise<void>;
+}
+
 export interface ChannelAdapter {
   /** envelope.metadata.channel 과 매칭되는 채널 식별자 ('discord' | 'web' | …). */
   channel: string;
   /** 스레드형 dispatch 지원 채널만 선언. 미선언 채널은 delegate(동기)만. */
   threads?: ChannelThreadsCapability;
+  /** 진행 중 표시 지원 채널만 선언. 미선언이면 호출자는 표시를 건너뛴다. */
+  typing?: ChannelTypingCapability;
+  /** 생성물 채널 게시 지원 채널만 선언. 미선언이면 결과는 토픽/스트림으로만 전달. */
+  delivery?: ChannelDeliveryCapability;
 }

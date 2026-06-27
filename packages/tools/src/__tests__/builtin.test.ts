@@ -16,6 +16,22 @@ import {
 import type { ToolContext, KnowledgeStore, ToolResult } from '@dongkseo/contracts';
 import { buildSkillMenu } from '@dongkseo/skills';
 
+// Minimal per-key serializing lock — local to the test so tools' test suite
+// doesn't depend on @dongkseo/core. KeyedSerializer's own semantics are unit-
+// tested in core; here we only need *a* serializing ResourceLock to prove edit
+// scopes its whole read-modify-write inside the lock.
+function makeSerialLock() {
+  const chains = new Map<string, Promise<unknown>>();
+  return {
+    runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
+      const prev = chains.get(key) ?? Promise.resolve();
+      const next = prev.then(fn, fn);
+      chains.set(key, next.catch(() => {}));
+      return next;
+    },
+  };
+}
+
 let tmpDir: string;
 
 beforeEach(() => {
@@ -283,6 +299,27 @@ describe('write tool', () => {
     expect(fs.readFileSync(path.join(tmpDir, 'new.txt'), 'utf-8')).toBe('hello');
   });
 
+  it('routes its write through ctx.resourceLock keyed on the absolute file path', async () => {
+    const keys: string[] = [];
+    const ctx: ToolContext = {
+      ...makeContext(tmpDir),
+      resourceLock: {
+        runExclusive: async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+          keys.push(key);
+          return fn();
+        },
+      },
+    };
+    const tool = createWriteTool();
+    const result = await tool.execute('1', { path: 'w.txt', content: 'hi' }, ctx);
+
+    expect(result.type).toBe('text');
+    expect(fs.readFileSync(path.join(tmpDir, 'w.txt'), 'utf-8')).toBe('hi');
+    expect(keys).toHaveLength(1);
+    expect(path.isAbsolute(keys[0])).toBe(true);
+    expect(path.basename(keys[0])).toBe('w.txt');
+  });
+
   it('creates parent directories', async () => {
     const tool = createWriteTool();
     await tool.execute('1', { path: 'sub/dir/new.txt', content: 'x' }, makeContext(tmpDir));
@@ -369,6 +406,49 @@ describe('edit tool', () => {
     }, makeContext(tmpDir));
     expect(result.type).toBe('text');
     expect(fs.readFileSync(path.join(tmpDir, 'a.txt'), 'utf-8')).toBe('foo BAZ baz');
+  });
+
+  it('routes its read-modify-write through ctx.resourceLock keyed on the file path', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'foo bar baz', 'utf-8');
+    const keys: string[] = [];
+    const ctx: ToolContext = {
+      ...makeContext(tmpDir),
+      resourceLock: {
+        runExclusive: async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
+          keys.push(key);
+          return fn();
+        },
+      },
+    };
+    const tool = createEditTool();
+    const result = await tool.execute('1', {
+      path: 'a.txt',
+      old_string: 'bar',
+      new_string: 'BAZ',
+    }, ctx);
+
+    expect(result.type).toBe('text');
+    // Edit still applies under the lock.
+    expect(fs.readFileSync(path.join(tmpDir, 'a.txt'), 'utf-8')).toBe('foo BAZ baz');
+    // And it acquired the lock exactly once, keyed on the resolved file path.
+    expect(keys).toHaveLength(1);
+    expect(path.isAbsolute(keys[0])).toBe(true);
+    expect(path.basename(keys[0])).toBe('a.txt');
+  });
+
+  it('serializes concurrent same-file edits so neither update is lost', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'c.txt'), 'AAA BBB', 'utf-8');
+    const ctx: ToolContext = { ...makeContext(tmpDir), resourceLock: makeSerialLock() };
+    const tool = createEditTool();
+
+    await Promise.all([
+      tool.execute('1', { path: 'c.txt', old_string: 'AAA', new_string: 'A2' }, ctx),
+      tool.execute('2', { path: 'c.txt', old_string: 'BBB', new_string: 'B2' }, ctx),
+    ]);
+
+    const final = fs.readFileSync(path.join(tmpDir, 'c.txt'), 'utf-8');
+    expect(final).toContain('A2');
+    expect(final).toContain('B2');
   });
 
   it('errors on multiple matches without replace_all', async () => {

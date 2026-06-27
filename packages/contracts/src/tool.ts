@@ -124,6 +124,25 @@ export interface ToolContext {
    * doesn't support monitors.
    */
   triggers?: TriggerHost;
+
+  /**
+   * Per-fanout resource lock. Write/edit/store tools route their read-modify-write
+   * critical section through `runExclusive(resourcePath, fn)` so concurrent child
+   * agents (e.g. a parallel delegate fan-out sharing this lock) can't lose updates
+   * on the same resource. Atomic rename prevents torn reads but NOT lost updates;
+   * serializing the whole read+write per key does. Same key → serialized; disjoint
+   * keys → parallel. Undefined (single agent) → tools run directly, zero overhead.
+   * Satisfied structurally by `KeyedSerializer` from @dongkseo/core.
+   */
+  resourceLock?: ResourceLock;
+}
+
+/**
+ * Serializes critical sections by key. Same key runs one-at-a-time (the next
+ * caller waits until the current `fn` settles); different keys run concurrently.
+ */
+export interface ResourceLock {
+  runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T>;
 }
 
 export interface SecretAccessor {

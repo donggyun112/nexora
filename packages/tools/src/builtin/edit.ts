@@ -62,6 +62,10 @@ export function createEditTool(): ToolDefinition {
       if (params.old_string === params.new_string) {
         return errorResult('old_string and new_string are identical');
       }
+      // Capture the validated strings as consts so the narrowing survives into
+      // the applyEdit closure below (TS drops param narrowing across the nested fn).
+      const oldString: string = params.old_string;
+      const newString: string = params.new_string;
       let target;
       try {
         target = await resolveToolPath(ctx, rawPath, 'readwrite');
@@ -72,6 +76,11 @@ export function createEditTool(): ToolDefinition {
       const workdir = target.root;
       const targetPath = target.path;
 
+      // Serialize the whole read-modify-write per file path. Atomic rename
+      // prevents torn reads but NOT lost updates, so concurrent children sharing
+      // ctx.resourceLock must run this section one-at-a-time per file. No lock
+      // (single agent) → runExclusive is bypassed at the dispatch below.
+      const applyEdit = async (): Promise<ToolResult> => {
       // Step 1: read the original atomically (fd with O_NOFOLLOW) and capture
       // its permission bits. The temp file we write to below is created with
       // a default 0o644 mode by openForWrite — without preserving the original
@@ -104,24 +113,24 @@ export function createEditTool(): ToolDefinition {
       let summary: string;
 
       if (params.replace_all) {
-        if (!content.includes(params.old_string)) {
+        if (!content.includes(oldString)) {
           return errorResult('old_string not found in file');
         }
-        updated = content.split(params.old_string).join(params.new_string);
+        updated = content.split(oldString).join(newString);
         const replacedBytes = content.length - updated.length;
-        const replacedCount = params.old_string.length === params.new_string.length
-          ? content.split(params.old_string).length - 1
-          : Math.abs(Math.round(replacedBytes / (params.old_string.length - params.new_string.length || 1)));
+        const replacedCount = oldString.length === newString.length
+          ? content.split(oldString).length - 1
+          : Math.abs(Math.round(replacedBytes / (oldString.length - newString.length || 1)));
         summary = `Replaced all occurrences in ${rawPath} (~${replacedCount} replacements)`;
       } else {
-        const occurrences = content.split(params.old_string).length - 1;
+        const occurrences = content.split(oldString).length - 1;
         if (occurrences === 0) return errorResult('old_string not found in file');
         if (occurrences > 1) {
           return errorResult(
             `old_string appears ${occurrences} times — provide more context to make it unique, or set replace_all`,
           );
         }
-        updated = content.replace(params.old_string, params.new_string);
+        updated = content.replace(oldString, newString);
         summary = `Replaced 1 occurrence in ${rawPath}`;
       }
 
@@ -189,6 +198,14 @@ export function createEditTool(): ToolDefinition {
 
       ctx.logger.info('edit', { path: rawPath });
       return textResult(summary);
+      };
+
+      // Key on the absolute path so different spellings of the same file share
+      // one lock (resolveToolPath may return a workdir-relative path).
+      const lockKey = path.resolve(workdir, targetPath);
+      return ctx.resourceLock
+        ? ctx.resourceLock.runExclusive(lockKey, applyEdit)
+        : applyEdit();
     },
   };
 }

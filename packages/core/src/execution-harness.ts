@@ -13,6 +13,7 @@ import type {
   BackgroundTaskRegistry,
   BackgroundTaskResult,
   TriggerHost,
+  ResourceLock,
   ExecutionHarness,
   LLMMessage,
   LLMOptions,
@@ -66,6 +67,13 @@ export interface LocalExecutionHarnessOptions {
   deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
   /** Trigger host injected into every tool ToolContext. Defaults to a per-harness InMemoryTriggerHost. */
   triggers?: TriggerHost;
+  /**
+   * Resource lock injected into every tool ToolContext (write/edit/store serialize
+   * their read-modify-write through it). NO per-harness default: pass the SAME
+   * instance to a set of sibling runtimes (e.g. a parallel delegate fan-out) so
+   * same-key writes across them serialize; leave undefined for a single agent.
+   */
+  resourceLock?: ResourceLock;
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
@@ -92,6 +100,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly backgroundTasks: BackgroundTaskRegistry;
   private readonly deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
   private readonly triggers: TriggerHost;
+  private readonly resourceLock?: ResourceLock;
   /** The recorder for the currently-active execute() — used by steer(). Concurrent execute() calls are not supported when transcript recording is enabled (same single-active assumption as pendingSteers). */
   private activeRecorder: TranscriptRecorder | null = null;
   /** In-flight steer record() promises for the active execute() — awaited before flush so steers aren't lost. */
@@ -123,6 +132,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.backgroundTasks = options.backgroundTasks ?? new InMemoryBackgroundTaskRegistry();
     this.deliverResult = options.deliverResult;
     this.triggers = options.triggers ?? new InMemoryTriggerHost();
+    this.resourceLock = options.resourceLock;
   }
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
@@ -178,6 +188,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
           backgroundTasks: this.backgroundTasks,
           deliverResult: this.deliverResult,
           triggers: this.triggers,
+          resourceLock: this.resourceLock,
         });
       }
 

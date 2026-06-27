@@ -10,6 +10,7 @@
  * on the host before the workspace check runs.
  */
 
+import path from 'node:path';
 import type fsp from 'node:fs/promises';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
@@ -40,8 +41,9 @@ export function createWriteTool(): ToolDefinition {
       const rawPath = (params.path ?? '').trim();
       if (!rawPath) return errorResult('path is required');
       if (typeof params.content !== 'string') return errorResult('content is required');
+      // Capture so the narrowing survives into the doWrite closure below.
+      const content: string = params.content;
 
-      let handle: fsp.FileHandle;
       let resolved;
       try {
         resolved = await resolveToolPath(ctx, rawPath, 'write');
@@ -49,26 +51,38 @@ export function createWriteTool(): ToolDefinition {
         const msg = err instanceof Error ? err.message : String(err);
         return errorResult(msg);
       }
-      try {
-        // openForWrite does the parent mkdir AFTER canonicalization — safe.
-        handle = await openForWrite(resolved.path, resolved.root);
-      } catch (err) {
-        if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
-        if (err instanceof SymlinkRefusedError) return errorResult(err.message);
-        const msg = err instanceof Error ? err.message : String(err);
-        return errorResult(`Cannot open for write: ${msg}`);
-      }
 
-      try {
-        await handle.writeFile(params.content, 'utf-8');
-        ctx.logger.info('write', { path: rawPath, bytes: params.content.length });
-        return textResult(`Wrote ${params.content.length} bytes to ${rawPath}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return errorResult(`Cannot write: ${msg}`);
-      } finally {
-        await handle.close().catch(() => {});
-      }
+      const doWrite = async (): Promise<ToolResult> => {
+        let handle: fsp.FileHandle;
+        try {
+          // openForWrite does the parent mkdir AFTER canonicalization — safe.
+          handle = await openForWrite(resolved.path, resolved.root);
+        } catch (err) {
+          if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
+          if (err instanceof SymlinkRefusedError) return errorResult(err.message);
+          const msg = err instanceof Error ? err.message : String(err);
+          return errorResult(`Cannot open for write: ${msg}`);
+        }
+
+        try {
+          await handle.writeFile(content, 'utf-8');
+          ctx.logger.info('write', { path: rawPath, bytes: content.length });
+          return textResult(`Wrote ${content.length} bytes to ${rawPath}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return errorResult(`Cannot write: ${msg}`);
+        } finally {
+          await handle.close().catch(() => {});
+        }
+      };
+
+      // Serialize writes per absolute path so concurrent children sharing
+      // ctx.resourceLock don't interleave on the same file (and order against
+      // edit, which keys the same way). No lock → run directly.
+      const lockKey = path.resolve(resolved.root, resolved.path);
+      return ctx.resourceLock
+        ? ctx.resourceLock.runExclusive(lockKey, doWrite)
+        : doWrite();
     },
   };
 }

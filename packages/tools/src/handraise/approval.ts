@@ -17,6 +17,8 @@
  * handraise and the user can still text-reply.
  */
 
+import type { OutboundArtifact } from '@dongkseo/contracts';
+
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny';
 
 export interface ApprovalRequest {
@@ -52,6 +54,15 @@ export interface ApprovalRequest {
   channelId?: string;
   /** Optional Discord thread id (preferred target if present). */
   threadId?: string;
+  /**
+   * Optional rich preview rendered alongside the 4-choice prompt — lets a
+   * caller show *what* is being approved (e.g. the assembled content body or
+   * a candidate summary) instead of only the short `command`/`reason`.
+   * Subscribers that don't render it fall back to command/reason.
+   */
+  review?: string;
+  /** Optional preview artifacts (e.g. image thumbnails) shown with the prompt. */
+  artifacts?: OutboundArtifact[];
 }
 
 export interface ApprovalReply {

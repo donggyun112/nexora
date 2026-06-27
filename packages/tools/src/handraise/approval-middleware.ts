@@ -24,6 +24,7 @@
  */
 import type {
   EventTransport,
+  OutboundArtifact,
   ToolDefinition,
   ToolResult,
   TopicString,
@@ -81,12 +82,24 @@ export interface ApprovalGateSpec {
   allowedRoles?: ReadonlyArray<string>;
   /** Subset of choices to offer (default all four). */
   choices?: ReadonlyArray<ApprovalChoice>;
+  /** Optional rich preview (e.g. assembled body) shown with the prompt. */
+  review?: string;
+  /** Optional preview artifacts (e.g. image thumbnails) shown with the prompt. */
+  artifacts?: OutboundArtifact[];
 }
 
+/**
+ * May be async — building a preview (e.g. resolving image thumbnails) can
+ * require I/O. The middleware awaits the result.
+ */
 export type ApprovalGatePredicate = (
   toolName: string,
   input: unknown,
-) => ApprovalGateSpec | null | undefined;
+) =>
+  | ApprovalGateSpec
+  | null
+  | undefined
+  | Promise<ApprovalGateSpec | null | undefined>;
 
 export interface ApprovalGateOptions {
   /** Transport used for the approval round-trip. */
@@ -197,7 +210,7 @@ export function createApprovalGateMiddleware(
           }
         }
 
-        const spec = predicate(tool.name, input);
+        const spec = await predicate(tool.name, input);
         if (!spec) return original(callId, input, toolCtx);
 
         const tenantId = toolCtx.tenantId;
@@ -263,6 +276,8 @@ export function createApprovalGateMiddleware(
           choices: spec.choices,
           ...(route?.channelId ? { channelId: route.channelId } : {}),
           ...(route?.threadId ? { threadId: route.threadId } : {}),
+          ...(spec.review ? { review: spec.review } : {}),
+          ...(spec.artifacts && spec.artifacts.length > 0 ? { artifacts: spec.artifacts } : {}),
         };
 
         toolCtx.logger.info('approval.request', {

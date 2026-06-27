@@ -1,6 +1,6 @@
 {
   "name": "@dongkseo/tools",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,8 +21,8 @@
     "@dongkseo/store": "workspace:^"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3"
   },
   "nexora": {
     "stability": "stable"

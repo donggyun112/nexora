@@ -6,18 +6,27 @@
  * GitHub Copilot and OpenAI Codex).
  */
 
-// Use the *Simple entrypoints: they map the high-level `reasoning` level to each
-// provider's native thinking request (anthropic effort/budget, openai/codex
-// reasoningEffort + summary). The plain stream/complete entrypoints skip that
-// mapping, so reasoning is dropped and thinking never surfaces (esp. openai-codex).
-import { streamSimple as piStream, completeSimple as piComplete, getModel } from '@earendil-works/pi-ai';
-import type { KnownProvider } from '@earendil-works/pi-ai';
+// `builtinModels()` is a Models collection holding every built-in pi-ai provider
+// with auth resolution wired in (env API keys, OAuth). It replaces the deprecated
+// global `streamSimple`/`completeSimple`/`getModel` from `@earendil-works/pi-ai/compat`:
+// `Models` resolves auth and delegates each request to the provider that owns the model.
+//
+// We use the *Simple stream entrypoints: they map the high-level `reasoning` level to
+// each provider's native thinking request (anthropic effort/budget, openai/codex
+// reasoningEffort + summary). The plain stream/complete entrypoints skip that mapping,
+// so reasoning is dropped and thinking never surfaces (esp. openai-codex).
+import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+import type { Api, Model } from '@earendil-works/pi-ai';
 import type {
   LLMProvider, LLMMessage, LLMOptions, LLMChunk, LLMResponse,
 } from '@dongkseo/contracts';
 import {
   toPiContext, toPiOptions, fromPiChunk, fromPiAssistantMessage,
 } from './mapping.js';
+
+// Single shared collection of all built-in providers. Construction wires up each
+// provider's api implementation + auth resolver; reused across every PiAiProvider.
+const models = builtinModels();
 
 export interface PiAiProviderOptions {
   /** pi-ai provider id (e.g. 'openai', 'anthropic', 'google', 'github-copilot', 'openai-codex') */
@@ -33,18 +42,18 @@ export interface PiAiProviderOptions {
 }
 
 export class PiAiProvider implements LLMProvider {
-  private readonly model: ReturnType<typeof getModel>;
+  private readonly model: Model<Api>;
   private readonly modelId: string;
   private readonly providerName: string;
   private readonly apiKey?: string;
   private readonly sessionId?: string;
   private readonly cacheRetention?: 'short' | 'long' | 'none';
   // Cache per-call model resolutions to avoid repeated getModel calls for the same override.
-  private readonly modelCache = new Map<string, ReturnType<typeof getModel>>();
+  private readonly modelCache = new Map<string, Model<Api>>();
 
   constructor(options: PiAiProviderOptions) {
     this.providerName = options.provider;
-    const initial = getModel(options.provider as KnownProvider, options.model as never);
+    const initial = models.getModel(options.provider, options.model);
     if (!initial) {
       throw new Error(`pi-ai: unknown model "${options.model}" for provider "${options.provider}"`);
     }
@@ -56,15 +65,15 @@ export class PiAiProvider implements LLMProvider {
     this.modelCache.set(options.model, this.model);
   }
 
-  private resolveModel(override?: string): { model: ReturnType<typeof getModel>; id: string } {
+  private resolveModel(override?: string): { model: Model<Api>; id: string } {
     if (!override || override === this.modelId) {
       return { model: this.model, id: this.modelId };
     }
     let cached = this.modelCache.get(override);
     if (!cached) {
-      // pi-ai 0.75.5 getModel returns undefined for unknown ids rather than throwing.
+      // Models.getModel returns undefined for unknown ids rather than throwing.
       // Surface this as a clear error here rather than letting it fail deep in pi-ai.
-      cached = getModel(this.providerName as KnownProvider, override as never);
+      cached = models.getModel(this.providerName, override);
       if (!cached) {
         throw new Error(`pi-ai: unknown model "${override}" for provider "${this.providerName}"`);
       }
@@ -100,7 +109,7 @@ export class PiAiProvider implements LLMProvider {
     const ctx = this.buildContext(messages, options);
     const state = { toolNames: new Map<string, string>() };
     const resolved = this.resolveModel(options?.model);
-    const events = piStream(resolved.model, ctx as never, this.buildOpts(options) as never);
+    const events = models.streamSimple(resolved.model, ctx as never, this.buildOpts(options) as never);
     for await (const event of events) {
       const chunk = fromPiChunk(event, state);
       if (chunk) yield chunk;
@@ -110,7 +119,7 @@ export class PiAiProvider implements LLMProvider {
   async complete(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse> {
     const ctx = this.buildContext(messages, options);
     const resolved = this.resolveModel(options?.model);
-    const result = await piComplete(resolved.model, ctx as never, this.buildOpts(options) as never);
+    const result = await models.completeSimple(resolved.model, ctx as never, this.buildOpts(options) as never);
     const mapped = fromPiAssistantMessage(result);
     return { ...mapped, model: resolved.id };
   }

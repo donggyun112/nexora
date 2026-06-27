@@ -18,11 +18,11 @@
   "dependencies": {
     "@dongkseo/contracts": "workspace:^",
     "@dongkseo/tools": "workspace:^",
-    "@earendil-works/pi-ai": "^0.79.4"
+    "@earendil-works/pi-ai": "^0.80.2"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3"
   },
   "nexora": {
     "stability": "stable"

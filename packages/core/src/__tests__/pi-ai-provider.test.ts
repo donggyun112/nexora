@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { AssistantMessage, AssistantMessageEvent } from '@earendil-works/pi-ai';
 import { PiAiProvider } from '../llm/pi-ai/provider.js';
 
-// Mock pi-ai at module level — we don't want real network calls.
-vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@earendil-works/pi-ai')>();
-  return {
-    ...actual,
+// PiAiProvider drives a `builtinModels()` collection. Mock that factory so the
+// provider talks to a fake Models whose getModel/streamSimple/completeSimple are
+// spies — no real network calls. provider.ts calls builtinModels() once at module
+// load, so the mock returns one stable fake (`piAi`) reused across the suite.
+const { piAi } = vi.hoisted(() => ({
+  piAi: {
     streamSimple: vi.fn(),
     completeSimple: vi.fn(),
     getModel: vi.fn(() => ({
@@ -19,15 +21,18 @@ vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
       contextWindow: 1000,
       maxTokens: 1000,
     })),
-  };
+  },
+}));
+
+vi.mock('@earendil-works/pi-ai/providers/all', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@earendil-works/pi-ai/providers/all')>();
+  return { ...actual, builtinModels: () => piAi };
 });
 
-import * as piAi from '@earendil-works/pi-ai';
-
 const baseAsstMsg = (over: Partial<{
-  content: piAi.AssistantMessage['content'];
-  stopReason: piAi.AssistantMessage['stopReason'];
-}>): piAi.AssistantMessage => ({
+  content: AssistantMessage['content'];
+  stopReason: AssistantMessage['stopReason'];
+}>): AssistantMessage => ({
   role: 'assistant',
   content: over.content ?? [],
   stopReason: over.stopReason ?? 'stop',
@@ -110,7 +115,7 @@ describe('PiAiProvider error propagation', () => {
 
   it('stream() propagates pi-ai error event as thrown Error', async () => {
     async function* fakeEvents() {
-      yield { type: 'text_delta', delta: 'partial', contentIndex: 0, partial: baseAsstMsg({ content: [] }) } as piAi.AssistantMessageEvent;
+      yield { type: 'text_delta', delta: 'partial', contentIndex: 0, partial: baseAsstMsg({ content: [] }) } as AssistantMessageEvent;
       yield {
         type: 'error', reason: 'error',
         error: {
@@ -141,15 +146,15 @@ describe('PiAiProvider.stream', () => {
   it('yields text_delta and done chunks', async () => {
     async function* fakeEvents() {
       const partial = baseAsstMsg({ content: [] });
-      yield { type: 'start', partial } as piAi.AssistantMessageEvent;
-      yield { type: 'text_start', contentIndex: 0, partial } as piAi.AssistantMessageEvent;
-      yield { type: 'text_delta', delta: 'hi', contentIndex: 0, partial } as piAi.AssistantMessageEvent;
-      yield { type: 'text_end', contentIndex: 0, content: 'hi', partial } as piAi.AssistantMessageEvent;
+      yield { type: 'start', partial } as AssistantMessageEvent;
+      yield { type: 'text_start', contentIndex: 0, partial } as AssistantMessageEvent;
+      yield { type: 'text_delta', delta: 'hi', contentIndex: 0, partial } as AssistantMessageEvent;
+      yield { type: 'text_end', contentIndex: 0, content: 'hi', partial } as AssistantMessageEvent;
       yield {
         type: 'done',
         reason: 'stop',
         message: baseAsstMsg({ content: [{ type: 'text', text: 'hi' }] }),
-      } as piAi.AssistantMessageEvent;
+      } as AssistantMessageEvent;
     }
     vi.mocked(piAi.streamSimple).mockReturnValueOnce(fakeEvents() as never);
 
@@ -166,8 +171,8 @@ describe('PiAiProvider.stream', () => {
       content: [{ type: 'toolCall', id: 'call_xyz', name: 'search', arguments: {} }],
     });
     async function* fakeEvents() {
-      yield { type: 'toolcall_start', contentIndex: 0, partial } as piAi.AssistantMessageEvent;
-      yield { type: 'toolcall_delta', delta: '{"q":"x"}', contentIndex: 0, partial } as piAi.AssistantMessageEvent;
+      yield { type: 'toolcall_start', contentIndex: 0, partial } as AssistantMessageEvent;
+      yield { type: 'toolcall_delta', delta: '{"q":"x"}', contentIndex: 0, partial } as AssistantMessageEvent;
       yield {
         type: 'done',
         reason: 'toolUse',
@@ -175,7 +180,7 @@ describe('PiAiProvider.stream', () => {
           content: [{ type: 'toolCall', id: 'call_xyz', name: 'search', arguments: { q: 'x' } }],
           stopReason: 'toolUse',
         }),
-      } as piAi.AssistantMessageEvent;
+      } as AssistantMessageEvent;
     }
     vi.mocked(piAi.streamSimple).mockReturnValueOnce(fakeEvents() as never);
 

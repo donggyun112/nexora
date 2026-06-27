@@ -11,7 +11,6 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.79.4",
     "@dongkseo/adapters": "workspace:*",
     "@dongkseo/architectures": "workspace:*",
     "@dongkseo/context": "workspace:*",
@@ -23,10 +22,11 @@
     "@dongkseo/skills": "workspace:*",
     "@dongkseo/store-json": "workspace:*",
     "@dongkseo/tools": "workspace:*",
-    "@dongkseo/transport": "workspace:*"
+    "@dongkseo/transport": "workspace:*",
+    "@earendil-works/pi-ai": "^0.80.2"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3"
   }
 }

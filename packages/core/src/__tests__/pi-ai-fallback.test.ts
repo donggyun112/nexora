@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { FallbackLLMProvider } from '../llm/fallback.js';
 import { PiAiProvider } from '../llm/pi-ai/provider.js';
 
-vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@earendil-works/pi-ai')>();
-  return {
-    ...actual,
+// Mock the builtinModels() factory PiAiProvider uses; the fake's completeSimple
+// spy stands in for real pi-ai calls. See pi-ai-provider.test.ts for the rationale.
+const { piAi } = vi.hoisted(() => ({
+  piAi: {
     streamSimple: vi.fn(),
     completeSimple: vi.fn(),
     getModel: vi.fn(() => ({
@@ -16,12 +17,15 @@ vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 1000, maxTokens: 1000,
     })),
-  };
+  },
+}));
+
+vi.mock('@earendil-works/pi-ai/providers/all', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@earendil-works/pi-ai/providers/all')>();
+  return { ...actual, builtinModels: () => piAi };
 });
 
-import * as piAi from '@earendil-works/pi-ai';
-
-const asstMsg = (text: string): piAi.AssistantMessage => ({
+const asstMsg = (text: string): AssistantMessage => ({
   role: 'assistant',
   content: [{ type: 'text', text }],
   stopReason: 'stop',

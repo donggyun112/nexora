@@ -12,9 +12,9 @@
     "clean": "turbo clean"
   },
   "devDependencies": {
-    "turbo": "^2.5.0",
-    "typescript": "^5.8.0",
-    "vitest": "^4.1.2"
+    "turbo": "^2.10.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   },
   "packageManager": "pnpm@10.11.0"
 }

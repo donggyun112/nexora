@@ -1,4 +1,9 @@
-import { getProviders, getModels, getEnvApiKey } from '@earendil-works/pi-ai';
+import { getBuiltinProviders, getBuiltinModels } from '@earendil-works/pi-ai/providers/all';
+// getEnvApiKey is not deprecated, but pi-ai only re-exports it through /compat
+// (no entry in the package `exports` map, not re-exported from the root). The
+// auth-based alternative (Models.getAuth) is async and would force this sync,
+// public `listAvailableModels` API to become async, so we keep the compat import.
+import { getEnvApiKey } from '@earendil-works/pi-ai/compat';
 import type { KnownProvider } from '@earendil-works/pi-ai';
 
 /**
@@ -40,9 +45,9 @@ export function listAvailableModels(options: ListAvailableModelsOptions = {}): s
   const seen = new Set<string>();
 
   const collect = (provider: KnownProvider): number => {
-    let models: ReturnType<typeof getModels>;
+    let models: ReturnType<typeof getBuiltinModels>;
     try {
-      models = getModels(provider);
+      models = getBuiltinModels(provider);
     } catch {
       return 0;
     }
@@ -58,7 +63,7 @@ export function listAvailableModels(options: ListAvailableModelsOptions = {}): s
   };
 
   let credentialedCount = 0;
-  for (const provider of getProviders()) {
+  for (const provider of getBuiltinProviders()) {
     if (credentialedOnly) {
       let hasKey = false;
       try {

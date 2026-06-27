@@ -18,6 +18,9 @@
   "dependencies": {
     "@dongkseo/contracts": "workspace:^"
   },
+  "devDependencies": {
+    "@types/node": "^26.0.1"
+  },
   "nexora": {
     "stability": "advanced"
   },

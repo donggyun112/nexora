@@ -16,16 +16,16 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.59",
+    "@anthropic-ai/sandbox-runtime": "^0.0.61",
     "@dongkseo/contracts": "workspace:^",
-    "@earendil-works/pi-ai": "^0.79.4",
-    "ajv": "^8.18.0"
+    "@earendil-works/pi-ai": "^0.80.2",
+    "ajv": "^8.20.0"
   },
   "devDependencies": {
     "@dongkseo/store-json": "workspace:^",
     "@dongkseo/tools": "workspace:^",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.8.0"
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3"
   },
   "nexora": {
     "stability": "stable"

@@ -140,6 +140,11 @@ function validateProgram(program: string): string | null {
 
 export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
   const allowList = options.allowList ? new Set(options.allowList) : null;
+  // allowList:['*'] = wildcard — every program is permitted. Use only when an
+  // outer layer (OS sandbox/container) is the real safety boundary; the per-
+  // command allowList is then redundant. Still a non-empty list, so the
+  // "unconfigured" refusal below does not trigger.
+  const allowAllCommands = allowList?.has('*') ?? false;
   const allowShell = options.allowShell ?? false;
   const defaultTimeout = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const env = buildToolEnv(options.envAllowList);
@@ -201,7 +206,7 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
             'Pass createExecTool({ allowList: [\'git\', \'npm\', ...] }) to enable specific commands.',
           );
         }
-        if (!allowList.has(program)) {
+        if (!allowAllCommands && !allowList.has(program)) {
           return errorResult(
             `Executable "${program}" not in allowList. Allowed: ${[...allowList].join(', ')}`,
           );

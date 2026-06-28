@@ -13,6 +13,7 @@ import type {
   ToolDefinitionSummary,
   AgentLogger,
 } from '@dongkseo/contracts';
+import { safeHead, safeTail } from './surrogate-safe-slice.js';
 
 export interface ToolExecutorOptions {
   /** 등록할 도구 목록 */
@@ -244,7 +245,7 @@ function truncateResult(result: ToolResult, maxChars?: number): ToolResult {
   const omitted = result.text.length - head - tail;
   return {
     type: 'text',
-    text: result.text.slice(0, head) + `\n…[truncated ${omitted} chars]…\n` + result.text.slice(-tail),
+    text: safeHead(result.text, head) + `\n…[truncated ${omitted} chars]…\n` + safeTail(result.text, tail),
   };
 }
 

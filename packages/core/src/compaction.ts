@@ -13,6 +13,7 @@ import type {
   LLMMessage,
   LLMContentBlock,
 } from '@dongkseo/contracts';
+import { safeHead, safeTail } from './surrogate-safe-slice.js';
 
 // ─── 상수 ──────────────────────────────────────────────────────────────────
 const DEFAULT_CONTEXT_WINDOW = 256_000;
@@ -198,7 +199,7 @@ export function truncateLargeContent(
     if (msg.content.length <= maxChars) return msg;
     return {
       ...msg,
-      content: msg.content.slice(0, maxChars) + `\n\n…[truncated ${msg.content.length - maxChars} chars]`,
+      content: safeHead(msg.content, maxChars) + `\n\n…[truncated ${msg.content.length - maxChars} chars]`,
     };
   });
 }
@@ -227,9 +228,9 @@ export function compressToolOutputs(
     return {
       ...msg,
       content:
-        msg.content.slice(0, keepHead) +
+        safeHead(msg.content, keepHead) +
         `\n\n…[compressed ${omitted} chars — head+tail preserved]…\n\n` +
-        msg.content.slice(-keepTail),
+        safeTail(msg.content, keepTail),
     };
   });
 }
@@ -357,9 +358,9 @@ function serializeConversation(messages: ChatMessage[]): string {
     // Truncate oversized content to prevent summarizer overflow
     if (content.length > SERIALIZE_CONTENT_MAX) {
       content =
-        content.slice(0, SERIALIZE_CONTENT_HEAD) +
+        safeHead(content, SERIALIZE_CONTENT_HEAD) +
         `\n…[truncated ${content.length - SERIALIZE_CONTENT_HEAD - SERIALIZE_CONTENT_TAIL} chars]…\n` +
-        content.slice(-SERIALIZE_CONTENT_TAIL);
+        safeTail(content, SERIALIZE_CONTENT_TAIL);
     }
 
     parts.push(`[${label}]: ${content}`);

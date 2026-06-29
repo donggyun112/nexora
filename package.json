@@ -9,7 +9,8 @@
     "test": "turbo test",
     "test:stable": "turbo test --filter='!@dongkseo/conversation' --filter='!@dongkseo/otel'",
     "test:experimental": "turbo test --filter=@dongkseo/conversation --filter=@dongkseo/otel",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "release": "pnpm -r publish --access public --no-git-checks"
   },
   "devDependencies": {
     "turbo": "^2.10.0",

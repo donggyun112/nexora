@@ -163,6 +163,10 @@ export class LocalExecutionHarness implements ExecutionHarness {
     let workspace: WorkspaceSession | undefined;
     let toolExecutor = this.tools;
     let loopGen: AsyncGenerator<AgentEvent> | null = null;
+    // Side channel for tool-emitted progress events (ctx.emitProgress). Merged
+    // into the yielded stream so a tool can surface activity (e.g. a delegate
+    // relaying its child subagent's events) while it is still executing.
+    const progress = createProgressChannel();
 
     try {
       const baseToolContext = this.tools.getContext?.();
@@ -185,6 +189,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
           ...baseToolContext,
           ...(workspace ? { workdir: workspace.root, workspace } : {}),
           steerSelf: (message: string) => this.steer(message),
+          emitProgress: (message: string, agent?: string) =>
+            progress.push({ type: 'progress', message, ...(agent ? { agent } : {}) }),
           backgroundTasks: this.backgroundTasks,
           deliverResult: this.deliverResult,
           triggers: this.triggers,
@@ -221,7 +227,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
       }
 
       loopGen = this.architecture.loop(services, input);
-      const events = raceAgainstAbort(loopGen, controller.signal);
+      const events = mergeWithProgress(raceAgainstAbort(loopGen, controller.signal), progress);
 
       for await (const event of events) {
         if (controller.signal.aborted) break;
@@ -282,6 +288,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
       }
     } finally {
       idle.clear();
+      progress.close();
       if (recorder) {
         try { await Promise.all(this.activeSteerWrites); } catch { /* best-effort */ }
         try { await recorder.flush(); } catch { /* best-effort */ }
@@ -484,5 +491,92 @@ async function* raceAgainstAbort<T>(
 
     if (result.done) return;
     yield result.value;
+  }
+}
+
+/**
+ * Single-consumer push channel for tool-emitted progress events. `push` enqueues
+ * (or hands off to a waiting `next`), `close` ends iteration. The merge below is
+ * the sole consumer, so at most one `next()` is ever pending.
+ */
+interface ProgressChannel {
+  push(event: AgentEvent): void;
+  close(): void;
+  next(): Promise<IteratorResult<AgentEvent>>;
+}
+
+function createProgressChannel(): ProgressChannel {
+  const queue: AgentEvent[] = [];
+  let waiting: ((r: IteratorResult<AgentEvent>) => void) | null = null;
+  let closed = false;
+  const DONE: IteratorResult<AgentEvent> = { value: undefined as never, done: true };
+  return {
+    push(event: AgentEvent): void {
+      if (closed) return;
+      if (waiting) {
+        const resolve = waiting;
+        waiting = null;
+        resolve({ value: event, done: false });
+      } else {
+        queue.push(event);
+      }
+    },
+    close(): void {
+      if (closed) return;
+      closed = true;
+      if (waiting) {
+        const resolve = waiting;
+        waiting = null;
+        resolve(DONE);
+      }
+    },
+    next(): Promise<IteratorResult<AgentEvent>> {
+      if (queue.length > 0) return Promise.resolve({ value: queue.shift() as AgentEvent, done: false });
+      if (closed) return Promise.resolve(DONE);
+      return new Promise((resolve) => { waiting = resolve; });
+    },
+  };
+}
+
+/**
+ * Merge the architecture event stream with the progress side channel. Progress
+ * events are yielded as they arrive (so they interleave with — and during — the
+ * architecture's own events). The architecture stream is primary: when it ends,
+ * the merge ends; when it throws (abort/timeout/error), the error propagates so
+ * the harness's existing catch handles it. Late progress emitted after the loop
+ * has already ended is dropped (best-effort ancillary signal).
+ */
+async function* mergeWithProgress(
+  source: AsyncGenerator<AgentEvent>,
+  channel: ProgressChannel,
+): AsyncGenerator<AgentEvent> {
+  let srcNext = source.next();
+  let chanNext = channel.next();
+  let chanOpen = true;
+
+  while (true) {
+    if (!chanOpen) {
+      const r = await srcNext;
+      if (r.done) return;
+      yield r.value;
+      srcNext = source.next();
+      continue;
+    }
+
+    const winner = await Promise.race([
+      srcNext.then((r) => ({ from: 'src' as const, r })),
+      chanNext.then((r) => ({ from: 'chan' as const, r })),
+    ]);
+
+    if (winner.from === 'src') {
+      if (winner.r.done) return;
+      yield winner.r.value;
+      srcNext = source.next();
+    } else if (winner.r.done) {
+      chanOpen = false;
+    } else {
+      yield winner.r.value;
+      chanNext = channel.next();
+    }
   }
 }

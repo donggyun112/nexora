@@ -44,6 +44,22 @@ describe('agentEventToPiWire', () => {
     ).toEqual([{ type: 'tool_execution_end', toolCallId: 'c1', result: 'body', isError: false }]);
   });
 
+  it('maps progress to an agent-tagged thinking_delta', () => {
+    expect(mapStream([{ type: 'progress', message: 'grepping', agent: 'Explore' }])).toEqual([
+      { type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: '[Explore] grepping\n' } },
+    ]);
+  });
+
+  it('maps agentless progress without a tag', () => {
+    expect(mapStream([{ type: 'progress', message: 'working' }])).toEqual([
+      { type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'working\n' } },
+    ]);
+  });
+
+  it('drops empty progress messages', () => {
+    expect(mapStream([{ type: 'progress', message: '', agent: 'Explore' }])).toEqual([]);
+  });
+
   it('emits turn_end on done when text was streamed (no re-emit of content)', () => {
     expect(
       mapStream([
@@ -75,9 +91,8 @@ describe('agentEventToPiWire', () => {
     expect(out[0].type).toBe('error');
   });
 
-  it('drops progress and artifact events', () => {
+  it('drops artifact events (no pi equivalent)', () => {
     const events: AgentEvent[] = [
-      { type: 'progress', message: 'working' },
       { type: 'artifact', artifact: { kind: 'x' } as never },
     ];
     expect(mapStream(events)).toEqual([]);

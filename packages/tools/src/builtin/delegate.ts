@@ -532,6 +532,24 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
 
 // ─── Subagent execution ─────────────────────────────────────────────────
 
+/**
+ * Map a child AgentEvent to a one-line progress message for ctx.emitProgress.
+ * Streams the child's answer text and tool activity; '' skips an event (thinking
+ * is too noisy; done/error already surface via the returned tool result).
+ */
+function childEventToProgress(e: AgentEvent): string {
+  switch (e.type) {
+    case 'text':
+      return e.text;
+    case 'tool_call':
+      return `→ ${e.name}`;
+    case 'progress':
+      return e.message;
+    default:
+      return '';
+  }
+}
+
 async function executeSubagent(
   sa: Subagent,
   params: DelegateParams,
@@ -539,7 +557,17 @@ async function executeSubagent(
   runtimeFactory?: SubagentRuntimeFactory,
   onEvent?: (name: string, event: AgentEvent) => void,
 ): Promise<ToolResult> {
-  const relay = onEvent ? (e: AgentEvent) => onEvent(sa.name, e) : undefined;
+  // Relay child events live: to the static onSubagentEvent hook (app sink) and,
+  // when the parent runtime injected it, to ctx.emitProgress so the child's
+  // activity streams into the parent's event stream in real time.
+  const wantsRelay = Boolean(onEvent) || Boolean(ctx.emitProgress);
+  const relay = wantsRelay
+    ? (e: AgentEvent): void => {
+        onEvent?.(sa.name, e);
+        const message = childEventToProgress(e);
+        if (message) ctx.emitProgress?.(message, sa.name);
+      }
+    : undefined;
 
   switch (sa.type) {
     case 'compiled':

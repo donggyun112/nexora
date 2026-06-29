@@ -120,8 +120,18 @@ export function agentEventToPiWire(ev: AgentEvent, state: PiMapState, configured
         },
       ];
 
-    // progress / artifact have no pi equivalent — drop silently.
-    case 'progress':
+    case 'progress': {
+      // No dedicated pi status channel — surface as a thinking_delta so the
+      // activity is visible without polluting the assistant answer body. Tagged
+      // with the emitting agent (e.g. a delegate's child subagent).
+      if (ev.message.length === 0) return [];
+      const tag = ev.agent ? `[${ev.agent}] ` : '';
+      return [
+        { type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: `${tag}${ev.message}\n` } },
+      ];
+    }
+
+    // artifact has no pi equivalent — drop silently.
     case 'artifact':
       return [];
 

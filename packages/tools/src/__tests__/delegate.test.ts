@@ -410,6 +410,36 @@ describe('delegate runtime drain (sync + background)', () => {
     if (result.type === 'text') expect(result.text).toBe('sync answer');
   });
 
+  it('sync delegate relays child text + tool activity to ctx.emitProgress', async () => {
+    const progress: Array<{ message: string; agent?: string }> = [];
+    const tool = createDelegateTool({
+      transport: new FakeTransport(),
+      registry: makeRegistry([]),
+      callerAgentName: 'parent',
+      subagents: [compiledSubagent(
+        fakeRuntime([
+          { type: 'text', text: 'hello' } as AgentEvent,
+          { type: 'tool_call', id: 'c1', name: 'grep', input: {} } as AgentEvent,
+          { type: 'thinking', content: 'hmm' } as AgentEvent,
+          { type: 'done', content: 'final', toolCalls: [] } as AgentEvent,
+        ]),
+      ) as never],
+    });
+    const ctx = {
+      ...makeCtx(),
+      emitProgress: (message: string, agent?: string) => { progress.push({ message, agent }); },
+    };
+    const result = await tool.execute('d-stream', { capability: 'worker', input: 'go' }, ctx);
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toBe('final');
+    // text streamed verbatim, tool_call surfaced as activity; thinking/done skipped.
+    expect(progress).toEqual([
+      { message: 'hello', agent: 'worker' },
+      { message: '→ grep', agent: 'worker' },
+    ]);
+  });
+
   it('sync delegate maps a child error event to an error ToolResult with the subagent prefix', async () => {
     const tool = createDelegateTool({
       transport: new FakeTransport(),

@@ -195,11 +195,20 @@ interface DelegateParams {
    *   `*.completed/.failed` envelope back to the caller as a new turn.
    *   Not yet implemented — bootstrap/runner support pending.
    */
-  waitForResult?: 'sync' | 'async' | false;
+  waitForResult?: 'sync' | 'async' | 'none' | false;
 }
 
 const DEFAULT_MAX_DEPTH = 5;
 const DEFAULT_TIMEOUT_MS = 300_000;
+
+// LLMs emit fire-and-forget as the string "false" — the only non-string option
+// among string siblings — which a strict `=== false` check silently drops into
+// the sync request/reply path. Collapse every spelling to one canonical mode.
+function resolveWaitMode(v: unknown): 'sync' | 'async' | 'none' {
+  if (v === false || v === 'false' || v === 'none') return 'none';
+  if (v === 'async') return 'async';
+  return 'sync';
+}
 
 export function createDelegateTool(options: DelegateToolOptions): ToolDefinition {
   const {
@@ -350,9 +359,11 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
           description: `Max wait time in ms (sync mode only). Default ${DEFAULT_TIMEOUT_MS}.`,
         },
         waitForResult: {
+          type: 'string',
+          enum: ['sync', 'async', 'none'],
           description:
             'Result handling. "sync" (default): wait for the reply this turn. ' +
-            'false: fire-and-forget, no result returned. ' +
+            '"none": fire-and-forget, no result returned. ' +
             '"async": run as a background subagent — returns immediately and its ' +
             'result is folded into your turn when ready (or arrives as a follow-up). ' +
             'Use check_subagents / cancel_subagent to manage it.',
@@ -379,11 +390,13 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         );
       }
 
+      const waitMode = resolveWaitMode(params.waitForResult);
+
       // ── Background subagent (async): caller-owned child pumped concurrently ──
       // Returns null when no caller-owned child can be built (no inline subagent
       // and no peerRuntimeFactory) — then fall through to the existing paths,
       // where 'async' keeps the legacy fire-and-forget peer publish.
-      if (params.waitForResult === 'async') {
+      if (waitMode === 'async') {
         const bg = await startBackgroundSubagent(params, ctx, nextDepth);
         if (bg) return bg;
       }
@@ -413,9 +426,6 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
       const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
         ? params.timeoutMs
         : defaultTimeoutMs;
-
-      const waitMode: 'sync' | 'async' | false =
-        params.waitForResult === undefined ? 'sync' : params.waitForResult;
 
       ctx.logger.info('delegate', {
         capability: params.capability,
@@ -459,7 +469,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         }
       }
 
-      if (waitMode === false) {
+      if (waitMode === 'none') {
         try {
           const envelope: MessageEnvelope = {
             id: messageId(),

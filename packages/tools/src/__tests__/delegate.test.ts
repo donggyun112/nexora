@@ -229,6 +229,36 @@ describe('delegate tool', () => {
     expect(received?.metadata.callerAgent).toBe('caller-A');
   });
 
+  it('fire-forget via LLM string "false" is normalized, not routed to the sync path', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([
+      makeCard('writer', 'write', ['write.requested']),
+    ]);
+    const tool = createDelegateTool({
+      transport,
+      registry,
+      callerAgentName: 'caller-A',
+    });
+
+    let received: MessageEnvelope | undefined;
+    transport.subscribe('write.requested', async (env) => {
+      received = env;
+      // intentionally do not reply — a sync request would block here.
+    });
+
+    const result = await tool.execute(
+      'd-ff-str',
+      { capability: 'write', input: { topic: 'x' }, waitForResult: 'false' } as never,
+      makeCtx(),
+    );
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toMatch(/fire-and-forget/i);
+    }
+    expect(received).toBeDefined();
+  });
+
   it('async (waitForResult="async") publishes and returns immediately with correlation id', async () => {
     const transport = new FakeTransport();
     const registry = makeRegistry([

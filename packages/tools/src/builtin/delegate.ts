@@ -182,10 +182,24 @@ export interface DelegateToolOptions {
  */
 const DEFAULT_BLOCKED_TOOLS_FOR_CHILD = ['delegate', 'handraise', 'skill-manage'];
 
+interface DelegateTask {
+  capability: string;
+  input: unknown;
+  timeoutMs?: number;
+}
+
 interface DelegateParams {
   capability: string;
   input: unknown;
   timeoutMs?: number;
+  /**
+   * Batch fan-out. When set to a non-empty array, each task is delegated as a
+   * sync call and all run concurrently within this single delegate invocation;
+   * their results are aggregated and returned together. Lets a caller launch
+   * several subagents in ONE tool call (deterministic parallelism) instead of
+   * relying on the model to emit multiple delegate calls in one turn.
+   */
+  tasks?: DelegateTask[];
   /**
    * Result-handling mode. See wiki/decisions/2026-06-01-delegation-primitives.md.
    * - `'sync'` (default, legacy): RPC. Awaits reply within this turn.
@@ -354,6 +368,24 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
         input: {
           description: 'Payload to send to the target agent',
         },
+        tasks: {
+          type: 'array',
+          description:
+            'Batch fan-out: run MULTIPLE subagents IN PARALLEL within this single call. ' +
+            'Each item is one delegation; all run concurrently (sync) and results are ' +
+            'aggregated and returned together. Use this instead of emitting several separate ' +
+            'delegate calls when the subtasks are independent. When tasks is set, the ' +
+            'top-level capability/input are ignored.',
+          items: {
+            type: 'object',
+            properties: {
+              capability: { type: 'string', description: 'Capability/agent name for this task.' },
+              input: { description: 'Payload for this task.' },
+              timeoutMs: { type: 'number', description: 'Optional per-task timeout (ms).' },
+            },
+            required: ['capability', 'input'],
+          },
+        },
         timeoutMs: {
           type: 'number',
           description: `Max wait time in ms (sync mode only). Default ${DEFAULT_TIMEOUT_MS}.`,
@@ -369,10 +401,50 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
             'Use check_subagents / cancel_subagent to manage it.',
         },
       },
-      required: ['capability', 'input'],
+      required: [],
     },
     execute: async (_callId, rawInput, ctx): Promise<ToolResult> => {
       const params = rawInput as DelegateParams;
+
+      // Batch fan-out: run several sync delegations concurrently in ONE call and
+      // aggregate. Each task recurses through this same tool (sync), reusing the
+      // inline-subagent / registry resolution. Deterministic parallelism — does
+      // not depend on the model emitting multiple delegate calls in one turn.
+      if (Array.isArray(params.tasks)) {
+        if (params.tasks.length === 0) return errorResult('tasks must not be empty');
+        for (const t of params.tasks) {
+          if (!t || typeof t.capability !== 'string' || t.input === undefined) {
+            return errorResult('each item in "tasks" requires { capability, input }');
+          }
+        }
+        const tasks = params.tasks;
+        const results = await Promise.all(
+          tasks.map((t, i) =>
+            toolDef
+              .execute(
+                `${_callId}#${i}`,
+                {
+                  capability: t.capability,
+                  input: t.input,
+                  waitForResult: 'sync',
+                  ...(typeof t.timeoutMs === 'number' ? { timeoutMs: t.timeoutMs } : {}),
+                },
+                ctx,
+              )
+              .catch((err: unknown): ToolResult =>
+                errorResult(err instanceof Error ? err.message : String(err)),
+              ),
+          ),
+        );
+        const merged = results
+          .map((r, i) => {
+            const body =
+              r.type === 'text' ? r.text : r.type === 'error' ? `ERROR: ${r.message}` : `(${r.type})`;
+            return `## delegate[${i}] ${tasks[i].capability}\n${body}`;
+          })
+          .join('\n\n');
+        return textResult(merged);
+      }
 
       if (!params.capability || typeof params.capability !== 'string') {
         return errorResult('capability is required');

@@ -118,6 +118,78 @@ describe('delegate tool', () => {
     if (result.type === 'text') expect(result.text).toContain('short version');
   });
 
+  it('runs multiple tasks in parallel within one call and aggregates results', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([
+      makeCard('summarizer', 'summarize', ['summarize.requested']),
+      makeCard('translator', 'translate', ['translate.requested']),
+    ]);
+    transport.subscribe('summarize.requested', async (env) => {
+      await transport.publish({
+        id: messageId(), topic: 'summarize.completed', type: 'result',
+        payload: { content: 'SUM_OK', toolCalls: [] },
+        metadata: { ...env.metadata, replyTo: env.id, timestamp: Date.now() },
+      });
+    });
+    transport.subscribe('translate.requested', async (env) => {
+      await transport.publish({
+        id: messageId(), topic: 'translate.completed', type: 'result',
+        payload: { content: 'TRA_OK', toolCalls: [] },
+        metadata: { ...env.metadata, replyTo: env.id, timestamp: Date.now() },
+      });
+    });
+
+    const tool = createDelegateTool({ transport, registry });
+    const result = await tool.execute('d-batch', {
+      tasks: [
+        { capability: 'summarize', input: { prompt: 'a' } },
+        { capability: 'translate', input: { prompt: 'b' } },
+      ],
+      timeoutMs: 2000,
+    }, makeCtx());
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('SUM_OK');
+      expect(result.text).toContain('TRA_OK');
+    }
+  });
+
+  it('batch isolates a failing task and keeps the rest', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([makeCard('summarizer', 'summarize', ['summarize.requested'])]);
+    transport.subscribe('summarize.requested', async (env) => {
+      await transport.publish({
+        id: messageId(), topic: 'summarize.completed', type: 'result',
+        payload: { content: 'SUM_OK', toolCalls: [] },
+        metadata: { ...env.metadata, replyTo: env.id, timestamp: Date.now() },
+      });
+    });
+
+    const tool = createDelegateTool({ transport, registry });
+    const result = await tool.execute('d-batch2', {
+      tasks: [
+        { capability: 'summarize', input: { prompt: 'a' } },
+        { capability: 'nonexistent', input: { prompt: 'b' } },
+      ],
+      timeoutMs: 2000,
+    }, makeCtx());
+
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('SUM_OK');
+      expect(result.text).toMatch(/No agent|nonexistent/);
+    }
+  });
+
+  it('rejects an empty tasks array', async () => {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([]);
+    const tool = createDelegateTool({ transport, registry });
+    const result = await tool.execute('d-batch3', { tasks: [] }, makeCtx());
+    expect(result.type).toBe('error');
+  });
+
   it('errors when no agent has the requested capability', async () => {
     const transport = new FakeTransport();
     const registry = makeRegistry([]);

@@ -141,8 +141,10 @@ export type {
   SecretAccessor,
   ToolLogger,
   ToolResult,
+  ToolResultContentBlock,
+  FileReadState,
 } from './tool.js';
-export { textResult, errorResult, suspendResult } from './tool.js';
+export { textResult, errorResult, contentResult, suspendResult } from './tool.js';
 
 export type {
   BackgroundTaskStatus,
@@ -212,7 +214,7 @@ export type {
   AgentLogger,
 } from './agent.js';
 
-export { imageResultForLLM, sanitizeToolPairsInPlace } from './llm-message.js';
+export { imageResultForLLM, imageBlocksFromResult, sanitizeToolPairsInPlace } from './llm-message.js';
 
 export type {
   ConversationStore,

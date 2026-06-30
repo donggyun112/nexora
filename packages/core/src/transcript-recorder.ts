@@ -7,7 +7,7 @@ import type {
   ContentBlock,
   ImageContent,
 } from '@dongkseo/contracts';
-import { imageResultForLLM } from '@dongkseo/contracts';
+import { imageBlocksFromResult } from '@dongkseo/contracts';
 
 export class TranscriptRecorder {
   private lastUuid: string | null = null;
@@ -90,9 +90,9 @@ export class TranscriptRecorder {
           content: stringifyResult(event.result),
           is_error: event.isError,
         });
-        // If the result is an image, also store it as an attachment_ref block
-        const img = imageResultForLLM(event.result);
-        if (img) {
+        // Attach every image the result carries (one for an `image` result,
+        // possibly many for a `content` result e.g. PDF pages / notebook cells).
+        for (const img of imageBlocksFromResult(event.result)) {
           const block = await this.imageBlock({ type: 'image', data: img.data, mimeType: img.mimeType });
           if (block) this.pendingToolResults.push(block);
         }
@@ -186,10 +186,22 @@ export class TranscriptRecorder {
 function stringifyResult(result: unknown): string {
   if (typeof result === 'string') return result;
   if (result && typeof result === 'object') {
-    const r = result as { type?: string; text?: string; message?: string };
+    const r = result as {
+      type?: string;
+      text?: string;
+      message?: string;
+      blocks?: Array<{ type?: string; text?: string }>;
+    };
     if (r.type === 'text' && typeof r.text === 'string') return r.text;
     if (r.type === 'error' && typeof r.message === 'string') return `[ERROR] ${r.message}`;
     if (r.type === 'image') return '[image]';
+    if (r.type === 'content' && Array.isArray(r.blocks)) {
+      // Text summary for the tool_result block; the images are pushed separately
+      // by the recorder as attachment blocks.
+      return r.blocks
+        .map(b => (b.type === 'text' && typeof b.text === 'string' ? b.text : '[image]'))
+        .join('\n');
+    }
   }
   return JSON.stringify(result);
 }

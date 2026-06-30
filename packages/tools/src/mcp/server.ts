@@ -65,6 +65,15 @@ export function createMcpServerBridge(
             }],
           };
         }
+        if (result.type === 'content') {
+          return {
+            content: result.blocks.map(b =>
+              b.type === 'image'
+                ? { type: 'image' as const, data: b.data, mimeType: b.mimeType }
+                : { type: 'text' as const, text: b.text },
+            ),
+          };
+        }
         if (result.type === 'error') {
           return {
             content: [{ type: 'text', text: result.message }],

@@ -256,6 +256,10 @@ export function formatToolResult(result: ToolResult): string {
       return result.text;
     case 'image':
       return `[image: ${result.mimeType}]`;
+    case 'content':
+      return result.blocks
+        .map(b => (b.type === 'text' ? b.text : `[image: ${b.mimeType}]`))
+        .join('\n');
     case 'error':
       return `[ERROR] ${result.message}`;
     case 'suspend':

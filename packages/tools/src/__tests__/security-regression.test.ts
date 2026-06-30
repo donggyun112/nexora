@@ -413,7 +413,9 @@ describe('Workspace policy regressions', () => {
 
     expect(result.type).toBe('text');
     if (result.type === 'text') expect(result.text).toContain('TODO');
-    expect(seen?.argv[0]).toBe('grep');
+    // Engine is auto-detected (ripgrep when available, else grep) — either routes
+    // through the sandbox; the security property under test is the routing itself.
+    expect(['rg', 'grep']).toContain(seen?.argv[0]);
     expect(seen?.signal).toBeDefined();
     expect(seen?.timeoutMs).toBeGreaterThan(0);
   });

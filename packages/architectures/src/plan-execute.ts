@@ -26,7 +26,7 @@ import type {
 import {
   executeToolCalls,
   formatResultForLLM,
-  imageResultForLLM,
+  imageBlocksFromResult,
   isErrorResult,
   sanitizeToolPairsInPlace,
   userContentForInput,
@@ -195,13 +195,13 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
           if (phase === 'plan' && tc.name === exitPlanTool && !isError) planSubmitted = true;
 
           toolResultBlocks.push({ type: 'tool_result', id: tc.id, content: formatResultForLLM(result), isError });
-          const image = imageResultForLLM(result);
-          if (image) {
+          const images = imageBlocksFromResult(result);
+          if (images.length > 0) {
             toolImageMessages.push({
               role: 'user',
               content: [
-                { type: 'text', text: `Tool ${tc.name} returned an image for call ${tc.id}. Use this image as visual context for the current task.` },
-                image,
+                { type: 'text', text: `Tool ${tc.name} returned ${images.length === 1 ? 'an image' : `${images.length} images`} for call ${tc.id}. Use ${images.length === 1 ? 'this image' : 'these images'} as visual context for the current task.` },
+                ...images,
               ],
             });
           }

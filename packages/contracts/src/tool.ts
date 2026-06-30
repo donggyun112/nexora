@@ -135,6 +135,28 @@ export interface ToolContext {
    * Satisfied structurally by `KeyedSerializer` from @dongkseo/core.
    */
   resourceLock?: ResourceLock;
+
+  /**
+   * Per-session file-read history: absolute path → last read metadata. The read
+   * tool populates it and, on an identical re-read (same path/offset/limit) with
+   * an unchanged mtime, returns an "unchanged" stub instead of re-sending the
+   * whole file — the earlier result is still in context, so a second full copy
+   * just wastes cache. Created ONCE per session/runtime (not per call) so it
+   * survives across tool calls. Undefined (e.g. internal callers) → dedup off.
+   */
+  readFileState?: Map<string, FileReadState>;
+}
+
+export interface FileReadState {
+  /** mtimeMs floored to an integer for stable equality comparison. */
+  mtimeMs: number;
+  /** Byte size at read time — a cheap second signal so a same-mtime rewrite of a
+   * different length is not mistaken for unchanged. */
+  size: number;
+  /** 1-based start line of the cached read, if any. */
+  offset?: number;
+  /** Line limit of the cached read, if any. */
+  limit?: number;
 }
 
 /**
@@ -155,9 +177,22 @@ export interface ToolLogger {
   error(message: string, data?: unknown): void;
 }
 
+/** A single block inside a multimodal `content` ToolResult. */
+export type ToolResultContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
+
 export type ToolResult =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string }
+  /**
+   * Ordered multimodal result — interleaved text and (multiple) images in one
+   * tool result. A single `image` result can carry only one picture; tools that
+   * return several images or text+image mixes (PDF page extraction, notebook
+   * cells) use this. The transcript recorder flattens `blocks` into the user
+   * turn's content array in order.
+   */
+  | { type: 'content'; blocks: ToolResultContentBlock[] }
   | { type: 'error'; message: string }
   | { type: 'suspend'; pendingId: string };
 
@@ -168,6 +203,11 @@ export function textResult(text: string): ToolResult {
 
 export function errorResult(message: string): ToolResult {
   return { type: 'error', message };
+}
+
+/** Multimodal result helper — interleaved text/image blocks in order. */
+export function contentResult(blocks: ToolResultContentBlock[]): ToolResult {
+  return { type: 'content', blocks };
 }
 
 export function suspendResult(pendingId: string): ToolResult {

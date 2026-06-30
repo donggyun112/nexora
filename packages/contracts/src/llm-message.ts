@@ -92,3 +92,23 @@ export function imageResultForLLM(result: unknown): Extract<LLMContentBlock, { t
   if (r.type !== 'image' || typeof r.data !== 'string' || typeof r.mimeType !== 'string') return null;
   return { type: 'image', data: r.data, mimeType: r.mimeType };
 }
+
+/**
+ * All image blocks carried by a tool result, in order: a single `image` result
+ * yields one block; a `content` result yields one per image block it holds.
+ * Used by the transcript recorder to attach every image a tool returns.
+ */
+export function imageBlocksFromResult(result: unknown): Array<Extract<LLMContentBlock, { type: 'image' }>> {
+  if (!result || typeof result !== 'object') return [];
+  const r = result as { type?: string; blocks?: unknown };
+  if (r.type === 'content' && Array.isArray(r.blocks)) {
+    const out: Array<Extract<LLMContentBlock, { type: 'image' }>> = [];
+    for (const block of r.blocks) {
+      const img = imageResultForLLM(block);
+      if (img) out.push(img);
+    }
+    return out;
+  }
+  const single = imageResultForLLM(result);
+  return single ? [single] : [];
+}

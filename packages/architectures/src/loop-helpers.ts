@@ -15,7 +15,7 @@ import type {
   ToolBatchResult,
 } from '@dongkseo/contracts';
 
-export { imageResultForLLM, sanitizeToolPairsInPlace } from '@dongkseo/contracts';
+export { imageResultForLLM, imageBlocksFromResult, sanitizeToolPairsInPlace } from '@dongkseo/contracts';
 
 export type ToolCall = NonNullable<LLMResponse['toolCalls']>[number];
 
@@ -290,9 +290,21 @@ export function isErrorResult(result: unknown): boolean {
 
 export function formatResultForLLM(result: unknown): string {
   if (!result || typeof result !== 'object') return String(result);
-  const r = result as { type?: string; text?: string; message?: string };
+  const r = result as {
+    type?: string;
+    text?: string;
+    message?: string;
+    blocks?: Array<{ type?: string; text?: string }>;
+  };
   if (r.type === 'text' && typeof r.text === 'string') return r.text;
   if (r.type === 'error' && typeof r.message === 'string') return `[ERROR] ${r.message}`;
   if (r.type === 'image') return '[image]';
+  if (r.type === 'content' && Array.isArray(r.blocks)) {
+    // Text summary only — images are attached as separate LLM image blocks by
+    // the caller. Never JSON.stringify a content result or its base64 leaks here.
+    return r.blocks
+      .map(b => (b.type === 'text' && typeof b.text === 'string' ? b.text : '[image]'))
+      .join('\n');
+  }
   return JSON.stringify(result);
 }

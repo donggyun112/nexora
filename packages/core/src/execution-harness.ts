@@ -23,6 +23,7 @@ import type {
   ToolDefinition,
   ToolExecutor,
   ToolResult,
+  FileReadState,
   TranscriptStore,
   WorkspaceProvider,
   WorkspaceSession,
@@ -101,6 +102,13 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
   private readonly triggers: TriggerHost;
   private readonly resourceLock?: ResourceLock;
+  /**
+   * Per-harness file-read history shared into the tool context so the read tool
+   * can dedup unchanged re-reads. Lives for the harness lifetime (survives across
+   * turns) unless the app already supplies its own readFileState in the base
+   * context, which takes precedence.
+   */
+  private readonly readFileState = new Map<string, FileReadState>();
   /** The recorder for the currently-active execute() — used by steer(). Concurrent execute() calls are not supported when transcript recording is enabled (same single-active assumption as pendingSteers). */
   private activeRecorder: TranscriptRecorder | null = null;
   /** In-flight steer record() promises for the active execute() — awaited before flush so steers aren't lost. */
@@ -195,6 +203,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
           deliverResult: this.deliverResult,
           triggers: this.triggers,
           resourceLock: this.resourceLock,
+          readFileState: baseToolContext.readFileState ?? this.readFileState,
         });
       }
 

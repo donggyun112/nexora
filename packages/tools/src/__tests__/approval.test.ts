@@ -171,15 +171,19 @@ describe('approvalGateMiddleware', () => {
     });
   }
 
-  function autoRespond(transport: FakeTransport, choice: 'once' | 'session' | 'always' | 'deny') {
-    // Auto-respond to any handraise request on the default channel.
-    transport.subscribe('handraise.human.default', async (env) => {
+  function autoRespond(
+    transport: FakeTransport,
+    choice: 'once' | 'session' | 'always' | 'deny',
+    channel = 'default',
+  ) {
+    // Auto-respond to any handraise request on the selected channel.
+    transport.subscribe(`handraise.human.${channel}`, async (env) => {
       const payload = env.payload as { context?: unknown };
       if (!isApprovalRequest(payload.context)) return;
       const reply: ApprovalReply = { choice, userId: 'u1', displayName: 'Alice' };
       await transport.publish({
         id: messageId(),
-        topic: 'handraise.human.default.answered',
+        topic: `handraise.human.${channel}.answered`,
         type: 'result',
         payload: { answer: reply },
         metadata: {
@@ -197,6 +201,24 @@ describe('approvalGateMiddleware', () => {
     return ctx.tools[0];
   }
 
+  function wrapPolicyGroupTool(
+    opts: Pick<Parameters<typeof createApprovalGateMiddleware>[0], 'resolveGroupAction' | 'mode' | 'predicate'>,
+    tool: ToolDefinition,
+    transport = new FakeTransport(),
+    store = new InMemoryApprovalPolicyStore(),
+  ): { wrapped: ToolDefinition; transport: FakeTransport; store: InMemoryApprovalPolicyStore } {
+    const mw = createApprovalGateMiddleware({
+      transport,
+      store,
+      channel: 'multica',
+      resolveSessionKey: () => 'session-1',
+      ...opts,
+    });
+    const ctx = { tools: [tool], input: baseCtx.input, systemPrompt: '' };
+    mw.beforeExecution(ctx);
+    return { wrapped: ctx.tools[0], transport, store };
+  }
+
   it('passes through non-risky tools', async () => {
     const transport = new FakeTransport();
     const store = new InMemoryApprovalPolicyStore();
@@ -208,6 +230,102 @@ describe('approvalGateMiddleware', () => {
     expect(calls).toHaveLength(1);
     const requests = transport.published.filter((e) => e.topic === 'handraise.human.default');
     expect(requests).toHaveLength(0);
+  });
+
+  it('policy group action=skip bypasses the explicit gate for that group', async () => {
+    const calls: { input: unknown }[] = [];
+    const tool: ToolDefinition = {
+      ...makeTool('outline_create_document', calls),
+      policyGroups: ['outline.write', 'requires_review'],
+    };
+    const { wrapped, transport } = wrapPolicyGroupTool({
+      resolveGroupAction: ({ policyGroup }) =>
+        policyGroup === 'requires_review' ? 'skip' : null,
+    }, tool);
+
+    const result = await wrapped.execute('c1', { title: 'doc' }, makeCtx());
+
+    expect(result.type).toBe('text');
+    expect(calls).toHaveLength(1);
+    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+  });
+
+  it('policy group action=ask uses the normal approval flow', async () => {
+    const transport = new FakeTransport();
+    autoRespond(transport, 'once', 'multica');
+    const calls: { input: unknown }[] = [];
+    const tool: ToolDefinition = {
+      ...makeTool('outline_create_document', calls),
+      policyGroups: ['requires_review'],
+    };
+    const { wrapped } = wrapPolicyGroupTool({
+      resolveGroupAction: ({ policyGroup, channel }) =>
+        policyGroup === 'requires_review' && channel === 'multica'
+          ? {
+              action: 'ask',
+              approvalKey: 'outline-review',
+              command: 'outline_create_document',
+              reason: 'Outline write review',
+              choices: ['once', 'deny'] as const,
+              review: 'preview body',
+            }
+          : 'skip',
+    }, tool, transport);
+
+    const result = await wrapped.execute('c1', { title: 'doc' }, makeCtx());
+
+    expect(result.type).toBe('text');
+    expect(calls).toHaveLength(1);
+    const requests = transport.published.filter((e) => e.topic === 'handraise.human.multica');
+    expect(requests).toHaveLength(1);
+    const payload = requests[0].payload as { context?: unknown };
+    expect(isApprovalRequest(payload.context)).toBe(true);
+    if (isApprovalRequest(payload.context)) {
+      expect(payload.context.approvalKey).toBe('outline-review');
+      expect(payload.context.review).toBe('preview body');
+    }
+  });
+
+  it('policy group action=block short-circuits without prompting', async () => {
+    const calls: { input: unknown }[] = [];
+    const tool: ToolDefinition = {
+      ...makeTool('deploy_production', calls),
+      policyGroups: ['release.freeze'],
+    };
+    const { wrapped, transport } = wrapPolicyGroupTool({
+      resolveGroupAction: ({ policyGroup }) =>
+        policyGroup === 'release.freeze'
+          ? { action: 'block', reason: 'release freeze' }
+          : null,
+    }, tool);
+
+    const result = await wrapped.execute('c1', {}, makeCtx());
+
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toContain('BLOCKED');
+    expect(calls).toHaveLength(0);
+    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+  });
+
+  it('policy group action=deny hard-denies without prompting', async () => {
+    const calls: { input: unknown }[] = [];
+    const tool: ToolDefinition = {
+      ...makeTool('outline_get_document', calls),
+      permissionGroups: ['outline.collection.out_of_scope'],
+    };
+    const { wrapped, transport } = wrapPolicyGroupTool({
+      resolveGroupAction: ({ policyGroup }) =>
+        policyGroup === 'outline.collection.out_of_scope'
+          ? { action: 'deny', reason: 'collection not allowed' }
+          : null,
+    }, tool);
+
+    const result = await wrapped.execute('c1', { id: 'x' }, makeCtx());
+
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toContain('DENIED');
+    expect(calls).toHaveLength(0);
+    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
   });
 
   it('grants once: runs tool, does not cache', async () => {

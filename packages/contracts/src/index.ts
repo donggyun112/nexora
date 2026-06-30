@@ -136,6 +136,7 @@ export type {
 
 export type {
   ToolDefinition,
+  ToolPolicyGroup,
   ToolContext,
   ResourceLock,
   SecretAccessor,
@@ -144,7 +145,7 @@ export type {
   ToolResultContentBlock,
   FileReadState,
 } from './tool.js';
-export { textResult, errorResult, contentResult, suspendResult } from './tool.js';
+export { textResult, errorResult, contentResult, suspendResult, getToolPolicyGroups } from './tool.js';
 
 export type {
   BackgroundTaskStatus,

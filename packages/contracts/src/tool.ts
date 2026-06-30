@@ -3,6 +3,8 @@ import type { WorkspaceSession } from './workspace.js';
 import type { BackgroundTaskRegistry, BackgroundTaskResult } from './background-task.js';
 import type { TriggerHost } from './trigger.js';
 
+export type ToolPolicyGroup = string;
+
 /**
  * ToolDefinition — 도구 계약.
  *
@@ -36,6 +38,26 @@ export interface ToolDefinition {
   /** True if this tool can cause irreversible changes. */
   isDestructive?: boolean | ((input?: unknown) => boolean);
 
+  /**
+   * First-class policy/permission groups for gate middleware and adapters.
+   *
+   * Examples:
+   *   - 'outline.write'
+   *   - 'requires_review'
+   *   - 'manager_only'
+   *   - 'destructive.delete'
+   *
+   * Tool authors declare intent here; runtimes decide per channel whether a
+   * group is skipped, prompted, blocked, or denied.
+   */
+  policyGroups?: readonly ToolPolicyGroup[];
+
+  /**
+   * Alias for callers that prefer permission-oriented naming. When both fields
+   * are present, consumers should treat the union as the effective group set.
+   */
+  permissionGroups?: readonly ToolPolicyGroup[];
+
   /** Max chars for the result text. Longer results are truncated. */
   maxResultSizeChars?: number;
 
@@ -60,6 +82,12 @@ export interface ToolDefinition {
    * predicate. Tool authors who want their work visible must opt in.
    */
   visibility?: 'public' | 'detail' | 'silent';
+}
+
+export function getToolPolicyGroups(
+  tool: Pick<ToolDefinition, 'policyGroups' | 'permissionGroups'>,
+): ToolPolicyGroup[] {
+  return [...new Set([...(tool.policyGroups ?? []), ...(tool.permissionGroups ?? [])])];
 }
 
 export interface ToolContext {

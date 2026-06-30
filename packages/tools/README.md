@@ -32,6 +32,9 @@
 `group:memory`(knowledge), `group:agent`(delegate/handraise), `group:skills`(skill-manage).
 프로파일: `minimal`(read/grep), `coding`(fs+runtime+memory+skills), `full`(제한 없음).
 
+도구 실행 권한은 `ToolDefinition.policyGroups`/`permissionGroups`에 선언하고, 승인 게이트에서 채널별로
+`skip | ask | block | deny`를 해석할 수 있다. 예: `['outline.write', 'requires_review', 'manager_only']`.
+
 ## 사용 레시피
 
 도구를 만들어 에이전트별로 묶는다 (`examples/auto-work-flow` 기준, 실제 동작 코드):
@@ -65,6 +68,21 @@ const { tools } = assembleToolsWithPolicy(registry, {
   contextTools: ctx.tools,
 });
 // → tools 를 실행기(core의 CoreToolExecutor 등)에 넘긴다
+```
+
+정책 그룹 기반 승인 게이트:
+
+```ts
+createApprovalGateMiddleware({
+  transport,
+  store,
+  resolveGroupAction: ({ policyGroup, channel }) => {
+    if (policyGroup === 'requires_review' && channel === 'multica') return 'skip';
+    if (policyGroup === 'requires_review') return 'ask';
+    if (policyGroup === 'destructive.delete') return 'block';
+    return 'skip';
+  },
+});
 ```
 
 더 큰 예제: [`examples/auto-work-flow`](../../examples/auto-work-flow) (PM→Coder→Reviewer + handraise),

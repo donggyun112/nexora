@@ -55,6 +55,8 @@ import type { HardlineRule } from './hardline.js';
  */
 export type ApprovalMode = 'off' | 'ask' | 'block';
 
+export type ApprovalGatePolicyAction = 'skip' | 'ask' | 'block' | 'deny';
+
 /**
  * Structural subset of `@dongkseo/core`'s AgentMiddleware. Defined locally to
  * avoid a `tools → core` package dependency (core already depends on tools
@@ -101,6 +103,31 @@ export type ApprovalGatePredicate = (
   | undefined
   | Promise<ApprovalGateSpec | null | undefined>;
 
+export interface ApprovalGatePolicyContext {
+  tool: ToolDefinition;
+  toolName: string;
+  input: unknown;
+  policyGroup: string;
+  policyGroups: readonly string[];
+  channel: string;
+  tenantId: string;
+  sessionKey: string;
+}
+
+export type ApprovalGatePolicyDecision =
+  | ApprovalGatePolicyAction
+  | ({
+      action: ApprovalGatePolicyAction;
+    } & Partial<ApprovalGateSpec>);
+
+export type ApprovalGatePolicyResolver = (
+  ctx: ApprovalGatePolicyContext,
+) =>
+  | ApprovalGatePolicyDecision
+  | null
+  | undefined
+  | Promise<ApprovalGatePolicyDecision | null | undefined>;
+
 export interface ApprovalGateOptions {
   /** Transport used for the approval round-trip. */
   transport: EventTransport;
@@ -109,8 +136,22 @@ export interface ApprovalGateOptions {
   /**
    * Decides whether a given tool call needs approval and supplies the
    * approvalKey + display info. Return null/undefined to bypass the gate.
+   * Used as fallback after policy-group resolution. Optional for callers that
+   * express all approval policy with ToolDefinition.policyGroups.
    */
-  predicate: ApprovalGatePredicate;
+  predicate?: ApprovalGatePredicate;
+  /**
+   * First-class policy-group resolver. For every group declared on
+   * ToolDefinition.policyGroups/permissionGroups, return:
+   *   - 'skip'  → this group does not require gate handling in this channel
+   *   - 'ask'   → build an ApprovalGateSpec and prompt through normal flow
+   *   - 'block' → short-circuit without prompting
+   *   - 'deny'  → hard policy denial without prompting
+   *
+   * If multiple groups match, deny/block wins over ask; otherwise the first ask
+   * spec is used. Undefined/null is treated like 'skip'.
+   */
+  resolveGroupAction?: ApprovalGatePolicyResolver;
   /**
    * Channel suffix for the handraise topic. The middleware publishes to
    * `handraise.human.<channel>`. Default: 'default'.
@@ -169,7 +210,8 @@ export function createApprovalGateMiddleware(
   const {
     transport,
     store,
-    predicate,
+    predicate = () => null,
+    resolveGroupAction,
     channel = 'default',
     timeoutMs = DEFAULT_TIMEOUT_MS,
     resolveSessionKey,
@@ -210,13 +252,24 @@ export function createApprovalGateMiddleware(
           }
         }
 
-        const spec = await predicate(tool.name, input);
-        if (!spec) return original(callId, input, toolCtx);
-
         const tenantId = toolCtx.tenantId;
         const sessionKey =
           resolveSessionKey?.({ tenantId, toolName: tool.name }) ??
           `tenant:${tenantId}`;
+
+        const groupGate = await resolvePolicyGroupGate(tool, input, tenantId, sessionKey);
+        if (groupGate?.kind === 'deny' || groupGate?.kind === 'block') {
+          toolCtx.logger.info(`approval.policy_group.${groupGate.kind}`, {
+            tool: tool.name,
+            policyGroup: groupGate.policyGroup,
+          });
+          return errorResult(groupGate.message);
+        }
+
+        const spec = groupGate?.kind === 'ask'
+          ? groupGate.spec
+          : await predicate(tool.name, input);
+        if (!spec) return original(callId, input, toolCtx);
 
         const effectiveMode: ApprovalMode =
           (await resolveMode?.({ tenantId, toolName: tool.name, sessionKey })) ??
@@ -342,4 +395,79 @@ export function createApprovalGateMiddleware(
       },
     };
   }
+
+  async function resolvePolicyGroupGate(
+    tool: ToolDefinition,
+    input: unknown,
+    tenantId: string,
+    sessionKey: string,
+  ): Promise<
+    | { kind: 'ask'; policyGroup: string; spec: ApprovalGateSpec }
+    | { kind: 'block' | 'deny'; policyGroup: string; message: string }
+    | null
+  > {
+    if (!resolveGroupAction) return null;
+    const policyGroups = getPolicyGroups(tool);
+    let ask: { kind: 'ask'; policyGroup: string; spec: ApprovalGateSpec } | null = null;
+
+    for (const policyGroup of policyGroups) {
+      const raw = await resolveGroupAction({
+        tool,
+        toolName: tool.name,
+        input,
+        policyGroup,
+        policyGroups,
+        channel,
+        tenantId,
+        sessionKey,
+      });
+      const decision = normalizePolicyDecision(raw);
+      if (!decision || decision.action === 'skip') continue;
+
+      if (decision.action === 'deny' || decision.action === 'block') {
+        const label = decision.action === 'deny' ? 'DENIED' : 'BLOCKED';
+        const reason = decision.reason ?? `policy group '${policyGroup}'`;
+        return {
+          kind: decision.action,
+          policyGroup,
+          message: `${label} by policy group '${policyGroup}': ${reason}. No prompt was issued.`,
+        };
+      }
+
+      if (!ask) {
+        ask = {
+          kind: 'ask',
+          policyGroup,
+          spec: {
+            approvalKey: decision.approvalKey ?? `${tool.name}:${policyGroup}`,
+            command: decision.command ?? tool.name,
+            reason: decision.reason ?? `Policy group '${policyGroup}' requires approval.`,
+            ...(decision.allowedUsers ? { allowedUsers: decision.allowedUsers } : {}),
+            ...(decision.allowedRoles ? { allowedRoles: decision.allowedRoles } : {}),
+            ...(decision.choices ? { choices: decision.choices } : {}),
+            ...(decision.review ? { review: decision.review } : {}),
+            ...(decision.artifacts ? { artifacts: decision.artifacts } : {}),
+          },
+        };
+      }
+    }
+
+    return ask;
+  }
+}
+
+function normalizePolicyDecision(
+  decision: ApprovalGatePolicyDecision | null | undefined,
+): ({ action: ApprovalGatePolicyAction } & Partial<ApprovalGateSpec>) | null {
+  if (!decision) return null;
+  if (typeof decision === 'string') return { action: decision };
+  return decision;
+}
+
+function getPolicyGroups(tool: ToolDefinition): string[] {
+  const tagged = tool as ToolDefinition & {
+    policyGroups?: readonly string[];
+    permissionGroups?: readonly string[];
+  };
+  return [...new Set([...(tagged.policyGroups ?? []), ...(tagged.permissionGroups ?? [])])];
 }

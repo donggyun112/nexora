@@ -34,6 +34,10 @@ export { createApprovalGateMiddleware } from './approval-middleware.js';
 export type {
   ApprovalGateOptions,
   ApprovalGatePredicate,
+  ApprovalGatePolicyAction,
+  ApprovalGatePolicyContext,
+  ApprovalGatePolicyDecision,
+  ApprovalGatePolicyResolver,
   ApprovalMode,
 } from './approval-middleware.js';
 

@@ -29,6 +29,62 @@ interface HeadlessArgs {
   systemPrompt?: string;
 }
 
+interface HeadlessProviderSpec {
+  provider: string;
+  model: string;
+}
+
+export class FixedHeadlessModelProvider {
+  constructor(
+    private readonly inner: { stream: Function; complete: Function },
+    private readonly model: string,
+  ) {}
+
+  stream(messages: unknown[], options?: { model?: string }): AsyncGenerator<unknown> {
+    return this.inner.stream(messages, this.withModel(options));
+  }
+
+  complete(messages: unknown[], options?: { model?: string }): Promise<unknown> {
+    return this.inner.complete(messages, this.withModel(options));
+  }
+
+  private withModel(options?: { model?: string }): Record<string, unknown> {
+    return { ...(options ?? {}), model: this.model };
+  }
+}
+
+function splitProviderModel(id: string): HeadlessProviderSpec | null {
+  const slash = id.indexOf('/');
+  if (slash <= 0 || slash === id.length - 1) return null;
+  return { provider: id.slice(0, slash), model: id.slice(slash + 1) };
+}
+
+export function headlessProviderName(spec: HeadlessProviderSpec): string {
+  return `${spec.provider}/${spec.model}`;
+}
+
+export function buildHeadlessProviderSpecs(
+  primary: HeadlessProviderSpec,
+  modelIds: readonly string[],
+): HeadlessProviderSpec[] {
+  const primaryKey = headlessProviderName(primary);
+  const seen = new Set([primaryKey]);
+  const crossProvider: HeadlessProviderSpec[] = [];
+  const sameProvider: HeadlessProviderSpec[] = [];
+
+  for (const id of modelIds) {
+    const spec = splitProviderModel(id);
+    if (!spec) continue;
+    const key = headlessProviderName(spec);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (spec.provider === primary.provider) sameProvider.push(spec);
+    else crossProvider.push(spec);
+  }
+
+  return [primary, ...crossProvider, ...sameProvider];
+}
+
 /**
  * Parse the pi-style argv. Known value-flags are consumed; everything else
  * (incl. `-p`, `--mode`, user custom args) is ignored for runtime purposes.
@@ -94,7 +150,16 @@ function parseHeadlessArgs(argv: string[]): HeadlessArgs {
  * Exits non-zero when the turn fails so Multica records a failed task.
  */
 export async function runHeadless(argv: string[]): Promise<void> {
-  const { AgentRunner, CoreToolExecutor, PiAiProvider, drivePi, InMemoryBudgetTracker, createBudgetMiddleware } =
+  const {
+    AgentRunner,
+    CoreToolExecutor,
+    PiAiProvider,
+    FallbackLLMProvider,
+    drivePi,
+    InMemoryBudgetTracker,
+    createBudgetMiddleware,
+    listAvailableModels,
+  } =
     (await import('@dongkseo/core' as string)) as typeof import('@dongkseo/core');
   const { createReactArchitecture } =
     (await import('@dongkseo/architectures' as string)) as typeof import('@dongkseo/architectures');
@@ -135,11 +200,30 @@ export async function runHeadless(argv: string[]): Promise<void> {
 
   let runner: import('@dongkseo/core').AgentRunner;
   try {
-    const llm = new PiAiProvider({
-      provider: parsed.provider,
-      model: parsed.model,
-      apiKey: parsed.provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : undefined,
-    });
+    const apiKeyFor = (provider: string): string | undefined =>
+      provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : undefined;
+    const providerSpecs = buildHeadlessProviderSpecs(
+      { provider: parsed.provider, model: parsed.model },
+      listAvailableModels({ fallbackProvider: parsed.provider }),
+    );
+    const providers = providerSpecs.map((spec) => ({
+      name: headlessProviderName(spec),
+      provider: new FixedHeadlessModelProvider(
+        new PiAiProvider({
+          provider: spec.provider,
+          model: spec.model,
+          apiKey: apiKeyFor(spec.provider),
+        }),
+        spec.model,
+      ),
+    }));
+    const llm = providers.length > 1
+      ? new FallbackLLMProvider({
+          providers,
+          rateLimitRetryMs: 0,
+          onFallback: (from, to, reason) => console.error(`[llm-fallback] ${from} -> ${to}: ${reason}`),
+        })
+      : providers[0].provider;
 
     const tools = [createReadTool(), createGrepTool(), createWriteTool(), createEditTool()];
 

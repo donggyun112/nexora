@@ -40,7 +40,7 @@ const coder = defineAgent({
   version: '0.1.0',
   desc: 'Writes and executes code. Main workhorse.',
   architecture: 'react',                                  // 실행 아키텍처
-  tools: ['read', 'grep', 'edit', 'exec', 'write', 'delegate'],
+  tools: ['read', 'grep', 'edit', 'Bash', 'write', 'delegate'],
   capabilities: ['code-execution', 'file-editing', 'debugging'],
   subscribes: [topic('coder.requested')],                 // 받을 메시지
   publishes: [topic('coder.completed')],                  // 낼 메시지

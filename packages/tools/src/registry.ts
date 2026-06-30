@@ -7,7 +7,7 @@
  *   const registry = new ToolRegistry();
  *   registry.register(execTool);
  *   registry.register(readTool);
- *   const filtered = registry.assemble({ allowed: ['exec'] });
+ *   const filtered = registry.assemble({ allowed: ['Bash'] });
  */
 
 import type { ToolDefinition } from '@dongkseo/contracts';
@@ -185,7 +185,7 @@ export interface ToolPolicyLayer {
  * ```ts
  * const pipeline: ToolPolicyLayer[] = [
  *   { label: 'global', allow: ['group:fs', 'group:runtime', 'group:agent'] },
- *   { label: 'tenant.startup', deny: ['exec'] },
+ *   { label: 'tenant.startup', deny: ['Bash'] },
  *   { label: 'agent.reviewer', allow: ['read', 'grep', 'knowledge'] },
  * ];
  * const allowed = applyToolPolicyPipeline(allToolNames, pipeline);
@@ -306,11 +306,11 @@ export interface ToolsetDefinition {
  * ```ts
  * const toolsets = new ToolsetRegistry();
  * toolsets.register('base', { tools: ['read', 'grep'] });
- * toolsets.register('dev', { tools: ['exec', 'edit'], includes: ['base'] });
+ * toolsets.register('dev', { tools: ['Bash', 'edit'], includes: ['base'] });
  * toolsets.register('discord-agent', { tools: ['web-search'], includes: ['dev'] });
  *
  * const names = toolsets.resolve('discord-agent');
- * // → ['read', 'grep', 'exec', 'edit', 'web-search']
+ * // → ['read', 'grep', 'Bash', 'edit', 'web-search']
  *
  * const tools = toolRegistry.assemble({ allowed: names });
  * ```

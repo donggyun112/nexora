@@ -3,9 +3,13 @@ import type { LLMChunk, LLMMessage, LLMOptions, LLMProvider, LLMResponse } from 
 import { FallbackLLMProvider } from '@dongkseo/core';
 
 import {
+  addHeadlessModelId,
   buildHeadlessProviderSpecs,
+  buildHeadlessSandboxTools,
+  createHeadlessWorkspaceProvider,
   FixedHeadlessModelProvider,
   headlessProviderName,
+  selectHeadlessCodexFallbackModel,
 } from '../headless.js';
 
 function apiError(status: number): Error & { status: number } {
@@ -61,10 +65,71 @@ describe('headless LLM fallback provider specs', () => {
     expect(specs).toEqual([{ provider: 'openai', model: 'gpt-4o' }]);
   });
 
+  it('selects a preferred openai-codex fallback model from the full catalog', () => {
+    expect(
+      selectHeadlessCodexFallbackModel([
+        'anthropic/claude-sonnet-4-5',
+        'openai-codex/gpt-5.3-codex-spark',
+        'openai-codex/gpt-5.5',
+      ]),
+    ).toBe('gpt-5.5');
+  });
+
+  it('adds an OAuth-backed codex model id without duplicating catalog entries', () => {
+    expect(addHeadlessModelId(['anthropic/claude-sonnet-4-5'], 'openai-codex/gpt-5.5')).toEqual([
+      'anthropic/claude-sonnet-4-5',
+      'openai-codex/gpt-5.5',
+    ]);
+    expect(addHeadlessModelId(['openai-codex/gpt-5.5'], 'openai-codex/gpt-5.5')).toEqual([
+      'openai-codex/gpt-5.5',
+    ]);
+  });
+
   it('uses provider/model names even when the model id contains slashes', () => {
     expect(headlessProviderName({ provider: 'openrouter', model: 'openai/gpt-5' })).toBe(
       'openrouter/openai/gpt-5',
     );
+  });
+
+  it('builds headless sandbox tools with Bash enabled under an explicit exec policy', () => {
+    let received: unknown;
+    const defs = buildHeadlessSandboxTools((options) => {
+      received = options;
+      return [{ name: 'Bash' }, { name: 'read' }];
+    });
+
+    expect(defs.map((def) => def.name)).toEqual(['Bash', 'read']);
+    expect(received).toEqual({ exec: { allowList: ['*'], allowShell: true } });
+  });
+
+  it('creates a sandbox workspace provider when sandbox support is available', () => {
+    const provider = { kind: 'sandbox' };
+    const created = createHeadlessWorkspaceProvider({
+      cwd: '/repo',
+      isSandboxSupported: () => true,
+      createSandboxProvider: (options) => ({ ...provider, options }),
+      HostWorkspaceProvider: class {
+        constructor(readonly options: unknown) {}
+      },
+    });
+
+    expect(created).toEqual({ kind: 'sandbox', options: { root: '/repo', cleanup: 'keep' } });
+  });
+
+  it('falls back to a host workspace provider when OS sandbox support is unavailable', () => {
+    class HostWorkspaceProvider {
+      constructor(readonly options: unknown) {}
+    }
+
+    const created = createHeadlessWorkspaceProvider({
+      cwd: '/repo',
+      isSandboxSupported: () => false,
+      createSandboxProvider: () => ({ kind: 'sandbox' }),
+      HostWorkspaceProvider,
+    });
+
+    expect(created).toBeInstanceOf(HostWorkspaceProvider);
+    expect((created as HostWorkspaceProvider).options).toEqual({ root: '/repo' });
   });
 
   it('forces the fallback provider model instead of leaking the primary options.model', async () => {

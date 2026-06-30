@@ -63,6 +63,52 @@ export function headlessProviderName(spec: HeadlessProviderSpec): string {
   return `${spec.provider}/${spec.model}`;
 }
 
+const CODEX_FALLBACK_MODEL_PREFERENCE = [
+  'gpt-5.5',
+  'gpt-5.4',
+  'gpt-5.3-codex-spark',
+] as const;
+
+export function selectHeadlessCodexFallbackModel(modelIds: readonly string[]): string | undefined {
+  const codexModels = modelIds
+    .map(splitProviderModel)
+    .filter((spec): spec is HeadlessProviderSpec => Boolean(spec) && spec.provider === 'openai-codex')
+    .map((spec) => spec.model);
+  if (codexModels.length === 0) return undefined;
+  for (const preferred of CODEX_FALLBACK_MODEL_PREFERENCE) {
+    if (codexModels.includes(preferred)) return preferred;
+  }
+  return [...codexModels].sort().at(-1);
+}
+
+export function addHeadlessModelId(modelIds: readonly string[], id: string | undefined): string[] {
+  const out = [...modelIds];
+  if (id && !out.includes(id)) out.push(id);
+  return out;
+}
+
+export function buildHeadlessSandboxTools<T>(
+  sandboxToolDefinitions: (options: { exec: { allowList: string[]; allowShell: boolean } }) => T[],
+): T[] {
+  return sandboxToolDefinitions({
+    exec: {
+      allowList: ['*'],
+      allowShell: true,
+    },
+  });
+}
+
+export function createHeadlessWorkspaceProvider(deps: {
+  cwd: string;
+  isSandboxSupported: () => boolean;
+  createSandboxProvider: (options: { root: string; cleanup: 'keep' }) => unknown;
+  HostWorkspaceProvider: new (options: { root: string }) => unknown;
+}): unknown {
+  return deps.isSandboxSupported()
+    ? deps.createSandboxProvider({ root: deps.cwd, cleanup: 'keep' })
+    : new deps.HostWorkspaceProvider({ root: deps.cwd });
+}
+
 export function buildHeadlessProviderSpecs(
   primary: HeadlessProviderSpec,
   modelIds: readonly string[],
@@ -155,6 +201,9 @@ export async function runHeadless(argv: string[]): Promise<void> {
     CoreToolExecutor,
     PiAiProvider,
     FallbackLLMProvider,
+    createSandboxProvider,
+    HostWorkspaceProvider,
+    isSandboxSupported,
     drivePi,
     InMemoryBudgetTracker,
     createBudgetMiddleware,
@@ -163,8 +212,10 @@ export async function runHeadless(argv: string[]): Promise<void> {
     (await import('@dongkseo/core' as string)) as typeof import('@dongkseo/core');
   const { createReactArchitecture } =
     (await import('@dongkseo/architectures' as string)) as typeof import('@dongkseo/architectures');
-  const { createReadTool, createGrepTool, createWriteTool, createEditTool } =
+  const { sandboxToolDefinitions } =
     (await import('@dongkseo/tools' as string)) as typeof import('@dongkseo/tools');
+  const { resolveCodexApiKey } =
+    (await import('@dongkseo/adapters' as string)) as typeof import('@dongkseo/adapters');
 
   // Helper to emit a single pi wire line straight to stdout (used for fatal
   // setup errors that occur before drivePi() takes over).
@@ -200,11 +251,29 @@ export async function runHeadless(argv: string[]): Promise<void> {
 
   let runner: import('@dongkseo/core').AgentRunner;
   try {
+    let codexApiKey: string | undefined;
+    let codexFallbackModel: string | undefined;
+    try {
+      codexApiKey = await resolveCodexApiKey();
+      codexFallbackModel = selectHeadlessCodexFallbackModel(
+        listAvailableModels({ credentialedOnly: false, fallbackProvider: parsed.provider }),
+      );
+    } catch {
+      /* Codex OAuth is optional; keep the env-key model catalog when unavailable. */
+    }
     const apiKeyFor = (provider: string): string | undefined =>
-      provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : undefined;
+      provider === 'openai-codex'
+        ? codexApiKey
+        : provider === 'anthropic'
+          ? process.env.ANTHROPIC_API_KEY
+          : undefined;
+    const modelIds = addHeadlessModelId(
+      listAvailableModels({ fallbackProvider: parsed.provider }),
+      codexFallbackModel ? `openai-codex/${codexFallbackModel}` : undefined,
+    );
     const providerSpecs = buildHeadlessProviderSpecs(
       { provider: parsed.provider, model: parsed.model },
-      listAvailableModels({ fallbackProvider: parsed.provider }),
+      modelIds,
     );
     const providers = providerSpecs.map((spec) => ({
       name: headlessProviderName(spec),
@@ -225,7 +294,13 @@ export async function runHeadless(argv: string[]): Promise<void> {
         })
       : providers[0].provider;
 
-    const tools = [createReadTool(), createGrepTool(), createWriteTool(), createEditTool()];
+    const tools = buildHeadlessSandboxTools(sandboxToolDefinitions);
+    const workspaceProvider = createHeadlessWorkspaceProvider({
+      cwd: process.cwd(),
+      isSandboxSupported,
+      createSandboxProvider,
+      HostWorkspaceProvider,
+    });
 
     // Feed the middleware pipeline (previously plumbed into the harness but left
     // empty). Cost recording only, with the default NOOP logger — headless stdout
@@ -238,6 +313,7 @@ export async function runHeadless(argv: string[]): Promise<void> {
         model: parsed.model,
       }),
       llm,
+      workspaceProvider,
       middlewares: [
         createBudgetMiddleware({
           tracker: budgetTracker,

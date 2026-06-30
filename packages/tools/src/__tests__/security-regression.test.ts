@@ -176,7 +176,7 @@ describe('Exec sandbox regressions', () => {
 
     expect(result.type).toBe('text');
     if (result.type === 'text') {
-      expect(result.text).toContain('Output truncated at 262144 bytes');
+      expect(result.text).toContain('written to');
       expect(result.text.length).toBeLessThan(270_000);
     }
   });
@@ -200,7 +200,7 @@ describe('Exec sandbox regressions', () => {
     if (result.type === 'text') {
       expect(result.text).toContain('[stderr]');
       expect(result.text).toContain('fatal: build failed');
-      expect(result.text).toContain('Output truncated at 262144 bytes');
+      expect(result.text).toContain('written to');
     }
   });
 
@@ -221,7 +221,7 @@ describe('Exec sandbox regressions', () => {
 
     expect(result.type).toBe('text');
     if (result.type === 'text') {
-      expect(result.text).toContain('Output truncated at 262144 bytes');
+      expect(result.text).toContain('written to');
       expect(result.text).not.toContain('\uFFFD');
       expect(result.text).not.toContain('한');
     }
@@ -246,7 +246,7 @@ describe('Exec sandbox regressions', () => {
     expect(result.type).toBe('text');
     if (result.type === 'text') {
       expect(result.text).toContain(emoji);
-      expect(result.text).toContain('Output truncated at 262144 bytes');
+      expect(result.text).toContain('written to');
       expect(result.text).not.toContain('\uFFFD');
     }
   });
@@ -261,7 +261,7 @@ describe('Exec sandbox regressions', () => {
 
     expect(result.type).toBe('text');
     if (result.type === 'text') {
-      expect(result.text).toContain('Output truncated at 262144 bytes');
+      expect(result.text).toContain('written to');
       expect(result.text).not.toContain('\uFFFD');
       expect(result.text).not.toContain('한');
     }

@@ -113,12 +113,12 @@ export class ToolRegistry {
  * Usage:
  * ```ts
  * const fsTools = TOOL_GROUPS['group:fs']; // ['read', 'write', 'edit', 'grep']
- * const resolved = resolveToolNames(['read', 'group:runtime']); // ['read', 'exec']
+ * const resolved = resolveToolNames(['read', 'group:runtime']); // ['read', 'Bash']
  * ```
  */
 export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   'group:fs': ['read', 'write', 'edit', 'grep'],
-  'group:runtime': ['exec'],
+  'group:runtime': ['Bash'],
   'group:web': ['web-search', 'web-fetch'],
   'group:memory': ['knowledge'],
   'group:agent': ['delegate', 'handraise'],
@@ -127,7 +127,7 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
 
 /**
  * Resolve a mixed list of tool names and group references to flat tool names.
- * E.g. ['read', 'group:runtime'] → ['read', 'exec']
+ * E.g. ['read', 'group:runtime'] → ['read', 'Bash']
  */
 export function resolveToolNames(names: readonly string[]): string[] {
   const result = new Set<string>();

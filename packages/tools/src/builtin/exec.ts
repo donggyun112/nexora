@@ -29,13 +29,53 @@
  */
 
 import { spawn } from 'node:child_process';
-import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import type { ToolDefinition, ToolLogger, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult, safeUtf8Prefix, safeUtf8Suffix, messageId } from '@dongkseo/contracts';
 import { buildToolEnv } from './tool-env.js';
+import {
+  analyzeShellCommand,
+  isReadOnlyArgv,
+  isReadOnlyShellCommand,
+  lastBaseCommand,
+} from './bash/command-classify.js';
+import { interpretExitCode } from './bash/command-semantics.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
+/**
+ * Hard ceiling on how much output we buffer to spill to a file. Output above
+ * MAX_OUTPUT_BYTES (the inline cap) but below this is written to a file in the
+ * workspace cwd and the model gets a preview + path instead of a silent
+ * truncation. Output beyond this ceiling is dropped (and flagged).
+ */
+const MAX_PERSIST_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Spill `output` to a file in the workspace cwd when it exceeds the inline cap,
+ * so the model can re-read the full output with the `read` tool instead of
+ * losing everything past 256KB. Returns the path written, or undefined when the
+ * output fits inline or the write fails (best-effort — never throws).
+ */
+async function persistLargeOutput(
+  output: Buffer,
+  workdir: string,
+  callId: string,
+  logger: ToolLogger,
+): Promise<string | undefined> {
+  if (output.length <= MAX_OUTPUT_BYTES) return undefined;
+  const safeId = callId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64) || 'out';
+  const filePath = path.join(workdir, `.exec-output-${safeId}.log`);
+  try {
+    await writeFile(filePath, output);
+    return filePath;
+  } catch (err) {
+    logger.warn('exec.persist_failed', { error: err instanceof Error ? err.message : String(err) });
+    return undefined;
+  }
+}
 
 export interface ExecToolOptions {
   /**
@@ -153,9 +193,25 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
     ? 'Execute a command in the workspace. Use { argv: [...] } (preferred) or { command: "shell string" } for pipes/globs. Returns combined stdout/stderr. Times out after 120s by default; output capped at 256KB.'
     : 'Execute a command in the workspace via { argv: ["program", "arg1", ...] }. Shell-string mode is disabled in this configuration — use argv form. Returns combined stdout/stderr. Times out after 120s by default; output capped at 256KB.';
 
+  // Read-only classification for the executor's concurrency batching. Fail-closed:
+  // anything not provably read-only (background launch, unknown command, write
+  // redirect, unparseable shell) → false → runs sequentially. A read command
+  // mis-flagged loses only parallelism; never the inverse.
+  const classifyReadOnly = (raw: unknown): boolean => {
+    const p = raw as { argv?: unknown; command?: unknown; run_in_background?: unknown } | undefined;
+    if (!p || p.run_in_background === true) return false;
+    if (Array.isArray(p.argv) && p.argv.length > 0 && p.argv.every((a) => typeof a === 'string')) {
+      return isReadOnlyArgv(p.argv as string[]);
+    }
+    if (typeof p.command === 'string') return isReadOnlyShellCommand(p.command);
+    return false;
+  };
+
   return {
-    name: 'exec',
+    name: 'Bash',
     description,
+    isReadOnly: (input) => classifyReadOnly(input),
+    isConcurrencySafe: (input) => classifyReadOnly(input),
     parameters: {
       type: 'object',
       properties: {
@@ -171,12 +227,13 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
             : 'DISABLED in this exec configuration. Use argv instead.',
         },
         timeoutMs: { type: 'number', description: 'Override default timeout (1000-600000)' },
+        cwd: { type: 'string', description: 'Working directory for the command, relative to the workspace root (or to the host workdir when unsandboxed). Must stay inside that boundary — absolute paths or paths escaping it are rejected. Defaults to the root.' },
         run_in_background: { type: 'boolean', description: 'Run detached: returns a task id immediately; poll output with read_task_output, manage with check_tasks/cancel_task/watch_task.' },
       },
       required: [],
     },
     execute: async (_id, input, ctx): Promise<ToolResult> => {
-      const params = input as { argv?: unknown; command?: unknown; timeoutMs?: unknown; run_in_background?: unknown };
+      const params = input as { argv?: unknown; command?: unknown; timeoutMs?: unknown; cwd?: unknown; run_in_background?: unknown };
 
       // Resolve mode + child process arguments.
       let program: string;
@@ -202,7 +259,7 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
         // LLM-controlled agent may run.
         if (!allowList || allowList.size === 0) {
           return errorResult(
-            'exec is unconfigured: createExecTool() requires a non-empty allowList. ' +
+            'Bash is unconfigured: createExecTool() requires a non-empty allowList. ' +
             'Pass createExecTool({ allowList: [\'git\', \'npm\', ...] }) to enable specific commands.',
           );
         }
@@ -234,9 +291,45 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
         args = ['-lc', params.command];
         useShell = true;
         label = params.command;
+
+        // Per-subcommand allowList enforcement for shell-string mode. argv mode
+        // checks argv[0]; without this the whole string went to bash unchecked,
+        // so a restrictive allowList was silently bypassed by switching to shell
+        // mode. Parse the string and require every simple command's argv[0] to be
+        // allowlisted. Fail closed when the parser can't produce a clean argv.
+        // Skipped for the wildcard allowList (OS sandbox is the boundary then).
+        if (allowList && !allowAllCommands) {
+          const analysis = analyzeShellCommand(params.command);
+          if (analysis.kind !== 'simple') {
+            const detail = analysis.kind === 'too-complex' ? `: ${analysis.reason}` : '';
+            return errorResult(
+              `Shell command could not be verified against the allowList (${analysis.kind}${detail}). ` +
+              'Use { argv: ["program", "arg1", ...] } for commands the parser cannot analyze.',
+            );
+          }
+          const offending = [
+            ...new Set(
+              analysis.commands
+                .map((c) => c.argv[0])
+                .filter((p): p is string => p !== undefined && !allowList.has(p)),
+            ),
+          ];
+          if (offending.length > 0) {
+            return errorResult(
+              `Command(s) not in allowList: ${offending.join(', ')}. Allowed: ${[...allowList].join(', ')}`,
+            );
+          }
+        }
       } else {
         return errorResult('Either argv (preferred) or command must be provided');
       }
+
+      // argv[0] of the command that sets $? — picks exit-code semantics
+      // (e.g. grep exit 1 = "no matches", not failure). For shell mode it is the
+      // last simple command; falls back to empty when unparseable.
+      const baseCommand = useShell
+        ? lastBaseCommand(analyzeShellCommand(params.command as string)) ?? ''
+        : program;
 
       const timeoutMs = Math.min(
         Math.max(typeof params.timeoutMs === 'number' ? params.timeoutMs : defaultTimeout, 1_000),
@@ -255,7 +348,33 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
         else ctx.signal.addEventListener('abort', onParentAbort, { once: true });
       }
 
-      const workdir = ctx.workspace?.root ?? ctx.workdir;
+      // Working directory. Defaults to the workspace root (the jail). An explicit
+      // cwd selects a SUBDIRECTORY of it without widening the boundary: the
+      // workspace stays the security fence, cwd just moves where the command
+      // starts inside it. cwd is validated through workspace.resolve(), which
+      // rejects anything escaping root. Without a workspace, cwd is joined onto
+      // ctx.workdir and must not escape that either.
+      let workdir: string;
+      if (typeof params.cwd === 'string' && params.cwd.length > 0) {
+        if (ctx.workspace?.resolve) {
+          try {
+            const resolved = await ctx.workspace.resolve(params.cwd, { access: 'read' });
+            workdir = resolved.path;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return errorResult(`cwd "${params.cwd}" is not inside the workspace: ${msg}`);
+          }
+        } else {
+          const base = ctx.workspace?.root ?? ctx.workdir;
+          const resolved = path.resolve(base, params.cwd);
+          if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+            return errorResult(`cwd "${params.cwd}" escapes the working directory ${base}`);
+          }
+          workdir = resolved;
+        }
+      } else {
+        workdir = ctx.workspace?.root ?? ctx.workdir;
+      }
 
       if (params.run_in_background === true) {
         const registry = ctx.backgroundTasks;
@@ -317,6 +436,14 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
             timeoutMs,
             signal: controller.signal,
           });
+          // Spill over-cap output to a file in cwd so nothing past the inline
+          // cap is silently lost. Combine stdout+stderr the same way the inline
+          // formatter does.
+          const combined = Buffer.from(
+            result.stderr ? `${result.stdout}\n[stderr]\n${result.stderr}` : result.stdout,
+            'utf-8',
+          );
+          const persistedPath = await persistLargeOutput(combined, workdir, _id, ctx.logger);
           const formatted = formatExecResult({
             label,
             stdout: result.stdout,
@@ -326,6 +453,9 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
             timedOut: result.timedOut,
             aborted: result.aborted || (parentAbortRequested && !result.timedOut && result.exitCode === null),
             timeoutMs,
+            baseCommand,
+            persistedPath,
+            persistedBytes: persistedPath ? combined.length : undefined,
           });
           ctx.logger.info(`exec ${formatted.status}`, {
             program,
@@ -362,10 +492,14 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
         let truncated = false;
         let timedOut = false;
 
+        // Collect up to the persist ceiling (not the inline cap) so output over
+        // 256KB can be spilled to a file in cwd rather than lost. The inline
+        // formatter caps display separately; `truncated` here means we hit the
+        // 16MB ceiling and dropped beyond it.
         const onData = (chunk: Buffer): void => {
           if (truncated) return;
-          if (collected.length + chunk.length > MAX_OUTPUT_BYTES) {
-            collected = safeUtf8Prefix(Buffer.concat([collected, chunk]), MAX_OUTPUT_BYTES);
+          if (collected.length + chunk.length > MAX_PERSIST_BYTES) {
+            collected = safeUtf8Prefix(Buffer.concat([collected, chunk]), MAX_PERSIST_BYTES);
             truncated = true;
           } else {
             collected = Buffer.concat([collected, chunk]);
@@ -410,23 +544,29 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
           cleanup();
           const abortedByParent = parentAbortRequested && !timedOut;
 
-          const formatted = formatExecResult({
-            label,
-            output: collected,
-            exitCode: code,
-            signal,
-            timedOut,
-            aborted: abortedByParent,
-            timeoutMs,
-            outputTruncated: truncated,
-          });
-          ctx.logger.info(`exec ${formatted.status}`, {
-            program,
-            useShell,
-            bytes: formatted.bytes,
-          });
+          void (async () => {
+            const persistedPath = await persistLargeOutput(collected, workdir, _id, ctx.logger);
+            const formatted = formatExecResult({
+              label,
+              output: collected,
+              exitCode: code,
+              signal,
+              timedOut,
+              aborted: abortedByParent,
+              timeoutMs,
+              outputTruncated: truncated,
+              baseCommand,
+              persistedPath,
+              persistedBytes: persistedPath ? collected.length : undefined,
+            });
+            ctx.logger.info(`exec ${formatted.status}`, {
+              program,
+              useShell,
+              bytes: formatted.bytes,
+            });
 
-          resolve(textResult(formatted.text));
+            resolve(textResult(formatted.text));
+          })();
         });
       });
     },
@@ -450,6 +590,12 @@ interface ExecFormatInput {
   aborted?: boolean;
   timeoutMs: number;
   outputTruncated?: boolean;
+  /** argv[0] of the command that set $?, for exit-code semantics. */
+  baseCommand?: string;
+  /** Path the full (over-cap) output was spilled to in the workspace cwd. */
+  persistedPath?: string;
+  /** Total byte size of the full output, when persisted. */
+  persistedBytes?: number;
 }
 
 function formatExecResult(input: ExecFormatInput): { text: string; status: string; bytes: number } {
@@ -458,12 +604,28 @@ function formatExecResult(input: ExecFormatInput): { text: string; status: strin
     : capOutputParts(input.stdout, input.stderr);
   let text = capped.text || '(no output)';
   const truncated = capped.truncated || input.outputTruncated;
-  if (truncated) text += `\n\n[Output truncated at ${MAX_OUTPUT_BYTES} bytes]`;
+  // When the full output was spilled to a file, point the model there instead
+  // of a bare truncation note — the complete output is re-readable via `read`.
+  if (input.persistedPath) {
+    text += `\n\n[full output (${input.persistedBytes ?? 0} bytes) written to ${input.persistedPath} — read this file for the complete output]`;
+  } else if (truncated) {
+    text += `\n\n[Output truncated at ${MAX_OUTPUT_BYTES} bytes]`;
+  }
   if (input.timedOut) text += `\n\n[Killed: timeout after ${input.timeoutMs}ms]`;
   else if (input.aborted) text += '\n\n[Aborted by caller]';
   else if (input.signal) text += `\n\n[Killed by signal: ${input.signal}]`;
 
-  const ok = input.exitCode === 0 && !input.timedOut && !input.aborted && !input.signal;
+  const cleanExit = !input.timedOut && !input.aborted && !input.signal;
+  // Exit-code semantics: some commands convey information via a non-zero exit
+  // (grep 1 = no matches, diff 1 = files differ) rather than failure.
+  const interp = input.baseCommand !== undefined && input.exitCode !== null && cleanExit
+    ? interpretExitCode(input.baseCommand, input.exitCode)
+    : undefined;
+  // Surface only informational (non-error) semantics — e.g. "No matches found"
+  // for grep exit 1. Error messages would just duplicate the [exit N] prefix.
+  if (interp && !interp.isError && interp.message) text += `\n\n[${interp.message}]`;
+
+  const ok = cleanExit && (input.exitCode === 0 || (interp !== undefined && !interp.isError));
   const status = ok
     ? 'ok'
     : input.timedOut

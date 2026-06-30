@@ -27,8 +27,8 @@ const GREP_MAX_BUFFER = 16 * 1024 * 1024;
 const DEFAULT_HEAD_LIMIT = 250;
 const MAX_COLUMNS = 500;
 
-// Version-control metadata dirs — excluded so they don't drown real results.
-const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
+// Version-control metadata dirs are skipped for free: ripgrep ignores hidden
+// dirs (.git/.svn/…) by default since we no longer pass --hidden.
 
 type OutputMode = 'content' | 'files_with_matches' | 'count';
 
@@ -184,9 +184,12 @@ function buildRgArgs(
   glob: string | undefined,
   target: string,
 ): string[] {
-  const args = ['--hidden'];
-  for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) args.push('--glob', `!${dir}`);
-  args.push('--max-columns', String(MAX_COLUMNS));
+  // No `--hidden`: ripgrep then skips hidden dirs (incl. .git/.svn/…) by default,
+  // so we don't need `--glob '!.git'` excludes. That matters because the sandbox
+  // runs the engine through a shell and sandbox-runtime escapes a leading '!' to
+  // '\!', which ripgrep reads as a literal-'!' *include* glob (matching nothing) —
+  // turning every search into "No matches found." Avoiding '!' globs sidesteps it.
+  const args = ['--max-columns', String(MAX_COLUMNS)];
 
   if (params.multiline) args.push('-U', '--multiline-dotall');
   if (params['-i']) args.push('-i');

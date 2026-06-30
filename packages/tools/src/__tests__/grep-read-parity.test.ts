@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -92,6 +93,72 @@ describe('grep — output modes & pagination', () => {
     const r = await createGrepTool().execute('1', { pattern: 'TODO' }, makeContext(tmpDir));
     expect(r.type).toBe('text');
     if (r.type === 'text') expect(r.text).toMatch(/a\.ts:1:.*TODO/);
+  });
+});
+
+// Regression: under the sandbox (ctx.workspace.run), the runtime serializes the
+// engine argv through a shell, and sandbox-runtime escapes '!' to '\!'. A leading
+// '!' --glob is ripgrep's *exclusion* syntax, but '\!' reads as a literal-'!'
+// *include* glob that matches nothing — so every grep returned "No matches found".
+// The plain execFile path (above) has no shell, so it never caught this. This
+// context faithfully replays the '!' -> '\!' mangling against real ripgrep.
+function makeSandboxLikeContext(workdir: string): ToolContext {
+  return {
+    tenantId: 't',
+    workdir,
+    secrets: { get: async () => undefined },
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    workspace: {
+      resolve: async (rawPath: string) => ({ path: rawPath, root: workdir }),
+      run: async ({ argv, cwd, env, signal }) => {
+        // Replicate @anthropic-ai/sandbox-runtime's '!' escaping leak.
+        const mangled = argv.map(a => a.replace(/!/g, '\\!'));
+        return await new Promise(resolve => {
+          execFile(
+            mangled[0]!,
+            mangled.slice(1),
+            { cwd, env, signal, maxBuffer: 16 * 1024 * 1024 },
+            (err, stdout) => resolve({
+              stdout: stdout ?? '',
+              stderr: '',
+              exitCode: err ? (err.code ?? 1) : 0,
+              signal: err?.signal ?? null,
+              timedOut: false,
+              aborted: false,
+            }),
+          );
+        });
+      },
+    } as unknown as ToolContext['workspace'],
+  };
+}
+
+describe('grep — sandbox/shell-wrapped run (! glob escaping)', () => {
+  beforeEach(() => {
+    fs.writeFileSync(path.join(tmpDir, 'MessageService.java'),
+      'package x;\npublic class MessageService {\n  public void send() {}\n}\n');
+  });
+
+  it('finds matches even when the sandbox escapes "!" in VCS-exclude globs', async () => {
+    const r = await createGrepTool().execute('1',
+      { pattern: 'public.*Service', output_mode: 'content' },
+      makeSandboxLikeContext(tmpDir));
+    expect(r.type).toBe('text');
+    if (r.type === 'text') {
+      expect(r.text).not.toBe('No matches found.');
+      expect(r.text).toMatch(/MessageService\.java:2:.*public class MessageService/);
+    }
+  });
+
+  it('searches a subdirectory path under the sandbox', async () => {
+    const sub = path.join(tmpDir, 'src', 'main', 'java');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'ChatService.java'), 'public interface ChatService {}\n');
+    const r = await createGrepTool().execute('1',
+      { pattern: 'public.*Service', output_mode: 'files_with_matches', path: 'src/main/java' },
+      makeSandboxLikeContext(tmpDir));
+    expect(r.type).toBe('text');
+    if (r.type === 'text') expect(r.text).toContain('ChatService.java');
   });
 });
 

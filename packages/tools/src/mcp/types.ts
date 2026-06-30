@@ -9,12 +9,21 @@ export interface McpToolDescriptor {
   name: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
 }
 
 export interface McpCallResult {
   /** 결과 컨텐츠 (text 위주) */
   content: { type: 'text'; text: string }[] | { type: string; [k: string]: unknown }[];
   isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+  toolResult?: unknown;
 }
 
 /**

@@ -11,11 +11,13 @@ function makeMockClient(): McpClientLike {
           name: 'add',
           description: 'Add two numbers',
           inputSchema: { type: 'object', properties: { a: { type: 'number' }, b: { type: 'number' } } },
+          annotations: { readOnlyHint: true },
         },
         {
           name: 'echo',
           description: 'Echo input',
           inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
+          annotations: { destructiveHint: true },
         },
       ],
     }),
@@ -66,6 +68,17 @@ describe('mcpClientToTools', () => {
     };
     const result = await addTool.execute('1', { a: 2, b: 3 }, ctx);
     if (result.type === 'text') expect(result.text).toBe('5');
+  });
+
+  it('maps MCP annotations to ToolDefinition flags', async () => {
+    const tools = await mcpClientToTools(makeMockClient(), { maxResultSizeChars: 1234 });
+    const add = tools.find(t => t.name === 'add')!;
+    const echo = tools.find(t => t.name === 'echo')!;
+
+    expect(add.isReadOnly).toBe(true);
+    expect(add.isConcurrencySafe).toBe(true);
+    expect(add.maxResultSizeChars).toBe(1234);
+    expect(echo.isDestructive).toBe(true);
   });
 });
 

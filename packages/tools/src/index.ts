@@ -35,4 +35,16 @@ export type {
 export * from './builtin/index.js';
 export * from './handraise/index.js';
 export * from './reporter/index.js';
-export * from './mcp/index.js';
+export {
+  mcpClientToTools,
+  createStdioMcpBridgeTools,
+  createMcpServerBridge,
+} from './mcp/index.js';
+export type {
+  McpClientLike,
+  McpToolDescriptor,
+  McpCallResult,
+  McpClientBridgeOptions,
+  StdioMcpBridgeOptions,
+  McpServerBridge,
+} from './mcp/index.js';

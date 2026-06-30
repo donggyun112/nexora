@@ -14,5 +14,8 @@ export type {
 export { mcpClientToTools } from './client.js';
 export type { McpClientBridgeOptions } from './client.js';
 
+export { createStdioMcpBridgeTools } from './stdio.js';
+export type { StdioMcpBridgeOptions } from './stdio.js';
+
 export { createMcpServerBridge } from './server.js';
 export type { McpServerBridge } from './server.js';

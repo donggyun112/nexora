@@ -20,6 +20,10 @@ export interface McpClientBridgeOptions {
   allowed?: string[];
   /** 차단할 도구 */
   blocked?: string[];
+  /** MCP annotations(readOnlyHint/destructiveHint 등)를 ToolDefinition flags 로 옮김. 기본 true. */
+  mapAnnotations?: boolean;
+  /** 생성된 MCP 도구 결과 최대 길이. */
+  maxResultSizeChars?: number;
 }
 
 /**
@@ -41,10 +45,11 @@ export async function mcpClientToTools(
     if (blocked && blocked.has(desc.name)) continue;
 
     const toolName = `${prefix}${desc.name}`;
-    tools.push({
+    const tool: ToolDefinition = {
       name: toolName,
       description: desc.description ?? `MCP tool: ${desc.name}`,
       parameters: desc.inputSchema,
+      ...(options.maxResultSizeChars ? { maxResultSizeChars: options.maxResultSizeChars } : {}),
       execute: async (_id, input): Promise<ToolResult> => {
         try {
           const result = await client.callTool({
@@ -57,19 +62,39 @@ export async function mcpClientToTools(
           return errorResult(`MCP tool ${desc.name} failed: ${msg}`);
         }
       },
-    });
+    };
+
+    if (options.mapAnnotations !== false) {
+      if (desc.annotations?.readOnlyHint === true) {
+        tool.isReadOnly = true;
+        tool.isConcurrencySafe = true;
+      }
+      if (desc.annotations?.destructiveHint === true) {
+        tool.isDestructive = true;
+      }
+    }
+
+    tools.push(tool);
   }
 
   return tools;
 }
 
-function mcpResultToToolResult(result: { content: unknown[]; isError?: boolean }): ToolResult {
+function mcpResultToToolResult(result: {
+  content: unknown[];
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+  toolResult?: unknown;
+}): ToolResult {
   if (result.isError) {
     const text = extractText(result.content);
     return errorResult(text || 'MCP tool returned error');
   }
   const text = extractText(result.content);
-  return textResult(text);
+  if (text) return textResult(text);
+  if (result.structuredContent) return textResult(JSON.stringify(result.structuredContent, null, 2));
+  if (result.toolResult !== undefined) return textResult(JSON.stringify(result.toolResult, null, 2));
+  return textResult('');
 }
 
 function extractText(content: unknown[]): string {

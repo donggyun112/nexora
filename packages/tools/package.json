@@ -1,6 +1,6 @@
 {
   "name": "@dongkseo/tools",
-  "version": "0.2.16",
+  "version": "0.2.18",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,9 +16,11 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@dongkseo/contracts": "workspace:^",
-    "@dongkseo/skills": "workspace:^",
-    "@dongkseo/store": "workspace:^"
+    "@dongkseo/contracts": "^0.1.22",
+    "@dongkseo/skills": "^0.1.3",
+    "@dongkseo/store": "^0.1.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

@@ -15,6 +15,12 @@ export class TranscriptRecorder {
   private pendingToolUses: ContentBlock[] = [];
   private pendingToolResults: ContentBlock[] = [];
   private mode: 'idle' | 'collecting-results' = 'idle';
+  // How many tool_results the current round expects (= tool_use count of the
+  // just-flushed assistant message) and how many have arrived. Once they match,
+  // the grouped tool_result entry is written immediately rather than lagging to
+  // the next step — so an interrupt after a round still keeps that round durable.
+  private expectedResults = 0;
+  private collectedResults = 0;
 
   constructor(
     private readonly store: TranscriptStore,
@@ -80,6 +86,9 @@ export class TranscriptRecorder {
 
       case 'tool_result': {
         if (this.mode !== 'collecting-results') {
+          // Capture the round size before flushPendingAssistant clears pendingToolUses.
+          this.expectedResults = this.pendingToolUses.length;
+          this.collectedResults = 0;
           await this.flushPendingAssistant();
           this.mode = 'collecting-results';
         }
@@ -95,6 +104,13 @@ export class TranscriptRecorder {
         for (const img of imageBlocksFromResult(event.result)) {
           const block = await this.imageBlock({ type: 'image', data: img.data, mimeType: img.mimeType });
           if (block) this.pendingToolResults.push(block);
+        }
+        this.collectedResults += 1;
+        // Round complete (every dispatched tool_use answered) → persist the
+        // grouped tool_result entry now. Keeps parallel results in one entry
+        // (replay-valid) while removing the wait-for-next-step durability gap.
+        if (this.expectedResults > 0 && this.collectedResults >= this.expectedResults) {
+          await this.flushPendingToolResults();
         }
         break;
       }

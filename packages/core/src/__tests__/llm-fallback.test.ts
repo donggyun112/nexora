@@ -327,4 +327,28 @@ describe('FallbackLLMProvider', () => {
     expect(chunks.join('')).toBe('streamed');
     expect(primary.callLog[0].options?.model).toBe('primary-model');
   });
+
+  it('pins the secondary model when stream() falls back', async () => {
+    const primary = new MockLLMProvider([{ text: '', throwError: 'boom' }]);
+    const secondary = new MockLLMProvider([{ text: 'secondary streamed' }]);
+
+    const fallback = new FallbackLLMProvider({
+      providers: [
+        { name: 'primary', provider: primary, model: 'primary-model' },
+        { name: 'secondary', provider: secondary, model: 'secondary-model' },
+      ],
+    });
+
+    const chunks: string[] = [];
+    for await (const c of fallback.stream(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'caller-model' },
+    )) {
+      if (c.type === 'text_delta') chunks.push(c.delta);
+    }
+
+    expect(chunks.join('')).toBe('secondary streamed');
+    expect(primary.callLog[0].options?.model).toBe('primary-model');
+    expect(secondary.callLog[0].options?.model).toBe('secondary-model');
+  });
 });

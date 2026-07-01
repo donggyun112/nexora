@@ -237,6 +237,7 @@ export class FallbackLLMProvider implements LLMProvider {
 
       const entry = this.entries[i];
       const isLast = i === this.entries.length - 1;
+      // entry.model 설정 시 이 entry 호출의 model을 고정(caller options.model 무시).
       const entryOptions = entry.model ? { ...options, model: entry.model } : options;
 
       try {

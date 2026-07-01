@@ -275,4 +275,56 @@ describe('FallbackLLMProvider', () => {
     ).rejects.toThrow(/terminated/);
     expect(primary.callLog).toHaveLength(3); // initial + 2 bounded retries
   });
+
+  it('pins each entry to its own model, overriding the caller-supplied model', async () => {
+    const primary = new MockLLMProvider([{ text: '', throwError: 'boom' }]);
+    const secondary = new MockLLMProvider([{ text: 'ok' }]);
+
+    const fallback = new FallbackLLMProvider({
+      providers: [
+        { name: 'primary', provider: primary, model: 'primary-model' },
+        { name: 'secondary', provider: secondary, model: 'secondary-model' },
+      ],
+    });
+
+    const result = await fallback.complete(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'caller-model' },
+    );
+
+    expect(result.content).toBe('ok');
+    expect(primary.callLog[0].options?.model).toBe('primary-model');
+    expect(secondary.callLog[0].options?.model).toBe('secondary-model');
+  });
+
+  it('passes caller options through unchanged when entry has no model', async () => {
+    const primary = new MockLLMProvider([{ text: 'ok' }]);
+
+    const fallback = new FallbackLLMProvider({
+      providers: [{ name: 'primary', provider: primary }],
+    });
+
+    await fallback.complete([{ role: 'user', content: 'hi' }], { model: 'caller-model' });
+
+    expect(primary.callLog[0].options?.model).toBe('caller-model');
+  });
+
+  it('pins the entry model in stream() too', async () => {
+    const primary = new MockLLMProvider([{ text: 'streamed' }]);
+
+    const fallback = new FallbackLLMProvider({
+      providers: [{ name: 'primary', provider: primary, model: 'primary-model' }],
+    });
+
+    const chunks: string[] = [];
+    for await (const c of fallback.stream(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'caller-model' },
+    )) {
+      if (c.type === 'text_delta') chunks.push(c.delta);
+    }
+
+    expect(chunks.join('')).toBe('streamed');
+    expect(primary.callLog[0].options?.model).toBe('primary-model');
+  });
 });

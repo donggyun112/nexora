@@ -24,6 +24,13 @@ export interface FallbackProviderEntry {
   name: string;
   /** 실제 provider */
   provider: LLMProvider;
+  /**
+   * 설정 시, 이 entry로 가는 모든 호출의 options.model을 이 값으로 고정한다
+   * (caller가 넘긴 options.model 무시). fallback이 다른 provider로 넘어가도
+   * 각 provider가 자기 모델로 호출되도록 보장한다.
+   * 미설정 시 caller의 options를 그대로 통과(하위호환).
+   */
+  model?: string;
 }
 
 /**
@@ -135,13 +142,15 @@ export class FallbackLLMProvider implements LLMProvider {
 
       const entry = this.entries[i];
       const isLast = i === this.entries.length - 1;
+      // entry.model 설정 시 이 entry 호출의 model을 고정(caller options.model 무시).
+      const entryOptions = entry.model ? { ...options, model: entry.model } : options;
 
       // Hoisted so the catch block can tell whether ANY chunk already reached the
       // caller this attempt: a transient error after the first yield is NOT safe
       // to retry (it would duplicate already-emitted output).
       let receivedAny = false;
       try {
-        for await (const chunk of entry.provider.stream(messages, options)) {
+        for await (const chunk of entry.provider.stream(messages, entryOptions)) {
           receivedAny = true;
           yield chunk;
         }
@@ -228,9 +237,10 @@ export class FallbackLLMProvider implements LLMProvider {
 
       const entry = this.entries[i];
       const isLast = i === this.entries.length - 1;
+      const entryOptions = entry.model ? { ...options, model: entry.model } : options;
 
       try {
-        const response = await entry.provider.complete(messages, options);
+        const response = await entry.provider.complete(messages, entryOptions);
 
         if (options?.signal?.aborted) {
           throw new AbortedBeforeCallError();

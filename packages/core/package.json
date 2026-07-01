@@ -1,6 +1,6 @@
 {
   "name": "@dongkseo/core",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,7 +18,7 @@
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.61",
     "@dongkseo/contracts": "workspace:^",
-    "@earendil-works/pi-ai": "^0.80.2",
+    "@earendil-works/pi-ai": "^0.80.3",
     "ajv": "^8.20.0"
   },
   "devDependencies": {

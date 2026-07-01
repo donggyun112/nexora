@@ -26,6 +26,7 @@ import {
   safeWorkspaceSegment,
   workspaceRootMount,
 } from './workspace-path.js';
+import { materializeSeedDirs } from './workspace-seed.js';
 
 export interface HostWorkspaceProviderOptions {
   root?: string;
@@ -58,6 +59,7 @@ export class HostWorkspaceProvider implements WorkspaceProvider {
     const root = this.perRun
       ? await this.createRunRoot(id)
       : await this.resolveExistingRoot(options.baseWorkdir);
+    await materializeSeedDirs(root, options.seedDirs);
 
     return new HostWorkspaceSession({
       id,

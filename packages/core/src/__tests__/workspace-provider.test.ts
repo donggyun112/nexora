@@ -61,4 +61,26 @@ describe('HostWorkspaceProvider', () => {
 
     await expect(provider.acquire()).rejects.toThrow(/requires root, baseWorkdir, or perRun/);
   });
+
+  it('materializes seedDirs into the acquired root', async () => {
+    const seedSource = await fsp.mkdtemp(path.join(os.tmpdir(), 'seed-src-'));
+    try {
+      await fsp.writeFile(path.join(seedSource, 'SKILL.md'), '# seeded');
+
+      const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'host-ws-'));
+      try {
+        const provider = new HostWorkspaceProvider({ baseDir, perRun: true });
+        const session = await provider.acquire({
+          seedDirs: [{ source: seedSource, destSubpath: '.skill_refs' }],
+        });
+
+        const seeded = await fsp.readFile(path.join(session.root, '.skill_refs', 'SKILL.md'), 'utf-8');
+        expect(seeded).toBe('# seeded');
+      } finally {
+        await fsp.rm(baseDir, { recursive: true, force: true });
+      }
+    } finally {
+      await fsp.rm(seedSource, { recursive: true, force: true });
+    }
+  });
 });

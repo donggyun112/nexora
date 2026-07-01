@@ -62,4 +62,28 @@ describe('materializeSeedDirs', () => {
     const content = await fsp.readFile(path.join(root, 'out', 'a.txt'), 'utf-8');
     expect(content).toBe('v2');
   });
+
+  it('swallows fs errors during copy (unreadable source file) and resolves gracefully', async () => {
+    const source = await makeTempDir('seed-src-');
+    await fsp.mkdir(path.join(source, 'subdir'), { recursive: true });
+    await fsp.writeFile(path.join(source, 'readable.txt'), 'ok');
+    await fsp.writeFile(path.join(source, 'subdir', 'blocked.txt'), 'blocked');
+
+    const root = await makeTempDir('seed-root-');
+
+    // First, make the blocked file unreadable (triggers copy error on second attempt)
+    await fsp.chmod(path.join(source, 'subdir', 'blocked.txt'), 0o000);
+
+    try {
+      // Attempt to copy with an unreadable file in the source.
+      // The copy operation will fail partway through.
+      // This must resolve without throwing (best-effort guarantee).
+      await expect(
+        materializeSeedDirs(root, [{ source, destSubpath: 'out' }]),
+      ).resolves.toBeUndefined();
+    } finally {
+      // Restore permissions for cleanup
+      await fsp.chmod(path.join(source, 'subdir', 'blocked.txt'), 0o644);
+    }
+  });
 });

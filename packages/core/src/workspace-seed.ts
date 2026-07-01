@@ -33,19 +33,24 @@ async function materializeSeedDir(root: string, entry: WorkspaceSeedEntry): Prom
   if (!(await isDirectory(source))) return;
 
   const dest = path.join(root, entry.destSubpath);
-  await fsp.rm(dest, { recursive: true, force: true });
-  await fsp.mkdir(path.dirname(dest), { recursive: true });
-  await fsp.cp(source, dest, {
-    recursive: true,
-    force: true,
-    filter: async (src: string) => {
-      try {
-        return !(await fsp.lstat(src)).isSymbolicLink();
-      } catch {
-        return false;
-      }
-    },
-  });
+  try {
+    await fsp.rm(dest, { recursive: true, force: true });
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    await fsp.cp(source, dest, {
+      recursive: true,
+      force: true,
+      filter: async (src: string) => {
+        try {
+          return !(await fsp.lstat(src)).isSymbolicLink();
+        } catch {
+          return false;
+        }
+      },
+    });
+  } catch {
+    // Silently swallow copy errors (best-effort guarantee).
+    // Any fs error during rm/mkdir/cp is non-fatal — the workspace should still function.
+  }
 }
 
 async function isDirectory(target: string): Promise<boolean> {

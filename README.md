@@ -11,7 +11,12 @@
   <a href="docs/getting-started.md"><strong>Getting Started</strong></a> ·
   <a href="examples/helpdesk/"><strong>Reference App</strong></a> ·
   <a href="examples/personal-assistant/"><strong>OpenClaw-style Demo</strong></a> ·
+  <a href="docs/architecture/packages-map.md"><strong>Package Map</strong></a> ·
   <a href="docs/architecture/"><strong>Architecture</strong></a>
+</p>
+
+<p align="center">
+  <sub>🤖 Coding agent? Start at <a href="AGENTS.md"><strong>AGENTS.md</strong></a> → <a href="docs/architecture/packages-map.md">packages-map.md</a> for capability → package routing.</sub>
 </p>
 
 > **v0.1** — The core works and is tested (344 tests). APIs may still change before 1.0. Feedback welcome.
@@ -97,6 +102,8 @@ Adapter (HTTP / Discord / Slack)
 
 <details>
 <summary>20 packages (click to expand)</summary>
+
+> Which package for a given task? See the [**package map**](docs/architecture/packages-map.md) — a capability → package routing table with dependency direction and request flow.
 
 | Package | Purpose |
 |---|---|

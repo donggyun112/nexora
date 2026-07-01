@@ -57,6 +57,17 @@ export interface SandboxProviderOptions {
   cleanup?: 'keep' | 'delete';
   /** 영속 스냅샷 백엔드. 기본 inline-root(NoopSnapshotBackend). */
   snapshotBackend?: SnapshotBackend;
+  /** 워크스페이스 root 외에 쓰기 허용할 경로(mode:'workspace-write'에서 root와 합쳐진다). */
+  allowWrite?: string[];
+  /**
+   * macOS: seatbelt가 `com.apple.trustd.agent` mach-lookup을 허용하게 한다. Go로 빌드된
+   * CLI(glab 등)는 macOS 플랫폼 검증기(Security.framework→trustd)로 TLS 인증서를 검증하므로,
+   * 이게 없으면 정상 인증서조차 `x509: OSStatus -26276`으로 검증 실패한다(git/curl은
+   * SSL_CERT_FILE/OpenSSL 경로라 무관). 트레이드오프: trustd가 OCSP/CRL/AIA 취소검사 fetch를
+   * 도메인 allowlist 밖으로 낼 수 있다 — 단 프로세스 자체의 egress allowlist(프록시)는 유지된다.
+   * 기본 off(미설정) → 기존 소비자 무영향.
+   */
+  enableWeakerNetworkIsolation?: boolean;
 }
 
 /** 개방-but-비밀안전 정책 + 대화-단위 영속으로 구성한 WorkspaceProvider. */
@@ -70,6 +81,8 @@ export function createSandboxProvider(options: SandboxProviderOptions = {}): Asr
     allowedDomains: options.allowedDomains ?? [],
     denyRead: [...SANDBOX_SECRET_DENYLIST, ...(options.denyRead ?? [])],
     allowRead: options.allowRead ?? [],
+    allowWrite: options.allowWrite ?? [],
+    enableWeakerNetworkIsolation: options.enableWeakerNetworkIsolation,
     snapshotBackend: options.snapshotBackend,
   });
 }

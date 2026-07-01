@@ -1,6 +1,6 @@
 # @dongkseo/skills
 
-**Stability: stable** · `pnpm add @dongkseo/skills`
+**Stability: experimental** · `pnpm add @dongkseo/skills`
 
 > 이 파일은 에이전트(사람·LLM)가 **소스를 열지 않고도** 이 패키지를 쓸 수 있게 하는 오리엔테이션 문서다.
 > 정확한 API 타입은 "API 표면" 섹션의 방법으로 `signatures`만 읽어라 — 본문을 베끼지 말 것.
@@ -37,6 +37,7 @@
 import { loadSkills, defaultSkillSources, SkillRegistry } from '@dongkseo/skills';
 
 const skills = await loadSkills(...defaultSkillSources(process.cwd()));
+// defaultSkillSources: global user → project override 순서
 
 const registry = new SkillRegistry();
 registry.registerAll(skills);
@@ -101,7 +102,7 @@ ctx_read(path="packages/skills/src/index.ts",          mode="map")   # 전체 ex
 ## Tests
 
 ```bash
-cd pkgs/skills && pnpm test
+cd packages/skills && pnpm test
 ```
 
 Part of the [Nexora](../../README.md) multi-tenant agent framework. · [Package map](../../docs/architecture/packages-map.md)

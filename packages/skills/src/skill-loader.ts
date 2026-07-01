@@ -43,7 +43,7 @@ export function parseSkillFile(content: string, source: string): Skill {
 /**
  * Minimal YAML frontmatter parser — handles the key-value + array format
  * used by SKILL.md files. Supports inline arrays [a, b, c], YAML-style
- * list arrays (- item), nested keys via dot notation, and basic types.
+ * list arrays (- item), nested metadata via dot notation, and basic types.
  * No external YAML dependency needed.
  */
 function parseYamlFrontmatter(raw: string, source: string): SkillFrontmatter {
@@ -55,13 +55,13 @@ function parseYamlFrontmatter(raw: string, source: string): SkillFrontmatter {
     // YAML-style list item (continuation of previous key)
     const listMatch = line.match(/^(\s+)-\s+(.+)$/);
     if (listMatch && currentArrayKey) {
-      const arr = obj[currentArrayKey] as unknown[];
-      arr.push(listMatch[2].trim().replace(/^["']|["']$/g, ''));
+      const arr = getFrontmatterArray(obj, currentArrayKey);
+      if (arr) arr.push(stripYamlQuotes(listMatch[2].trim()));
       continue;
     }
 
     // Key-value pair
-    const match = line.match(/^([\w-]+):\s*(.*)$/);
+    const match = line.match(/^([\w.-]+):\s*(.*)$/);
     if (!match) {
       currentArrayKey = null;
       continue;
@@ -72,31 +72,20 @@ function parseYamlFrontmatter(raw: string, source: string): SkillFrontmatter {
     if (value === '') {
       // Key with no value — next lines might be array items
       currentArrayKey = key;
-      obj[key] = [];
+      setFrontmatterValue(obj, key, []);
       continue;
     }
 
     currentArrayKey = null;
 
-    // Inline array: [tag1, tag2, tag3]
-    if (value.startsWith('[') && value.endsWith(']')) {
-      obj[key] = value.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, ''));
-    } else if (value === 'true') {
-      obj[key] = true;
-    } else if (value === 'false') {
-      obj[key] = false;
-    } else if (/^\d+$/.test(value)) {
-      obj[key] = parseInt(value, 10);
-    } else if (/^\d+\.\d+$/.test(value)) {
-      obj[key] = parseFloat(value);
-    } else {
-      obj[key] = value.replace(/^["']|["']$/g, '');
-    }
+    setFrontmatterValue(obj, key, parseYamlValue(value));
   }
 
   if (!obj.name || typeof obj.name !== 'string') {
     throw new Error(`SKILL.md missing required field "name": ${source}`);
   }
+
+  const metadata = isRecord(obj.metadata) ? obj.metadata : undefined;
 
   return {
     name: obj.name as string,
@@ -108,12 +97,72 @@ function parseYamlFrontmatter(raw: string, source: string): SkillFrontmatter {
     allowedTools: Array.isArray(obj['allowed-tools']) ? obj['allowed-tools'] as string[] : undefined,
     platforms: Array.isArray(obj.platforms) ? obj.platforms as string[] : undefined,
     prerequisites: Array.isArray(obj.prerequisites) ? obj.prerequisites as string[] : undefined,
+    metadata,
     requires_toolsets: Array.isArray(obj['requires-toolsets'] ?? obj.requires_toolsets) ? (obj['requires-toolsets'] ?? obj.requires_toolsets) as string[] : undefined,
     fallback_for_toolsets: Array.isArray(obj['fallback-for-toolsets'] ?? obj.fallback_for_toolsets) ? (obj['fallback-for-toolsets'] ?? obj.fallback_for_toolsets) as string[] : undefined,
     requires_env: Array.isArray(obj['requires-env'] ?? obj.requires_env) ? (obj['requires-env'] ?? obj.requires_env) as string[] : undefined,
     requires_bins: Array.isArray(obj['requires-bins'] ?? obj.requires_bins) ? (obj['requires-bins'] ?? obj.requires_bins) as string[] : undefined,
     always: obj.always === true ? true : undefined,
   };
+}
+
+function parseYamlValue(value: string): unknown {
+  if (value.startsWith('[') && value.endsWith(']')) {
+    const inner = value.slice(1, -1).trim();
+    if (!inner) return [];
+    return inner.split(',').map(s => stripYamlQuotes(s.trim()));
+  }
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (/^\d+$/.test(value)) return parseInt(value, 10);
+  if (/^\d+\.\d+$/.test(value)) return parseFloat(value);
+  return stripYamlQuotes(value);
+}
+
+function stripYamlQuotes(value: string): string {
+  return value.replace(/^["']|["']$/g, '');
+}
+
+function setFrontmatterValue(obj: Record<string, unknown>, key: string, value: unknown): void {
+  if (!key.includes('.')) {
+    obj[key] = value;
+    return;
+  }
+
+  const parts = key.split('.').filter(Boolean);
+  if (parts.length === 0) return;
+
+  let target: Record<string, unknown> = obj;
+  for (const part of parts.slice(0, -1)) {
+    const current = target[part];
+    if (!isRecord(current)) {
+      const next: Record<string, unknown> = {};
+      target[part] = next;
+      target = next;
+    } else {
+      target = current;
+    }
+  }
+  target[parts[parts.length - 1]] = value;
+}
+
+function getFrontmatterArray(obj: Record<string, unknown>, key: string): unknown[] | null {
+  const value = getFrontmatterValue(obj, key);
+  return Array.isArray(value) ? value : null;
+}
+
+function getFrontmatterValue(obj: Record<string, unknown>, key: string): unknown {
+  if (!key.includes('.')) return obj[key];
+  let current: unknown = obj;
+  for (const part of key.split('.').filter(Boolean)) {
+    if (!isRecord(current)) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -180,10 +229,10 @@ async function walkDir(dir: string): Promise<Skill[]> {
 export function defaultSkillSources(projectRoot: string): string[] {
   const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
   return [
-    path.join(home, '.nexora', 'skills'),        // global user skills
+    home ? path.join(home, '.nexora', 'skills') : null, // global user skills
     path.join(projectRoot, '.nexora', 'skills'),  // project-level skills
     path.join(projectRoot, 'skills'),             // project skills dir
-  ].filter(Boolean);
+  ].filter((dir): dir is string => Boolean(dir));
 }
 
 /**

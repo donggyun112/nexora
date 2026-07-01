@@ -45,7 +45,7 @@ export interface SkillFrontmatter {
   platforms?: string[];
   /** Prerequisites (other skills or capabilities needed) */
   prerequisites?: string[];
-  /** Arbitrary metadata (nested objects supported) */
+  /** Arbitrary metadata. Nested objects use dot notation, e.g. metadata.owner: platform. */
   metadata?: Record<string, unknown>;
 
   // ─── Conditional activation (hermes pattern) ─────────────────────

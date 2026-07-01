@@ -15,7 +15,7 @@
 | 워크플로 체인(checkpoint/resume)·cron | `@dongkseo/orchestrator` | `WorkflowEngine`, `CronScheduler` | `ctx_read("packages/orchestrator/src/index.ts", mode="map")` |
 | 외부 워커 플릿·capability 라우팅 | `@dongkseo/fleet` | 워커 registry·dispatch·HTTP invoker | `ctx_read("packages/fleet/src/index.ts", mode="map")` |
 | 도구 레지스트리·내장 도구·MCP·delegate/handraise | `@dongkseo/tools` | `ToolRegistry`, `ToolsetRegistry`, delegate/handraise 도구 | `ctx_read("packages/tools/src/index.ts", mode="map")` |
-| 자가학습 스킬(SKILL.md) | `@dongkseo/skills` | `SkillLoader`, `SkillRegistry`, `SkillCreator` | `ctx_read("packages/skills/src/index.ts", mode="map")` |
+| 자가학습 스킬(SKILL.md) | `@dongkseo/skills` | `parseSkillFile`, `loadSkills`, `SkillRegistry`, `SkillCreator`, `buildSkillMenu` | `ctx_read("packages/skills/src/index.ts", mode="map")` |
 | 멀티에이전트 대화(턴테이킹) | `@dongkseo/conversation` | `ConversationRoom`, `TurnManager` | `ctx_read("packages/conversation/src/index.ts", mode="map")` |
 | 영속 store 번들(설정→백엔드) | `@dongkseo/store` | `createStoreProvider`, `StoreProvider`, `StoreConfig` | `ctx_read("packages/store/src/index.ts", mode="map")` |
 | 개발용 JSON 파일 백엔드 | `@dongkseo/store-json` | JSON store 구현 | `ctx_read("packages/store-json/src/index.ts", mode="map")` |

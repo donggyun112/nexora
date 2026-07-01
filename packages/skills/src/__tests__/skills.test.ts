@@ -6,6 +6,8 @@ import {
   parseSkillFile,
   loadSkillsFromDir,
   loadSkills,
+  defaultSkillSources,
+  buildSkillMenu,
   SkillRegistry,
   SkillCreator,
 } from '../index.js';
@@ -19,6 +21,19 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+function writeSkillDir(
+  root: string,
+  dirName: string,
+  frontmatter: string,
+  body = 'body',
+): string {
+  const skillDir = path.join(root, dirName);
+  fs.mkdirSync(skillDir, { recursive: true });
+  const filePath = path.join(skillDir, 'SKILL.md');
+  fs.writeFileSync(filePath, `---\n${frontmatter}\n---\n\n${body}`, 'utf-8');
+  return filePath;
+}
 
 describe('parseSkillFile', () => {
   it('parses a valid SKILL.md', () => {
@@ -76,6 +91,38 @@ body`;
     expect(skill.meta.allowedTools).toEqual(['read', 'grep', 'exec']);
     expect(skill.meta.platforms).toEqual(['macos', 'linux']);
   });
+
+  it('parses metadata dot notation and conditional activation fields', () => {
+    const content = `---
+name: conditional
+description: Has metadata
+tags: [test]
+metadata.owner: platform
+metadata.retry.count: 3
+metadata.flags: [safe, fast]
+requires-toolsets: [mcp]
+fallback-for-toolsets: [browser]
+requires-env: [HOME]
+requires-bins: [node]
+always: true
+version: 1
+author: system
+---
+
+body`;
+
+    const skill = parseSkillFile(content, '/test');
+    expect(skill.meta.metadata).toEqual({
+      owner: 'platform',
+      retry: { count: 3 },
+      flags: ['safe', 'fast'],
+    });
+    expect(skill.meta.requires_toolsets).toEqual(['mcp']);
+    expect(skill.meta.fallback_for_toolsets).toEqual(['browser']);
+    expect(skill.meta.requires_env).toEqual(['HOME']);
+    expect(skill.meta.requires_bins).toEqual(['node']);
+    expect(skill.meta.always).toBe(true);
+  });
 });
 
 describe('loadSkillsFromDir', () => {
@@ -121,7 +168,7 @@ body`, 'utf-8');
 
 describe('loadSkills (multi-source)', () => {
   it('later directories override earlier by name', async () => {
-    const dir1 = path.join(tmpDir, 'builtin');
+    const dir1 = path.join(tmpDir, 'base');
     const dir2 = path.join(tmpDir, 'custom');
     fs.mkdirSync(dir1);
     fs.mkdirSync(dir2);
@@ -147,6 +194,66 @@ v2 body`, 'utf-8');
     const skills = await loadSkills(dir1, dir2);
     expect(skills).toHaveLength(1);
     expect(skills[0].meta.description).toBe('v2');
+  });
+});
+
+describe('defaultSkillSources', () => {
+  it('returns user and project skill directories without hidden package sources', () => {
+    expect(defaultSkillSources(tmpDir)).toEqual([
+      path.join(os.homedir(), '.nexora', 'skills'),
+      path.join(tmpDir, '.nexora', 'skills'),
+      path.join(tmpDir, 'skills'),
+    ]);
+  });
+});
+
+describe('buildSkillMenu', () => {
+  it('applies loader eligibility rules for aliases, fallbacks, and binaries', () => {
+    const skillsDir = path.join(tmpDir, 'menu-skills');
+
+    writeSkillDir(skillsDir, 'mac', `name: macos-only
+description: macOS alias skill
+tags: [platform]
+platforms: [macos]
+version: 1
+author: system`);
+
+    writeSkillDir(skillsDir, 'fallback', `name: fallback-only
+description: fallback skill
+tags: [fallback]
+fallback-for-toolsets: [mcp]
+version: 1
+author: system`);
+
+    writeSkillDir(skillsDir, 'missing-bin', `name: missing-bin
+description: missing binary skill
+tags: [bin]
+requires-bins: [definitely-not-a-real-nexora-bin]
+version: 1
+author: system`);
+
+    const withMcp = buildSkillMenu({
+      agentSkillsDir: skillsDir,
+      filter: {
+        platform: 'darwin',
+        availableToolsets: new Set(['mcp']),
+      },
+      cacheScope: 'with-mcp',
+    });
+    expect(withMcp).toContain('macos-only');
+    expect(withMcp).not.toContain('fallback-only');
+    expect(withMcp).not.toContain('missing-bin');
+
+    const withoutMcp = buildSkillMenu({
+      agentSkillsDir: skillsDir,
+      filter: {
+        platform: 'darwin',
+        availableToolsets: new Set(),
+      },
+      cacheScope: 'without-mcp',
+    });
+    expect(withoutMcp).toContain('fallback-only');
+    expect(withoutMcp).not.toContain('missing-bin');
   });
 });
 

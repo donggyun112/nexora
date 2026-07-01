@@ -4,7 +4,7 @@
  * Hermes prompt_builder.build_skills_system_prompt 의 행동을 가져온 것:
  *   - 두 디렉토리(agent + shared) 의 SKILL.md / .md 를 sync 로 walk
  *   - parseSkillFile 로 frontmatter 표준 파싱
- *   - 호환성 필터 (availableTools / requires_toolsets / requires_env / platforms)
+ *   - 호환성 필터 (filterEligibleSkills 와 같은 규칙)
  *   - 카테고리(frontmatter tags 첫 항목 → 디렉토리 segment → 'general') 별 그룹핑
  *   - `<available_skills>` XML 블록 + 호출자가 주입한 안내문구로 직렬화
  *   - 디스크 mtime 기반 in-process LRU 캐시
@@ -19,7 +19,7 @@
 
 import { readdirSync, readFileSync, statSync, type Dirent, type Stats } from 'node:fs';
 import path from 'node:path';
-import { parseSkillFile } from './skill-loader.js';
+import { filterEligibleSkills, parseSkillFile, type SkillEligibilityContext } from './skill-loader.js';
 import type { Skill } from './types.js';
 
 /** 안내문구 옵션 — 정책 텍스트는 호출자 책임. */
@@ -196,28 +196,16 @@ function relativeSegment(rootDir: string, fullDir: string): string | null {
 }
 
 function isCompatible(skill: Skill, filter: SkillMenuFilter | undefined): boolean {
-  if (!filter) return true;
-  const meta = skill.meta;
-  if (meta.always) return true;
-  if (Array.isArray(meta.allowedTools) && meta.allowedTools.length > 0 && filter.availableTools) {
-    for (const t of meta.allowedTools) {
-      if (!filter.availableTools.has(t)) return false;
-    }
-  }
-  if (Array.isArray(meta.requires_toolsets) && filter.availableToolsets) {
-    for (const t of meta.requires_toolsets) {
-      if (!filter.availableToolsets.has(t)) return false;
-    }
-  }
-  if (Array.isArray(meta.requires_env) && filter.envVars) {
-    for (const e of meta.requires_env) {
-      if (!filter.envVars.has(e)) return false;
-    }
-  }
-  if (Array.isArray(meta.platforms) && filter.platform && meta.platforms.length > 0) {
-    if (!meta.platforms.includes(filter.platform)) return false;
-  }
-  return true;
+  return filterEligibleSkills([skill], toEligibilityContext(filter)).length === 1;
+}
+
+function toEligibilityContext(filter: SkillMenuFilter | undefined): SkillEligibilityContext {
+  return {
+    platform: filter?.platform,
+    availableTools: filter?.availableTools ? Array.from(filter.availableTools) : undefined,
+    availableToolsets: filter?.availableToolsets ? Array.from(filter.availableToolsets) : undefined,
+    envVars: filter?.envVars ? Array.from(filter.envVars) : undefined,
+  };
 }
 
 function pickCategory(found: DiscoveredSkill): string {

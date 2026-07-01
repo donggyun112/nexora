@@ -157,6 +157,54 @@ describe('AgentRunner', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards workspaceSeedDirs into workspaceProvider.acquire', async () => {
+    const acquireCalls: unknown[] = [];
+    const provider: WorkspaceProvider = {
+      acquire: vi.fn(async (options) => {
+        acquireCalls.push(options);
+        return {
+          id: 'ws-1',
+          root: '/isolated/workspace',
+          mode: 'workspace-write',
+          mounts: [],
+          resolve: async (target: string) => ({
+            path: `/isolated/workspace/${target}`,
+            root: '/isolated/workspace',
+            relativePath: target,
+            access: 'ro',
+          }),
+          cleanup: async () => {},
+        };
+      }),
+    };
+    const inspectTool: ToolDefinition = {
+      name: 'inspect_workspace',
+      description: 'Inspect workspace context',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => ({ type: 'text', text: 'ok' }),
+    };
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'tc-1', name: 'inspect_workspace', arguments: {} }] },
+      { text: 'done' },
+    ]);
+    const tools = new CoreToolExecutor({ tools: [inspectTool], context: mockContext });
+    const runner = new AgentRunner({
+      architecture: simpleReact,
+      llm,
+      tools,
+      workspaceProvider: provider,
+      workspaceSeedDirs: [{ source: '/tmp/skills', destSubpath: '.skill_refs' }],
+    });
+
+    for await (const _ of runner.execute({ prompt: 'inspect' })) {
+      // drain
+    }
+
+    expect(acquireCalls[0]).toMatchObject({
+      seedDirs: [{ source: '/tmp/skills', destSubpath: '.skill_refs' }],
+    });
+  });
+
   it('fails closed when workspaceProvider cannot inject tool context', async () => {
     const provider: WorkspaceProvider = {
       acquire: vi.fn(async () => {

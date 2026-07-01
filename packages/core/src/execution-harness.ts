@@ -25,6 +25,7 @@ import type {
   ToolResult,
   FileReadState,
   TranscriptStore,
+  WorkspaceAcquireOptions,
   WorkspaceProvider,
   WorkspaceSession,
 } from '@dongkseo/contracts';
@@ -58,6 +59,8 @@ export interface LocalExecutionHarnessOptions {
   onSuspend?: RuntimeServices['onSuspend'];
   /** Optional workspace provider. When set, tools receive a per-run workspace session. */
   workspaceProvider?: WorkspaceProvider;
+  /** Per-runtime seed dirs forwarded into workspaceProvider.acquire(). See WorkspaceAcquireOptions.seedDirs. */
+  workspaceSeedDirs?: WorkspaceAcquireOptions['seedDirs'];
   /** Rich transcript store (system of record). With conversationId, the harness records every turn. */
   transcript?: TranscriptStore;
   /** Conversation key for transcript recording. */
@@ -96,6 +99,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly idleTimeoutMs: number;
   private readonly onSuspend?: RuntimeServices['onSuspend'];
   private readonly workspaceProvider?: WorkspaceProvider;
+  private readonly workspaceSeedDirs?: WorkspaceAcquireOptions['seedDirs'];
   private readonly transcript?: TranscriptStore;
   private readonly conversationId?: string;
   private readonly backgroundTasks: BackgroundTaskRegistry;
@@ -135,6 +139,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.onSuspend = options.onSuspend;
     this.workspaceProvider = options.workspaceProvider;
+    this.workspaceSeedDirs = options.workspaceSeedDirs;
     this.transcript = options.transcript;
     this.conversationId = options.conversationId;
     this.backgroundTasks = options.backgroundTasks ?? new InMemoryBackgroundTaskRegistry();
@@ -185,6 +190,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
         workspace = await this.workspaceProvider.acquire({
           baseWorkdir: baseToolContext.workdir,
           input,
+          seedDirs: this.workspaceSeedDirs,
         });
       }
       // Inject steerSelf (and the acquired workspace, if any) into the tool

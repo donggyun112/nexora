@@ -86,7 +86,7 @@ describe('ContinuousWorkspaceProvider', () => {
     const provider = new ContinuousWorkspaceProvider(inner, store, 'conv-1');
 
     await provider.acquire();
-    expect(inner.resume).toHaveBeenCalledWith(prior);
+    expect(inner.resume).toHaveBeenCalledWith(prior, {});
     expect(inner.acquire).not.toHaveBeenCalled();
   });
 
@@ -155,6 +155,21 @@ describe('ContinuousWorkspaceProvider', () => {
     expect(inner.acquire).toHaveBeenCalledTimes(1);
     expect(inner.resume).not.toHaveBeenCalled();
     expect(session.id).toBe('fresh');
+  });
+
+  it('passes options (including seedDirs) through to resume', async () => {
+    const prior: WorkspaceSnapshot = { id: 's1', backend: 'local-tar', ref: 'r1', root: '/work/s1' };
+    const store = makeStore(prior);
+    const inner = {
+      acquire: vi.fn(async () => makeSession('fresh')),
+      resume: vi.fn(async () => makeSession('resumed')),
+    };
+    const provider = new ContinuousWorkspaceProvider(inner, store, 'conv-1');
+
+    const seedDirs = [{ source: '/tmp/x', destSubpath: '.skill_refs' }];
+    await provider.acquire({ seedDirs });
+
+    expect(inner.resume).toHaveBeenCalledWith(prior, { seedDirs });
   });
 });
 

@@ -31,6 +31,7 @@ import type {
 } from '@dongkseo/contracts';
 import { safeUtf8Prefix } from '@dongkseo/contracts';
 import { NoopSnapshotBackend, fingerprintRoot } from './workspace-snapshot.js';
+import { materializeSeedDirs } from './workspace-seed.js';
 import {
   resolveWorkspacePath,
   safeWorkspaceSegment,
@@ -122,7 +123,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
     const root = this.perRun
       ? await this.createRunRoot(id)
       : await this.resolveExistingRoot(options.baseWorkdir);
-    return this.buildSession(id, root);
+    return this.buildSession(id, root, options.seedDirs);
   }
 
   /**
@@ -130,7 +131,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
    * bytes are restored into a fresh root (surviving tmpdir loss between turns);
    * an inline-root snapshot simply reuses the still-live root.
    */
-  async resume(state: WorkspaceSnapshot): Promise<WorkspaceSession> {
+  async resume(state: WorkspaceSnapshot, options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
     const id = state.id || crypto.randomUUID();
     const root = this.perRun
       ? await this.createRunRoot(id)
@@ -144,14 +145,19 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
         await this.snapshotBackend.restore(state.ref, root); // COLD
       }
     }
-    return this.buildSession(id, root);
+    return this.buildSession(id, root, options.seedDirs);
   }
 
   async delete(session: WorkspaceSession): Promise<void> {
     await session.cleanup();
   }
 
-  private async buildSession(id: string, root: string): Promise<WorkspaceSession> {
+  private async buildSession(
+    id: string,
+    root: string,
+    seedDirs?: WorkspaceAcquireOptions['seedDirs'],
+  ): Promise<WorkspaceSession> {
+    await materializeSeedDirs(root, seedDirs);
     const config = this.buildConfig(root);
     await ensureSandboxManagerInitialized(config);
 

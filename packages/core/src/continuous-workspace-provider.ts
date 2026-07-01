@@ -23,7 +23,7 @@ import type {
 
 /** inner는 fresh acquire + snapshot resume 둘 다 할 수 있어야 한다. */
 export interface ResumableWorkspaceProvider extends WorkspaceProvider {
-  resume(state: WorkspaceSnapshot): Promise<WorkspaceSession>;
+  resume(state: WorkspaceSnapshot, options?: WorkspaceAcquireOptions): Promise<WorkspaceSession>;
 }
 
 export interface ContinuousWorkspaceProviderOptions {
@@ -51,7 +51,7 @@ export class ContinuousWorkspaceProvider implements WorkspaceProvider {
     let session: WorkspaceSession;
     if (prior) {
       try {
-        session = await this.inner.resume(prior);
+        session = await this.inner.resume(prior, options);
       } catch (err) {
         this.warn('workspace resume failed; acquiring fresh', err);
         session = await this.inner.acquire(options);

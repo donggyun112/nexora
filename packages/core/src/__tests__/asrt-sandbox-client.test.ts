@@ -245,6 +245,54 @@ describe('AsrtSandboxClient', () => {
       await fsp.rm(baseDir, { recursive: true, force: true });
     }
   });
+
+  it('materializes seedDirs on acquire', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const seedSource = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-seed-src-'));
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-seed-base-'));
+    try {
+      await fsp.writeFile(path.join(seedSource, 'SKILL.md'), '# seeded');
+
+      const client = new AsrtSandboxClient({ baseDir, cleanup: 'delete' });
+      const session = await client.create({
+        runId: 'seed-acquire',
+        seedDirs: [{ source: seedSource, destSubpath: '.skill_refs' }],
+      });
+
+      const seeded = await fsp.readFile(path.join(session.root, '.skill_refs', 'SKILL.md'), 'utf-8');
+      expect(seeded).toBe('# seeded');
+    } finally {
+      await fsp.rm(seedSource, { recursive: true, force: true });
+      await fsp.rm(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('materializes seedDirs on resume', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const seedSource = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-seed-src-'));
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-seed-base-'));
+    try {
+      await fsp.writeFile(path.join(seedSource, 'SKILL.md'), '# v1');
+
+      const client = new AsrtSandboxClient({ perRun: true, baseDir, cleanup: 'delete' });
+      const first = await client.create({
+        runId: 'seed-resume',
+        seedDirs: [{ source: seedSource, destSubpath: '.skill_refs' }],
+      });
+      const snap = await first.snapshot?.();
+
+      await fsp.writeFile(path.join(seedSource, 'SKILL.md'), '# v2');
+      const resumed = await client.resume?.(snap!, {
+        seedDirs: [{ source: seedSource, destSubpath: '.skill_refs' }],
+      });
+
+      const seeded = await fsp.readFile(path.join(resumed!.root, '.skill_refs', 'SKILL.md'), 'utf-8');
+      expect(seeded).toBe('# v2');
+    } finally {
+      await fsp.rm(seedSource, { recursive: true, force: true });
+      await fsp.rm(baseDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('AsrtSandboxClient.resume fingerprint hot/cold', () => {

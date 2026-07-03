@@ -16,7 +16,7 @@
     "clean": "rm -rf dist .tsbuildinfo"
   },
   "dependencies": {
-    "@dongkseo/contracts": "^0.1.22",
+    "@dongkseo/contracts": "workspace:^",
     "@dongkseo/skills": "^0.1.3",
     "@dongkseo/store": "^0.1.5",
     "@modelcontextprotocol/sdk": "^1.29.0",

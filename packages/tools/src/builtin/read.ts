@@ -21,17 +21,16 @@ import type {
   ToolDefinition,
   ToolResult,
   ToolResultContentBlock,
+  WorkspaceFs,
 } from '@dongkseo/contracts';
 import { textResult, errorResult, contentResult } from '@dongkseo/contracts';
 import {
-  openForRead,
-  resolveDirForListing,
   canonicalizePath,
   PathOutsideWorkspaceError,
   SymlinkRefusedError,
 } from './safe-path.js';
 import { buildToolEnv } from './tool-env.js';
-import { resolveToolPath } from './workspace-access.js';
+import { workspaceFs } from './workspace-access.js';
 
 const MAX_LINES = 2000;
 const MAX_BYTES = 8 * 1024 * 1024; // 8MB hard cap (text)
@@ -80,76 +79,62 @@ export function createReadTool(): ToolDefinition {
       const rawPath = (params.path ?? '').trim();
       if (!rawPath) return errorResult('path is required');
 
-      let resolved;
-      try {
-        resolved = await resolveToolPath(ctx, rawPath, 'read');
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-      const workdir = resolved.root;
-      const toolPath = resolved.path;
+      const { fs, root } = workspaceFs(ctx);
 
-      let handle: fsp.FileHandle | null = null;
+      let st;
       try {
-        handle = await openForRead(toolPath, workdir);
+        st = await fs.stat(rawPath);
       } catch (err) {
-        if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
-        if (err instanceof SymlinkRefusedError) return errorResult(err.message);
+        if (err instanceof PathOutsideWorkspaceError || err instanceof SymlinkRefusedError) {
+          return errorResult(err.message);
+        }
         const code = (err as NodeJS.ErrnoException).code;
-        if (code === 'ENOENT') return notFound(rawPath, workdir, toolPath);
-        if (code === 'EISDIR') return readDirectory(toolPath, workdir);
+        if (code === 'ENOENT') return notFound(rawPath, fs);
         return errorResult(`Cannot read: ${err instanceof Error ? err.message : String(err)}`);
       }
 
+      if (st.isDirectory) return readDirectory(fs, rawPath);
+      if (!st.isFile) return errorResult(`Cannot read: ${rawPath} is not a regular file`);
+
+      const ext = path.extname(rawPath).toLowerCase();
+
       try {
-        const stat = await handle.stat();
-        if (stat.isDirectory()) {
-          await handle.close().catch(() => {});
-          handle = null;
-          return readDirectory(toolPath, workdir);
-        }
-        if (!stat.isFile()) {
-          return errorResult(`Cannot read: ${rawPath} is not a regular file`);
-        }
-
-        const ext = path.extname(toolPath).toLowerCase();
-
         // --- Jupyter notebook ---
         if (ext === '.ipynb') {
-          if (stat.size > MAX_BYTES) {
-            return errorResult(`Cannot read: ${rawPath} exceeds ${MAX_BYTES} byte cap (${stat.size} bytes)`);
+          if (st.size > MAX_BYTES) {
+            return errorResult(`Cannot read: ${rawPath} exceeds ${MAX_BYTES} byte cap (${st.size} bytes)`);
           }
-          const raw = await handle.readFile('utf-8');
+          const raw = Buffer.from(await fs.readFile(rawPath)).toString('utf-8');
           return readNotebook(rawPath, raw);
         }
 
         // --- Image ---
         const imageMime = IMAGE_MIME_BY_EXT[ext];
         if (imageMime) {
-          const bytes = await handle.readFile();
-          return { type: 'image', data: bytes.toString('base64'), mimeType: imageMime };
+          const bytes = await fs.readFile(rawPath);
+          return { type: 'image', data: Buffer.from(bytes).toString('base64'), mimeType: imageMime };
         }
 
         // --- PDF (poppler) ---
+        // poppler renders from a real on-disk path; materialize the bytes to a
+        // temp file so this works uniformly whether the backend is local or remote.
         if (ext === '.pdf') {
-          await handle.close().catch(() => {});
-          handle = null;
-          return readPdf(rawPath, toolPath, workdir, params.pages, env, ctx.signal);
+          return readPdfFromBytes(rawPath, await fs.readFile(rawPath), params.pages, env, ctx.signal);
         }
 
         // --- Text ---
-        if (stat.size > MAX_BYTES) {
-          return errorResult(`Cannot read: ${rawPath} exceeds ${MAX_BYTES} byte cap (${stat.size} bytes)`);
+        if (st.size > MAX_BYTES) {
+          return errorResult(`Cannot read: ${rawPath} exceeds ${MAX_BYTES} byte cap (${st.size} bytes)`);
         }
 
         // Dedup: identical re-read of an unchanged file → stub (content already in context).
-        const absKey = path.resolve(workdir, toolPath);
-        const mtimeMs = Math.floor(stat.mtimeMs);
+        const absKey = `${root}\0${rawPath}`;
+        const mtimeMs = Math.floor(st.mtimeMs);
         const prior = ctx.readFileState?.get(absKey);
         if (
           prior &&
           prior.mtimeMs === mtimeMs &&
-          prior.size === stat.size &&
+          prior.size === st.size &&
           prior.offset === params.offset &&
           prior.limit === params.limit
         ) {
@@ -158,57 +143,69 @@ export function createReadTool(): ToolDefinition {
           );
         }
 
-        const content = await handle.readFile('utf-8');
-        const allLines = content.split('\n');
-        const totalLines = allLines.length;
+        const content = Buffer.from(await fs.readFile(rawPath)).toString('utf-8');
+        const text = numberLines(content, params.offset, params.limit);
 
-        const start = params.offset && params.offset > 0 ? params.offset - 1 : 0;
-        const count = params.limit && params.limit > 0 ? Math.min(params.limit, MAX_LINES) : MAX_LINES;
-        const end = Math.min(start + count, totalLines);
-
-        const numbered = allLines
-          .slice(start, end)
-          .map((line, i) => `${String(start + i + 1).padStart(6)}→${line}`)
-          .join('\n');
-
-        let text = numbered;
-        if (end < totalLines) {
-          text += `\n\n[Showing lines ${start + 1}-${end} of ${totalLines}. Use offset=${end + 1} to continue.]`;
-        }
-
-        ctx.readFileState?.set(absKey, { mtimeMs, size: stat.size, offset: params.offset, limit: params.limit });
+        ctx.readFileState?.set(absKey, { mtimeMs, size: st.size, offset: params.offset, limit: params.limit });
         return textResult(text);
       } catch (err) {
+        if (err instanceof PathOutsideWorkspaceError || err instanceof SymlinkRefusedError) {
+          return errorResult(err.message);
+        }
         return errorResult(`Cannot read: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        if (handle) await handle.close().catch(() => {});
       }
     },
   };
 }
 
+// ─── shared text formatting ──────────────────────────────────────────────────
+
+/** Render file content as offset/limit-windowed, 1-indexed numbered lines. */
+function numberLines(content: string, offset?: number, limit?: number): string {
+  const allLines = content.split('\n');
+  const totalLines = allLines.length;
+  const start = offset && offset > 0 ? offset - 1 : 0;
+  const count = limit && limit > 0 ? Math.min(limit, MAX_LINES) : MAX_LINES;
+  const end = Math.min(start + count, totalLines);
+  const numbered = allLines
+    .slice(start, end)
+    .map((line, i) => `${String(start + i + 1).padStart(6)}→${line}`)
+    .join('\n');
+  let text = numbered;
+  if (end < totalLines) {
+    text += `\n\n[Showing lines ${start + 1}-${end} of ${totalLines}. Use offset=${end + 1} to continue.]`;
+  }
+  return text;
+}
+
+// ─── remote workspace read ───────────────────────────────────────────────────
+
+/**
+ * Read a file from a remote workspace over the session (bytes on the wire). The
+ * local fd/O_NOFOLLOW helpers do not apply; the backend enforces the jail. Image
+ * and PDF rendering are local-only for now and reported as unsupported here.
+ */
 // ─── not-found suggestion ────────────────────────────────────────────────────
 
-async function notFound(rawPath: string, workdir: string, toolPath: string): Promise<ToolResult> {
-  const abs = path.resolve(workdir, toolPath);
-  const similar = await findSimilarFile(abs);
+async function notFound(rawPath: string, fs: WorkspaceFs): Promise<ToolResult> {
+  const similar = await findSimilarFile(fs, rawPath);
   let msg = `Cannot read: ${rawPath} not found`;
-  if (similar) {
-    const rel = similar.startsWith(workdir + path.sep) ? path.relative(workdir, similar) : similar;
-    msg += `. Did you mean ${rel}?`;
-  }
+  if (similar) msg += `. Did you mean ${similar}?`;
   return errorResult(msg);
 }
 
 // Same basename, different extension, in the same directory (e.g. foo.ts vs foo.tsx).
-async function findSimilarFile(absPath: string): Promise<string | undefined> {
-  const dir = path.dirname(absPath);
-  const self = path.basename(absPath);
-  const stem = path.basename(absPath, path.extname(absPath));
+async function findSimilarFile(fs: WorkspaceFs, rawPath: string): Promise<string | undefined> {
+  const dir = path.dirname(rawPath);
+  const self = path.basename(rawPath);
+  const stem = path.basename(rawPath, path.extname(rawPath));
   try {
-    const entries = await fsp.readdir(dir);
-    const match = entries.find(e => e !== self && path.basename(e, path.extname(e)) === stem);
-    return match ? path.join(dir, match) : undefined;
+    const entries = await fs.readdir(dir);
+    const match = entries.find(
+      (e) => e.name !== self && path.basename(e.name, path.extname(e.name)) === stem,
+    );
+    if (!match) return undefined;
+    return dir === '.' || dir === '' ? match.name : path.join(dir, match.name);
   } catch {
     return undefined;
   }
@@ -216,20 +213,36 @@ async function findSimilarFile(absPath: string): Promise<string | undefined> {
 
 // ─── directory listing ───────────────────────────────────────────────────────
 
-async function readDirectory(rawPath: string, workdir: string): Promise<ToolResult> {
-  let dirPath: string;
+async function readDirectory(fs: WorkspaceFs, rawPath: string): Promise<ToolResult> {
   try {
-    dirPath = await resolveDirForListing(rawPath, workdir);
+    const entries = await fs.readdir(rawPath);
+    const lines = entries.map((e) => (e.isDirectory ? `${e.name}/` : e.name)).sort();
+    return textResult(`Directory: ${rawPath}\n\n${lines.join('\n')}`);
   } catch (err) {
-    if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
+    if (err instanceof PathOutsideWorkspaceError || err instanceof SymlinkRefusedError) {
+      return errorResult(err.message);
+    }
     return errorResult(`Cannot read: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+// ─── PDF via materialized bytes ──────────────────────────────────────────────
+
+/** Render a PDF from its bytes by spooling to a temp file (backend-agnostic). */
+async function readPdfFromBytes(
+  rawPath: string,
+  bytes: Uint8Array,
+  pagesParam: string | undefined,
+  env: NodeJS.ProcessEnv,
+  signal: AbortSignal | undefined,
+): Promise<ToolResult> {
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-pdf-'));
+  const tmpFile = path.join(tmpDir, 'doc.pdf');
   try {
-    const entries = await fsp.readdir(dirPath, { withFileTypes: true });
-    const lines = entries.map(e => (e.isDirectory() ? `${e.name}/` : e.name)).sort();
-    return textResult(`Directory: ${dirPath}\n\n${lines.join('\n')}`);
-  } catch (err) {
-    return errorResult(`Cannot read: ${err instanceof Error ? err.message : String(err)}`);
+    await fsp.writeFile(tmpFile, Buffer.from(bytes));
+    return await readPdf(rawPath, tmpFile, tmpDir, pagesParam, env, signal);
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

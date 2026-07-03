@@ -23,7 +23,9 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import crypto from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import type {
   ArchiveLimits,
   CreateSessionRequest,
@@ -143,9 +145,41 @@ async function handle(
     if (method === 'PUT') {
       const resolved = await resolveOrDeny(session, rel, 'write');
       const bytes = await readBytes(req);
-      await fsp.writeFile(resolved.path, bytes);
+      await writeFileNoFollow(resolved.path, bytes);
       return sendJson(res, 200, { ok: true });
     }
+  }
+
+  // GET /sessions/:id/stat?path=
+  if (sub === 'stat' && method === 'GET') {
+    const rel = url.searchParams.get('path');
+    if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
+    const resolved = await resolveOrDeny(session, rel, 'read');
+    let s;
+    try {
+      s = await fsp.lstat(resolved.path); // lstat: report a final-component symlink as-is
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new HttpError(404, 'not_found', `no such path: ${rel}`, false);
+      }
+      throw err;
+    }
+    return sendJson(res, 200, {
+      size: s.size,
+      mtimeMs: s.mtimeMs,
+      isFile: s.isFile(),
+      isDirectory: s.isDirectory(),
+      mode: s.mode & 0o7777,
+    });
+  }
+
+  // GET /sessions/:id/readdir?path=
+  if (sub === 'readdir' && method === 'GET') {
+    const rel = url.searchParams.get('path');
+    if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
+    const resolved = await resolveOrDeny(session, rel, 'read');
+    const entries = await fsp.readdir(resolved.path, { withFileTypes: true });
+    return sendJson(res, 200, entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() })));
   }
 
   // POST /sessions/:id/persist → tar bytes of the workspace root.
@@ -193,6 +227,19 @@ async function readBytes(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
   return Buffer.concat(chunks);
+}
+
+/** Create/overwrite a file, refusing to follow a symlink at the final component. */
+async function writeFileNoFollow(dest: string, data: Buffer): Promise<void> {
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  await fsp.rm(dest, { force: true }).catch(() => {}); // drop an existing regular file or symlink
+  const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW;
+  const handle = await fsp.open(dest, flags, 0o600);
+  try {
+    await handle.writeFile(data);
+  } finally {
+    await handle.close();
+  }
 }
 
 async function readJson<T>(req: IncomingMessage): Promise<T> {

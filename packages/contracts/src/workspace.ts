@@ -7,6 +7,8 @@
  * with containers, mount namespaces, or remote sandboxes.
  */
 
+import type { WorkspaceFs } from './workspace-fs.js';
+
 export type WorkspaceAccessMode = 'read-only' | 'workspace-write' | 'danger-full-access';
 
 export type WorkspaceMountAccess = 'ro' | 'rw';
@@ -130,6 +132,13 @@ export interface WorkspaceSession {
   root: string;
   mode: WorkspaceAccessMode;
   mounts: WorkspaceMount[];
+  /**
+   * Filesystem runtime for this workspace. File tools operate through this seam
+   * so local, OS-sandboxed, and remote backends differ only by which `WorkspaceFs`
+   * implementation is present — not by per-tool branching. When absent, tools
+   * fall back to a local filesystem runtime rooted at the session root.
+   */
+  fs?: WorkspaceFs;
   resolve(path: string, options?: WorkspaceResolveOptions): Promise<ResolvedWorkspacePath>;
   run?(command: SandboxCommand): Promise<SandboxCommandResult>;
   /**

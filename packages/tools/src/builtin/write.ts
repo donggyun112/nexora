@@ -1,25 +1,18 @@
 /**
  * write — file create / overwrite.
  *
- * Workspace boundary enforced via fd-based open with O_NOFOLLOW (see safe-path.ts).
- * The kernel refuses to follow a symlink at the final component, eliminating the
- * "swap target between resolve and write" attack.
- *
- * mkdir-p for parent directories now happens INSIDE openForWrite, AFTER path
- * canonicalization, so a malicious `../outside/file` cannot create directories
- * on the host before the workspace check runs.
+ * The tool is backend-agnostic: it writes through the workspace filesystem
+ * runtime (`WorkspaceFs`) and never touches the host fs or the wire directly, so
+ * local, OS-sandboxed, and remote workspaces differ only by which runtime is
+ * active. The runtime enforces the jail and no-follow write (locally via
+ * O_NOFOLLOW; remotely server-side).
  */
 
 import path from 'node:path';
-import type fsp from 'node:fs/promises';
 import type { ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
-import {
-  openForWrite,
-  PathOutsideWorkspaceError,
-  SymlinkRefusedError,
-} from './safe-path.js';
-import { resolveToolPath } from './workspace-access.js';
+import { PathOutsideWorkspaceError, SymlinkRefusedError } from './safe-path.js';
+import { workspaceFs } from './workspace-access.js';
 
 export function createWriteTool(): ToolDefinition {
   return {
@@ -41,45 +34,26 @@ export function createWriteTool(): ToolDefinition {
       const rawPath = (params.path ?? '').trim();
       if (!rawPath) return errorResult('path is required');
       if (typeof params.content !== 'string') return errorResult('content is required');
-      // Capture so the narrowing survives into the doWrite closure below.
       const content: string = params.content;
 
-      let resolved;
-      try {
-        resolved = await resolveToolPath(ctx, rawPath, 'write');
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return errorResult(msg);
-      }
+      const { fs, root } = workspaceFs(ctx);
 
       const doWrite = async (): Promise<ToolResult> => {
-        let handle: fsp.FileHandle;
         try {
-          // openForWrite does the parent mkdir AFTER canonicalization — safe.
-          handle = await openForWrite(resolved.path, resolved.root);
-        } catch (err) {
-          if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
-          if (err instanceof SymlinkRefusedError) return errorResult(err.message);
-          const msg = err instanceof Error ? err.message : String(err);
-          return errorResult(`Cannot open for write: ${msg}`);
-        }
-
-        try {
-          await handle.writeFile(content, 'utf-8');
+          await fs.writeFile(rawPath, Buffer.from(content, 'utf-8'), { atomic: false });
           ctx.logger.info('write', { path: rawPath, bytes: content.length });
           return textResult(`Wrote ${content.length} bytes to ${rawPath}`);
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return errorResult(`Cannot write: ${msg}`);
-        } finally {
-          await handle.close().catch(() => {});
+          if (err instanceof PathOutsideWorkspaceError || err instanceof SymlinkRefusedError) {
+            return errorResult(err.message);
+          }
+          return errorResult(`Cannot write: ${err instanceof Error ? err.message : String(err)}`);
         }
       };
 
-      // Serialize writes per absolute path so concurrent children sharing
-      // ctx.resourceLock don't interleave on the same file (and order against
-      // edit, which keys the same way). No lock → run directly.
-      const lockKey = path.resolve(resolved.root, resolved.path);
+      // Serialize writes per resolved file path so concurrent children sharing
+      // ctx.resourceLock don't interleave on the same file (and order against edit).
+      const lockKey = path.resolve(root, rawPath);
       return ctx.resourceLock
         ? ctx.resourceLock.runExclusive(lockKey, doWrite)
         : doWrite();

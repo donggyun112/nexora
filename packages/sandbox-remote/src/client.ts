@@ -36,6 +36,9 @@ import type {
   SandboxErrorResponse,
   SandboxSessionState,
   WorkspaceAcquireOptions,
+  WorkspaceDirEntry,
+  WorkspaceFileStat,
+  WorkspaceFs,
   WorkspaceProvider,
   WorkspaceResolveOptions,
   WorkspaceSession,
@@ -182,6 +185,7 @@ class RemoteSandboxSession implements WorkspaceSession {
   readonly root: string;
   readonly mode = 'workspace-write' as const;
   readonly mounts = [];
+  readonly fs: WorkspaceFs;
   private readonly spoolDir: string;
   private readonly request: RemoteSessionOptions['request'];
   private cleaned = false;
@@ -191,6 +195,7 @@ class RemoteSandboxSession implements WorkspaceSession {
     this.root = options.root;
     this.spoolDir = options.spoolDir;
     this.request = options.request;
+    this.fs = this.buildFs();
   }
 
   async resolve(rawPath: string, options: WorkspaceResolveOptions = {}): Promise<ResolvedWorkspacePath> {
@@ -212,6 +217,36 @@ class RemoteSandboxSession implements WorkspaceSession {
     return this.request<ExecResponse>('POST', `/sessions/${encode(this.id)}/exec`, {
       json: { argv: command.argv, cwd: command.cwd, env: command.env, timeoutMs: command.timeoutMs },
     });
+  }
+
+  /**
+   * The workspace filesystem runtime for this remote session. Every op validates
+   * the path lexically (fast reject) and the server re-validates + enforces the
+   * jail and no-follow write on its side.
+   */
+  private buildFs(): WorkspaceFs {
+    const req = this.request;
+    const id = this.id;
+    const resolve = this.resolve.bind(this);
+    const fsPath = (p: string): string => `/sessions/${encode(id)}/fs?path=${encode(p)}`;
+    return {
+      async readFile(p: string): Promise<Uint8Array> {
+        await resolve(p, { access: 'read' });
+        return req<Buffer>('GET', fsPath(p));
+      },
+      async writeFile(p: string, data: Uint8Array): Promise<void> {
+        await resolve(p, { access: 'write' });
+        await req('PUT', fsPath(p), { body: Buffer.from(data) });
+      },
+      async stat(p: string): Promise<WorkspaceFileStat> {
+        await resolve(p, { access: 'read' });
+        return req<WorkspaceFileStat>('GET', `/sessions/${encode(id)}/stat?path=${encode(p)}`);
+      },
+      async readdir(p: string): Promise<WorkspaceDirEntry[]> {
+        await resolve(p, { access: 'read' });
+        return req<WorkspaceDirEntry[]>('GET', `/sessions/${encode(id)}/readdir?path=${encode(p)}`);
+      },
+    };
   }
 
   async snapshot(): Promise<WorkspaceSnapshot> {

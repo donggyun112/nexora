@@ -198,6 +198,12 @@ export {
 } from './safe-archive.js';
 export type { ArchiveLimits } from './safe-archive.js';
 export type {
+  WorkspaceFs,
+  WorkspaceFileStat,
+  WorkspaceDirEntry,
+  WorkspaceWriteOptions,
+} from './workspace-fs.js';
+export type {
   CreateSessionRequest,
   CreateSessionResponse,
   ExecRequest,

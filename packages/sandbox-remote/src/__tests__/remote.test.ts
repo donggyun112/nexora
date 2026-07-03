@@ -149,6 +149,19 @@ describe('RemoteSandboxClient ↔ sandbox-server (portability axis)', () => {
     await resumed.cleanup();
   });
 
+  it('reads and writes files through the session over the wire', async () => {
+    const { endpoint } = await startServer();
+    const client = mkClient(endpoint);
+    const session = await client.create();
+
+    await session.fs!.writeFile('dir/hello.txt', Buffer.from('over-the-wire'));
+    const bytes = await session.fs!.readFile('dir/hello.txt');
+    expect(Buffer.from(bytes).toString('utf8')).toBe('over-the-wire');
+
+    await expect(session.fs!.readFile('../../etc/passwd')).rejects.toThrow(/outside workspace root/);
+    await session.cleanup();
+  });
+
   it('rejects paths escaping the workspace root', async () => {
     const { endpoint } = await startServer();
     const client = mkClient(endpoint);

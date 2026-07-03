@@ -206,7 +206,9 @@ wire 프로토콜을 구현하는 최소 서버. Nexora `@dongkseo/adapters`의 
 - **Phase 4 완료** — packages-map.md에 두 패키지 등재(capability/deps), 각 패키지 README. `RemoteSandboxClient`가 `ResumableWorkspaceProvider`를 만족해 `ContinuousWorkspaceProvider`에 무배선 주입됨(별도 팩토리 불필요).
 
 ### 남은 격차 (후속 과제)
-1. **fs-over-wire 도구 통합** — 내장 read/grep/edit/write가 워크스페이스 root에 로컬 fs로 접근. 진짜 원격 root 파일 I/O는 `WorkspaceSession`에 read/write 추가 + 그 도구 리팩터 필요(서버 `/fs`는 이미 존재). 원격에서 현재 완결되는 축: 세션 수명 + exec + persist/hydrate + reattach.
+1. **fs-over-wire 도구 통합 — ✅ 런타임-스왑 구조로 재설계(2026-07-03)**: 도구별 원격 분기(`if remote`)는 **틀린 레이어**였다. 대신 `WorkspaceFs`(readFile/writeFile(mode,atomic)/stat/readdir) 런타임 seam을 `@dongkseo/contracts`에 도입 — 도구(read/write/edit)는 이 인터페이스에만 의존하고 **backend를 모른다**. 로컬은 `LocalWorkspaceFs`(safe-path의 O_NOFOLLOW·atomic temp+rename·mode보존·jail 캡슐화, tools 패키지), 원격은 `RemoteSandboxSession.fs`(wire, 서버 `/fs`·`/stat`·`/readdir`). `workspaceFs(ctx)`가 활성 런타임을 고름(세션.fs 있으면 그것, 없으면 root 기준 LocalWorkspaceFs) — **로컬↔원격↔컨테이너 = 런타임 교체, 도구 코드 불변**. read-only 워크스페이스/마운트 강제는 세션 `resolve(access:'write')` 위임으로 보존. PDF는 바이트를 temp로 materialize해 렌더(로컬/원격 공통). 서버 `/fs` PUT은 O_NOFOLLOW.
+   - **잔여**: `grep`은 아직 로컬 fs 직접 사용 → 같은 seam(fs.readdir+fs.readFile, 또는 서버측 search 엔드포인트)으로 전환 필요. 원격 edit 원자성/서버측 per-file 락, 원격 write의 mode 전달.
+   - 배선 메모: `packages/tools`가 `@dongkseo/contracts`를 `^0.1.22`(published)로 핀해 새 필드가 로컬에서 안 보였음 → 나머지 전 패키지와 동일하게 `workspace:^`로 정렬(publish 시 concrete 버전 치환 → publish-safe).
 2. **background exec 원격 안전(§5-1)** — 원격 세션에 `wrapCommand`가 없어 exec 도구의 `run_in_background`가 호스트 비격리 spawn으로 폴백. exec 도구가 원격/비-wrappable 세션에서 background를 거부하거나 서버측 task로 라우팅하도록 가드 필요.
 3. **exec 스트리밍/PTY** — v1은 버퍼링 exec. 대화형/대용량은 SSE + WS PTY(프로토콜 자리 마련됨) 후속.
 4. **상용 provider 어댑터 / 버킷 마운트** — 동일 계약에 drop-in.

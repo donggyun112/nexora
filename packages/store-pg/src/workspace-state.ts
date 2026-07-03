@@ -5,7 +5,7 @@
 
 import type {
   WorkspaceStateStore,
-  WorkspaceSnapshot,
+  SandboxSessionState,
   StoreBackendInfo,
   DescribableStore,
 } from '@dongkseo/contracts';
@@ -19,19 +19,19 @@ export class WorkspaceStateStorePg implements WorkspaceStateStore, DescribableSt
     return { name: 'postgresql', type: 'production', durable: true, multiProcess: true };
   }
 
-  async save(conversationId: string, snapshot: WorkspaceSnapshot): Promise<void> {
+  async save(conversationId: string, state: SandboxSessionState): Promise<void> {
     await this.sql`
       INSERT INTO nexora_workspace_state (conversation_id, data)
-      VALUES (${conversationId}, ${jsonParam(this.sql, snapshot)})
-      ON CONFLICT (conversation_id) DO UPDATE SET data = ${jsonParam(this.sql, snapshot)}
+      VALUES (${conversationId}, ${jsonParam(this.sql, state)})
+      ON CONFLICT (conversation_id) DO UPDATE SET data = ${jsonParam(this.sql, state)}
     `;
   }
 
-  async load(conversationId: string): Promise<WorkspaceSnapshot | null> {
+  async load(conversationId: string): Promise<SandboxSessionState | null> {
     const rows = await this.sql`
       SELECT data FROM nexora_workspace_state WHERE conversation_id = ${conversationId}
     `;
-    return rows.length > 0 ? (rows[0].data as WorkspaceSnapshot) : null;
+    return rows.length > 0 ? (rows[0].data as SandboxSessionState) : null;
   }
 
   async delete(conversationId: string): Promise<void> {

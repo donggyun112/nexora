@@ -168,6 +168,8 @@ export type {
   ResolvedWorkspacePath,
   WorkspaceSnapshot,
   SnapshotBackend,
+  SandboxSessionState,
+  WorkspaceManifest,
   SandboxCommand,
   SandboxCommandResult,
   WorkspaceSession,
@@ -188,6 +190,22 @@ export type {
   ResolvePathAgainstRootOptions,
 } from './canonical-path.js';
 export { safeUtf8Prefix, safeUtf8Suffix, utf8SafeSliceEnd } from './utf8.js';
+export {
+  ArchiveLimitError,
+  UnsafeArchiveMemberError,
+  safeExtractTar,
+  writeTar,
+} from './safe-archive.js';
+export type { ArchiveLimits } from './safe-archive.js';
+export type {
+  CreateSessionRequest,
+  CreateSessionResponse,
+  ExecRequest,
+  ExecResponse,
+  ReattachResponse,
+  SandboxErrorResponse,
+  RemoteSnapshotRef,
+} from './sandbox-protocol.js';
 
 export type {
   AgentInput,

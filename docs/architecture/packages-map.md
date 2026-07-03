@@ -15,6 +15,8 @@
 | 워크플로 체인(checkpoint/resume)·cron | `@dongkseo/orchestrator` | `WorkflowEngine`, `CronScheduler` | `ctx_read("packages/orchestrator/src/index.ts", mode="map")` |
 | 외부 워커 플릿·capability 라우팅 | `@dongkseo/fleet` | 워커 registry·dispatch·HTTP invoker | `ctx_read("packages/fleet/src/index.ts", mode="map")` |
 | 도구 레지스트리·내장 도구·MCP·delegate/handraise | `@dongkseo/tools` | `ToolRegistry`, `ToolsetRegistry`, delegate/handraise 도구 | `ctx_read("packages/tools/src/index.ts", mode="map")` |
+| 원격/클라우드 워크스페이스 격리(wire 클라이언트) | `@dongkseo/sandbox-remote` | `RemoteSandboxClient` (SandboxClient/WorkspaceProvider를 HTTP wire로 구현; 로컬↔원격 교체) | `ctx_read("packages/sandbox-remote/src/index.ts", mode="map")` |
+| sandbox wire 프로토콜 참조 서버 | `@dongkseo/sandbox-server` | `createSandboxServer` (주입식 SandboxClient를 HTTP로 노출; exec/fs/persist/hydrate/reattach) | `ctx_read("packages/sandbox-server/src/index.ts", mode="map")` |
 | 자가학습 스킬(SKILL.md) | `@dongkseo/skills` | `parseSkillFile`, `loadSkills`, `SkillRegistry`, `SkillCreator`, `buildSkillMenu` | `ctx_read("packages/skills/src/index.ts", mode="map")` |
 | 멀티에이전트 대화(턴테이킹) | `@dongkseo/conversation` | `ConversationRoom`, `TurnManager` | `ctx_read("packages/conversation/src/index.ts", mode="map")` |
 | 영속 store 번들(설정→백엔드) | `@dongkseo/store` | `createStoreProvider`, `StoreProvider`, `StoreConfig` | `ctx_read("packages/store/src/index.ts", mode="map")` |
@@ -45,6 +47,8 @@ graph TD
   orchestrator --> contracts
   otel --> contracts
   skills --> contracts
+  sandbox_remote[sandbox-remote] --> contracts
+  sandbox_server[sandbox-server] --> contracts
   store --> contracts
   store_json[store-json] --> contracts
   store_memory[store-memory] --> contracts
@@ -74,6 +78,8 @@ fleet          -> contracts
 orchestrator   -> contracts
 otel           -> contracts
 skills         -> contracts
+sandbox-remote -> contracts   (원격 SandboxClient; ContinuousWorkspaceProvider에 주입)
+sandbox-server -> contracts   (참조 서버; 실행은 주입식 SandboxClient에 위임)
 store          -> contracts
 store-json     -> contracts
 store-memory   -> contracts

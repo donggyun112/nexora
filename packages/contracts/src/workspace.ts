@@ -72,6 +72,42 @@ export interface SnapshotBackend {
   restorable(ref: string): Promise<boolean>;
 }
 
+/**
+ * Reconnect state for a workspace session.
+ *
+ * This is the faithful analog of the reference SDK's separation between
+ * *session state* (how to re-attach to a backend that may still be alive) and a
+ * *snapshot* (saved workspace bytes used to seed a fresh session). A local
+ * backend has no remote connection, so its session state only carries the
+ * `snapshot`; a remote backend additionally carries `ref` — an opaque locator
+ * (e.g. `sandboxId@endpoint`) it tries to re-attach to before falling back to
+ * rehydrating `snapshot` into a new sandbox.
+ *
+ * Must be JSON round-trippable so it can be persisted between turns. Provider
+ * credentials MUST NOT be serialized into it.
+ */
+export interface SandboxSessionState {
+  /** Backend kind that produced this state (e.g. 'asrt', 'remote'). Routing key for resume. */
+  backend: string;
+  /** Opaque locator a backend uses to re-attach to a still-live remote session. */
+  ref?: string;
+  /** Workspace bytes used to recreate + hydrate when re-attach is impossible. */
+  snapshot?: WorkspaceSnapshot;
+  createdAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Declarative workspace seeding applied to a *fresh* session only (never over a
+ * re-attached or resumed workspace). Unifies mounts and file seeding so the same
+ * declaration works across local and remote backends.
+ */
+export interface WorkspaceManifest {
+  mounts?: WorkspaceMount[];
+  /** Destinations are workspace-root-relative and must not escape the root. */
+  seed?: ReadonlyArray<{ source: string; destSubpath: string }>;
+}
+
 export interface SandboxCommand {
   argv: string[];
   cwd?: string;
@@ -104,6 +140,13 @@ export interface WorkspaceSession {
    */
   wrapCommand?(command: SandboxCommand): Promise<{ argv: string[]; env: Record<string, string | undefined> }>;
   snapshot?(): Promise<WorkspaceSnapshot>;
+  /**
+   * Reconnect state for this session. Local backends return their snapshot
+   * wrapped as `{ backend, snapshot }`; remote backends add a `ref` locator so a
+   * later `resume()` can re-attach to the live sandbox. Callers persist this
+   * (not the bare snapshot) to survive process/host restarts.
+   */
+  sessionState?(): Promise<SandboxSessionState>;
   cleanup(): Promise<void>;
 }
 
@@ -118,6 +161,11 @@ export interface WorkspaceAcquireOptions {
    * (best-effort). 심볼릭 링크는 복사하지 않는다. 매 acquire/resume마다 다시 적용된다.
    */
   seedDirs?: ReadonlyArray<{ source: string; destSubpath: string }>;
+  /**
+   * Declarative mounts + seeding applied to a fresh session. A superset home for
+   * `seedDirs`/mounts; backends apply it only when creating a new workspace.
+   */
+  manifest?: WorkspaceManifest;
 }
 
 export interface WorkspaceProvider {
@@ -126,6 +174,10 @@ export interface WorkspaceProvider {
 
 export interface SandboxClient {
   create(options?: WorkspaceAcquireOptions): Promise<WorkspaceSession>;
-  resume?(state: WorkspaceSnapshot, options?: WorkspaceAcquireOptions): Promise<WorkspaceSession>;
+  /**
+   * Resume from reconnect state: re-attach to a still-live backend session when
+   * `state.ref` is reachable, otherwise recreate and rehydrate `state.snapshot`.
+   */
+  resume?(state: SandboxSessionState, options?: WorkspaceAcquireOptions): Promise<WorkspaceSession>;
   delete?(session: WorkspaceSession): Promise<void>;
 }

@@ -10,6 +10,7 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { resolvePathAgainstRoot } from '@dongkseo/contracts';
 
 export interface WorkspaceSeedEntry {
   /** 복사할 소스 디렉토리(절대/상대 모두 허용, 내부적으로 resolve). */
@@ -32,7 +33,17 @@ async function materializeSeedDir(root: string, entry: WorkspaceSeedEntry): Prom
   const source = path.resolve(entry.source);
   if (!(await isDirectory(source))) return;
 
-  const dest = path.join(root, entry.destSubpath);
+  // The destination must stay inside the workspace root: a `destSubpath` such as
+  // `../escape` would otherwise seed files outside the jail. Validate before any
+  // write, and skip (best-effort) rather than throwing on an out-of-root target.
+  let dest: string;
+  try {
+    ({ finalPath: dest } = await resolvePathAgainstRoot(entry.destSubpath, root));
+  } catch {
+    return;
+  }
+  if (dest === root) return; // never overwrite the workspace root itself
+
   try {
     await fsp.rm(dest, { recursive: true, force: true });
     await fsp.mkdir(path.dirname(dest), { recursive: true });

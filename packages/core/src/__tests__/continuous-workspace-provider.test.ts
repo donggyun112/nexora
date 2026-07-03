@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  SandboxSessionState,
   WorkspaceSession,
   WorkspaceSnapshot,
   WorkspaceStateStore,
@@ -19,19 +20,19 @@ const sandboxManager = vi.hoisted(() => ({
 }));
 vi.mock('@anthropic-ai/sandbox-runtime', () => ({ SandboxManager: sandboxManager }));
 
-function makeStore(initial: WorkspaceSnapshot | null = null): WorkspaceStateStore & {
-  saved: WorkspaceSnapshot[];
+function makeStore(initial: SandboxSessionState | null = null): WorkspaceStateStore & {
+  saved: SandboxSessionState[];
 } {
   let current = initial;
-  const saved: WorkspaceSnapshot[] = [];
+  const saved: SandboxSessionState[] = [];
   return {
     saved,
     async load() {
       return current;
     },
-    async save(_id, snap) {
-      current = snap;
-      saved.push(snap);
+    async save(_id, state) {
+      current = state;
+      saved.push(state);
     },
     async delete() {
       current = null;
@@ -76,8 +77,11 @@ describe('ContinuousWorkspaceProvider', () => {
     expect(session.id).toBe('fresh');
   });
 
-  it('resumes from the prior snapshot on a later turn', async () => {
-    const prior: WorkspaceSnapshot = { id: 's1', backend: 'local-tar', ref: 'r1', root: '/work/s1' };
+  it('resumes from the prior state on a later turn', async () => {
+    const prior: SandboxSessionState = {
+      backend: 'asrt',
+      snapshot: { id: 's1', backend: 'local-tar', ref: 'r1', root: '/work/s1' },
+    };
     const store = makeStore(prior);
     const inner = {
       acquire: vi.fn(async () => makeSession('fresh')),
@@ -101,7 +105,27 @@ describe('ContinuousWorkspaceProvider', () => {
 
     const session = await provider.acquire();
     await session.cleanup();
-    expect(store.saved).toEqual([snap]);
+    // makeSession implements snapshot() only, so the provider wraps it as
+    // reconnect state keyed by the snapshot's backend.
+    expect(store.saved).toEqual([{ backend: 'local-tar', snapshot: snap }]);
+  });
+
+  it('prefers sessionState() over snapshot() when persisting reconnect state', async () => {
+    const store = makeStore(null);
+    const snap: WorkspaceSnapshot = { id: 'snap-1', backend: 'remote-tar', ref: 'r', root: '/work' };
+    const reconnect: SandboxSessionState = { backend: 'remote', ref: 'sandbox-9@https://sbx', snapshot: snap };
+    const session = makeSession('fresh', snap) as WorkspaceSession & { cleaned: boolean };
+    session.sessionState = vi.fn(async () => reconnect);
+    const inner = {
+      acquire: vi.fn(async () => session),
+      resume: vi.fn(async () => makeSession('resumed')),
+    };
+    const provider = new ContinuousWorkspaceProvider(inner, store, 'conv-1');
+
+    const wrapped = await provider.acquire();
+    await wrapped.cleanup();
+    // The live remote ref must be persisted so a later turn can re-attach.
+    expect(store.saved).toEqual([reconnect]);
   });
 
   it('does not throw from cleanup when snapshot fails (best-effort)', async () => {

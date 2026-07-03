@@ -20,6 +20,7 @@ import type {
   SandboxClient,
   SandboxCommand,
   SandboxCommandResult,
+  SandboxSessionState,
   WorkspaceAccessMode,
   WorkspaceAcquireOptions,
   WorkspaceMount,
@@ -123,26 +124,30 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
     const root = this.perRun
       ? await this.createRunRoot(id)
       : await this.resolveExistingRoot(options.baseWorkdir);
-    return this.buildSession(id, root, options.seedDirs);
+    // Manifest seeding/mounts apply to a fresh session only (never on resume).
+    const seeds = [...(options.seedDirs ?? []), ...(options.manifest?.seed ?? [])];
+    return this.buildSession(id, root, seeds, options.manifest?.mounts);
   }
 
   /**
-   * Rehydrate a workspace from a snapshot. With a durable backend, the archived
-   * bytes are restored into a fresh root (surviving tmpdir loss between turns);
-   * an inline-root snapshot simply reuses the still-live root.
+   * Resume from reconnect state. The ASRT backend has no live remote session to
+   * re-attach to, so it rehydrates `state.snapshot`: with a durable backend the
+   * archived bytes are restored into a fresh root (surviving tmpdir loss between
+   * turns); an inline-root snapshot simply reuses the still-live root.
    */
-  async resume(state: WorkspaceSnapshot, options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
-    const id = state.id || crypto.randomUUID();
+  async resume(state: SandboxSessionState, options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
+    const snap = state.snapshot;
+    const id = snap?.id || crypto.randomUUID();
     const root = this.perRun
       ? await this.createRunRoot(id)
-      : await this.resolveExistingRoot(state.root);
-    if (state.ref && (await this.snapshotBackend.restorable(state.ref))) {
+      : await this.resolveExistingRoot(snap?.root);
+    if (snap?.ref && (await this.snapshotBackend.restorable(snap.ref))) {
       // Fixed root may still be live; a per-run root is always fresh (no live fp).
       const live = this.perRun ? undefined : await fingerprintRoot(root);
-      if (live !== undefined && live === state.fingerprint) {
+      if (live !== undefined && live === snap.fingerprint) {
         // HOT: live fixed root unchanged since the last snapshot → skip restore.
       } else {
-        await this.snapshotBackend.restore(state.ref, root); // COLD
+        await this.snapshotBackend.restore(snap.ref, root); // COLD
       }
     }
     return this.buildSession(id, root, options.seedDirs);
@@ -156,6 +161,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
     id: string,
     root: string,
     seedDirs?: WorkspaceAcquireOptions['seedDirs'],
+    manifestMounts?: WorkspaceMount[],
   ): Promise<WorkspaceSession> {
     await materializeSeedDirs(root, seedDirs);
     const config = this.buildConfig(root);
@@ -170,6 +176,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
       mounts: [
         workspaceRootMount(root, this.mode),
         ...this.mounts,
+        ...(manifestMounts ?? []),
       ],
       shell: this.shell,
       maxOutputBytes: this.maxOutputBytes,
@@ -312,6 +319,12 @@ class AsrtSandboxSession implements WorkspaceSession {
       fingerprint,
       metadata,
     };
+  }
+
+  async sessionState(): Promise<SandboxSessionState> {
+    // The ASRT backend has no live remote handle; its reconnect state is just the
+    // workspace snapshot, so a later resume() rehydrates from bytes.
+    return { backend: 'asrt', snapshot: await this.snapshot() };
   }
 
   async cleanup(): Promise<void> {

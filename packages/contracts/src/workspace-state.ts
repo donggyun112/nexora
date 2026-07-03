@@ -12,13 +12,13 @@
  * reads/writes it is `ContinuousWorkspaceProvider` in @dongkseo/core.
  */
 
-import type { WorkspaceSnapshot } from './workspace.js';
+import type { SandboxSessionState } from './workspace.js';
 
 export interface WorkspaceStateStore {
-  /** Latest snapshot for a conversation, or null if none persisted yet. */
-  load(conversationId: string): Promise<WorkspaceSnapshot | null>;
-  /** Persist (insert or overwrite) the latest snapshot for a conversation. */
-  save(conversationId: string, snapshot: WorkspaceSnapshot): Promise<void>;
-  /** Drop a conversation's snapshot record (e.g. on conversation end). */
+  /** Latest reconnect state for a conversation, or null if none persisted yet. */
+  load(conversationId: string): Promise<SandboxSessionState | null>;
+  /** Persist (insert or overwrite) the latest reconnect state for a conversation. */
+  save(conversationId: string, state: SandboxSessionState): Promise<void>;
+  /** Drop a conversation's reconnect-state record (e.g. on conversation end). */
   delete(conversationId: string): Promise<void>;
 }

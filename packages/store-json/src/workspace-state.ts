@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   WorkspaceStateStore,
-  WorkspaceSnapshot,
+  SandboxSessionState,
   StoreBackendInfo,
   DescribableStore,
 } from '@dongkseo/contracts';
@@ -35,16 +35,16 @@ export class WorkspaceStateStoreJson implements WorkspaceStateStore, Describable
     }
   }
 
-  async save(conversationId: string, snapshot: WorkspaceSnapshot): Promise<void> {
+  async save(conversationId: string, state: SandboxSessionState): Promise<void> {
     this.ensureDir();
-    fs.writeFileSync(this.filePath(conversationId), JSON.stringify(snapshot, null, 2), 'utf-8');
+    fs.writeFileSync(this.filePath(conversationId), JSON.stringify(state, null, 2), 'utf-8');
   }
 
-  async load(conversationId: string): Promise<WorkspaceSnapshot | null> {
+  async load(conversationId: string): Promise<SandboxSessionState | null> {
     const file = this.filePath(conversationId);
     if (!fs.existsSync(file)) return null;
     try {
-      return JSON.parse(fs.readFileSync(file, 'utf-8')) as WorkspaceSnapshot;
+      return JSON.parse(fs.readFileSync(file, 'utf-8')) as SandboxSessionState;
     } catch {
       return null;
     }

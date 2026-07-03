@@ -17,13 +17,13 @@ import type {
   WorkspaceProvider,
   WorkspaceSession,
   WorkspaceAcquireOptions,
-  WorkspaceSnapshot,
+  SandboxSessionState,
   WorkspaceStateStore,
 } from '@dongkseo/contracts';
 
-/** inner는 fresh acquire + snapshot resume 둘 다 할 수 있어야 한다. */
+/** inner는 fresh acquire + session-state resume 둘 다 할 수 있어야 한다. */
 export interface ResumableWorkspaceProvider extends WorkspaceProvider {
-  resume(state: WorkspaceSnapshot, options?: WorkspaceAcquireOptions): Promise<WorkspaceSession>;
+  resume(state: SandboxSessionState, options?: WorkspaceAcquireOptions): Promise<WorkspaceSession>;
 }
 
 export interface ContinuousWorkspaceProviderOptions {
@@ -40,7 +40,7 @@ export class ContinuousWorkspaceProvider implements WorkspaceProvider {
   ) {}
 
   async acquire(options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
-    let prior: WorkspaceSnapshot | null = null;
+    let prior: SandboxSessionState | null = null;
     try {
       prior = await this.store.load(this.conversationId);
     } catch (err) {
@@ -64,6 +64,7 @@ export class ContinuousWorkspaceProvider implements WorkspaceProvider {
 
   private wrapCleanup(session: WorkspaceSession): WorkspaceSession {
     const origCleanup = session.cleanup.bind(session);
+    const sessionStateFn = session.sessionState?.bind(session);
     const snapshotFn = session.snapshot?.bind(session);
     const store = this.store;
     const conversationId = this.conversationId;
@@ -71,10 +72,17 @@ export class ContinuousWorkspaceProvider implements WorkspaceProvider {
 
     session.cleanup = async (): Promise<void> => {
       try {
-        if (snapshotFn) {
+        // Prefer the backend's reconnect state (may carry a live remote ref);
+        // fall back to wrapping a bare snapshot for backends that only implement
+        // snapshot().
+        let state: SandboxSessionState | undefined;
+        if (sessionStateFn) {
+          state = await sessionStateFn();
+        } else if (snapshotFn) {
           const snap = await snapshotFn();
-          if (snap) await store.save(conversationId, snap);
+          if (snap) state = { backend: snap.backend, snapshot: snap };
         }
+        if (state) await store.save(conversationId, state);
       } catch (err) {
         warn('workspace snapshot/persist failed on cleanup', err);
       }

@@ -337,6 +337,35 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
+  packages/sandbox-remote:
+    dependencies:
+      '@dongkseo/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+    devDependencies:
+      '@dongkseo/sandbox-server':
+        specifier: workspace:^
+        version: link:../sandbox-server
+      '@types/node':
+        specifier: ^26.0.1
+        version: 26.0.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
+  packages/sandbox-server:
+    dependencies:
+      '@dongkseo/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.1
+        version: 26.0.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
   packages/skills:
     dependencies:
       '@dongkseo/contracts':

@@ -220,7 +220,7 @@ describe('AsrtSandboxClient', () => {
       // Simulate per-run tmpdir loss between turns.
       await fsp.rm(first.root, { recursive: true, force: true });
 
-      const resumed = await client.resume?.(snap!);
+      const resumed = await client.resume?.({ backend: 'asrt', snapshot: snap! });
       expect(resumed).toBeDefined();
       const body = await fsp.readFile(path.join(resumed!.root, 'memo.txt'), 'utf8');
       expect(body).toBe('remember-me');
@@ -267,6 +267,25 @@ describe('AsrtSandboxClient', () => {
     }
   });
 
+  it('applies a manifest seed on create (fresh session only)', async () => {
+    const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
+    const seedSource = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-manifest-src-'));
+    const baseDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-manifest-base-'));
+    try {
+      await fsp.writeFile(path.join(seedSource, 'DATA.md'), '# from manifest');
+      const client = new AsrtSandboxClient({ baseDir, cleanup: 'delete' });
+      const session = await client.create({
+        runId: 'manifest-1',
+        manifest: { seed: [{ source: seedSource, destSubpath: 'refs' }] },
+      });
+      const seeded = await fsp.readFile(path.join(session.root, 'refs', 'DATA.md'), 'utf-8');
+      expect(seeded).toBe('# from manifest');
+    } finally {
+      await fsp.rm(seedSource, { recursive: true, force: true });
+      await fsp.rm(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it('materializes seedDirs on resume', async () => {
     const { AsrtSandboxClient } = await import('../asrt-sandbox-client.js');
     const seedSource = await fsp.mkdtemp(path.join(os.tmpdir(), 'nexora-asrt-seed-src-'));
@@ -282,7 +301,7 @@ describe('AsrtSandboxClient', () => {
       const snap = await first.snapshot?.();
 
       await fsp.writeFile(path.join(seedSource, 'SKILL.md'), '# v2');
-      const resumed = await client.resume?.(snap!, {
+      const resumed = await client.resume?.({ backend: 'asrt', snapshot: snap! }, {
         seedDirs: [{ source: seedSource, destSubpath: '.skill_refs' }],
       });
 
@@ -316,7 +335,7 @@ describe('AsrtSandboxClient.resume fingerprint hot/cold', () => {
       const snap = await session.snapshot();
       expect(snap.fingerprint).toBeTruthy();
 
-      await client.resume(snap); // root untouched since snapshot
+      await client.resume({ backend: 'asrt', snapshot: snap }); // root untouched since snapshot
       expect(backend.restore).not.toHaveBeenCalled();
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
@@ -334,7 +353,7 @@ describe('AsrtSandboxClient.resume fingerprint hot/cold', () => {
       const snap = await session.snapshot();
 
       await fsp.writeFile(path.join(root, 'file.txt'), 'v2-mutated');
-      await client.resume(snap);
+      await client.resume({ backend: 'asrt', snapshot: snap });
       expect(backend.restore).toHaveBeenCalledTimes(1);
     } finally {
       await fsp.rm(root, { recursive: true, force: true });
@@ -351,7 +370,7 @@ describe('AsrtSandboxClient.resume fingerprint hot/cold', () => {
       await fsp.writeFile(path.join(session.root, 'file.txt'), 'v1');
       const snap = await session.snapshot();
 
-      await client.resume(snap); // fresh mkdtemp → live fingerprint undefined
+      await client.resume({ backend: 'asrt', snapshot: snap }); // fresh mkdtemp → live fingerprint undefined
       expect(backend.restore).toHaveBeenCalledTimes(1);
     } finally {
       await fsp.rm(baseDir, { recursive: true, force: true });

@@ -39,6 +39,7 @@ export function workspaceFs(ctx: ToolContext): { fs: WorkspaceFs; root: string }
     readFile: (p) => base.readFile(p),
     stat: (p) => base.stat(p),
     readdir: (p) => base.readdir(p),
+    realPath: (p) => base.realPath(p),
     writeFile: async (p, data, opts) => {
       await session.resolve(p, { access: 'write' }); // throws on read-only
       return base.writeFile(p, data, opts);

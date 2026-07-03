@@ -246,6 +246,12 @@ class RemoteSandboxSession implements WorkspaceSession {
         await resolve(p, { access: 'read' });
         return req<WorkspaceDirEntry[]>('GET', `/sessions/${encode(id)}/readdir?path=${encode(p)}`);
       },
+      async realPath(p: string): Promise<{ path: string; root: string }> {
+        // Remote roots cannot be realpath'd locally; validate lexically and let
+        // the server enforce on use. Returns the workspace-absolute POSIX path.
+        const r = await resolve(p, { access: 'read' });
+        return { path: r.path, root: r.root };
+      },
     };
   }
 

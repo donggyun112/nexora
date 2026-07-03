@@ -54,4 +54,12 @@ export interface WorkspaceFs {
   stat(path: string): Promise<WorkspaceFileStat>;
   /** List a directory's immediate children. */
   readdir(path: string): Promise<WorkspaceDirEntry[]>;
+  /**
+   * Resolve an existing path to its canonical form and return it with the
+   * workspace root, for callers (e.g. content search) that hand a path to an
+   * external engine. Local backends realpath — resolving symlinks and rejecting
+   * escapes/`ENOENT`; remote backends validate lexically and let the server
+   * enforce on use. Rejects paths outside the root.
+   */
+  realPath(path: string): Promise<{ path: string; root: string }>;
 }

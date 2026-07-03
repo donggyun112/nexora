@@ -18,9 +18,9 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { ToolContext, ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
-import { canonicalizePath, PathOutsideWorkspaceError, resolveDirForListing } from './safe-path.js';
+import { PathOutsideWorkspaceError } from './safe-path.js';
 import { buildToolEnv } from './tool-env.js';
-import { resolveToolPath } from './workspace-access.js';
+import { workspaceFs } from './workspace-access.js';
 
 const GREP_TIMEOUT_MS = 120_000;
 const GREP_MAX_BUFFER = 16 * 1024 * 1024;
@@ -114,28 +114,25 @@ export function createGrepTool(): ToolDefinition {
         ? DEFAULT_HEAD_LIMIT
         : clampInt(params.head_limit, DEFAULT_HEAD_LIMIT, 0, Number.MAX_SAFE_INTEGER);
 
-      // Resolve + validate the search path inside the workspace (unchanged boundary).
+      // Resolve + validate the search path through the active workspace runtime
+      // (local realpath+jail, or remote lexical + server-enforced) — no per-tool
+      // local/remote branching. `workspaceFs` also covers the no-session case
+      // with a filesystem runtime jailed to ctx.workdir.
       const subpath = params.path?.trim();
-      let resolved;
-      try {
-        resolved = await resolveToolPath(ctx, subpath || '.', 'list');
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-      const root = path.resolve(resolved.root);
-      const searchPath = toWorkspaceRelativeInput(resolved.path, root);
+      const { fs } = workspaceFs(ctx);
       let grepPath: string;
       let realRoot: string;
       try {
-        const canonicalSearchPath = await canonicalizePath(searchPath, root);
-        realRoot = await resolveDirForListing('.', root);
-        grepPath = await resolveDirForListing(canonicalSearchPath, root);
+        const r = await fs.realPath(subpath || '.');
+        grepPath = r.path;
+        realRoot = r.root;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return textResult('No matches found.');
         if (err instanceof PathOutsideWorkspaceError) return errorResult(err.message);
         return errorResult(`Cannot grep: ${err instanceof Error ? err.message : String(err)}`);
       }
-      const stripRoots = uniqueRoots([realRoot, root]);
+      const root = realRoot;
+      const stripRoots = uniqueRoots([realRoot]);
 
       const glob = params.glob?.trim();
       if (glob && glob.includes('..')) {
@@ -500,14 +497,6 @@ function uniqueRoots(roots: string[]): string[] {
   return [...new Set(roots)].sort((a, b) => b.length - a.length);
 }
 
-function toWorkspaceRelativeInput(rawPath: string, root: string): string {
-  if (!path.isAbsolute(rawPath)) return rawPath;
-  const absolutePath = path.resolve(rawPath);
-  if (absolutePath === root) return '.';
-  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (absolutePath.startsWith(rootPrefix)) return path.relative(root, absolutePath) || '.';
-  return rawPath;
-}
 
 function stripWorkspacePrefix(line: string, roots: string[]): string {
   for (const root of roots) {

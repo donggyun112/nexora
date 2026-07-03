@@ -31,6 +31,17 @@ import {
 class LocalWorkspaceFs implements WorkspaceFs {
   constructor(private readonly root: string) {}
 
+  async realPath(target: string): Promise<{ path: string; root: string }> {
+    // realpath both the root and the target so symlink escapes resolve outside
+    // the root (→ PathOutsideWorkspaceError) and a missing path surfaces ENOENT.
+    const root = await resolveDirForListing('.', this.root);
+    // Validate the escape boundary first, existence-agnostic: an out-of-root path
+    // that does not exist must be a boundary error, not a silent "no matches".
+    await canonicalizePath(target, this.root);
+    const path = await resolveDirForListing(target, this.root);
+    return { path, root };
+  }
+
   async readFile(filePath: string): Promise<Uint8Array> {
     const handle = await openForRead(filePath, this.root);
     try {

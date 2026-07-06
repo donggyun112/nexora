@@ -34,6 +34,9 @@ class FakeClient implements SandboxClient {
         };
       },
       async run(command: SandboxCommand) {
+        if (command.argv[0] === 'sleep') {
+          await new Promise((r) => setTimeout(r, Number(command.argv[1] ?? 0)));
+        }
         return { exitCode: 0, signal: null, stdout: command.argv.join(' '), stderr: '' };
       },
       async cleanup() {
@@ -134,5 +137,66 @@ describe('createSandboxServer', () => {
     const stat = await fsp.stat(path.join(archiveDir, `${id}.tar`));
     expect(stat.size).toBeGreaterThan(0);
     await fsp.rm(archiveDir, { recursive: true, force: true });
+  });
+});
+
+describe('session lifecycle (idle TTL / archive)', () => {
+  async function startWithLifecycle(lifecycle: SessionLifecycleOptions): Promise<{ endpoint: string; archiveDir: string }> {
+    const archiveDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'srv-arch-'));
+    const { server } = createSandboxServer({ client: new FakeClient(), lifecycle: { archiveDir, ...lifecycle } });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as AddressInfo;
+    return { endpoint: `http://127.0.0.1:${port}`, archiveDir };
+  }
+
+  it('archives an idle session: live routes 404 and a tar appears', async () => {
+    const { endpoint, archiveDir } = await startWithLifecycle({ idleTtlMs: 40, sweepIntervalMs: 15, archiveTtlMs: 60_000 });
+    const id = await createSession(endpoint);
+    await fetch(`${endpoint}/sessions/${id}/fs?path=f.txt`, { method: 'PUT', body: 'frozen' });
+
+    await new Promise((r) => setTimeout(r, 250));
+
+    const res = await fetch(`${endpoint}/sessions/${id}/fs?path=f.txt`);
+    expect(res.status).toBe(404);
+    const stat = await fsp.stat(path.join(archiveDir, `${id}.tar`));
+    expect(stat.size).toBeGreaterThan(0);
+  });
+
+  it('keeps a session alive while requests keep touching it', async () => {
+    const { endpoint, archiveDir } = await startWithLifecycle({ idleTtlMs: 150, sweepIntervalMs: 20, archiveTtlMs: 60_000 });
+    const id = await createSession(endpoint);
+    for (let i = 0; i < 3; i++) {
+      await new Promise((r) => setTimeout(r, 100)); // 누적 300ms > idleTtl, but each gap < idleTtl
+      const res = await fetch(`${endpoint}/sessions/${id}/exec`, {
+        method: 'POST',
+        body: JSON.stringify({ argv: ['echo', 'touch'] }),
+      });
+      expect(res.status).toBe(200);
+    }
+    await expect(fsp.stat(path.join(archiveDir, `${id}.tar`))).rejects.toThrow();
+  });
+
+  it('does not sweep a session with an in-flight request', async () => {
+    const { endpoint, archiveDir } = await startWithLifecycle({ idleTtlMs: 30, sweepIntervalMs: 10, archiveTtlMs: 60_000 });
+    const id = await createSession(endpoint);
+    const execP = fetch(`${endpoint}/sessions/${id}/exec`, {
+      method: 'POST',
+      body: JSON.stringify({ argv: ['sleep', '250'] }),
+    });
+    await new Promise((r) => setTimeout(r, 150)); // idle TTL 훌쩍 경과 + sweep 여러 번 — in-flight 라 보존돼야
+    await expect(fsp.stat(path.join(archiveDir, `${id}.tar`))).rejects.toThrow();
+    const res = await execP;
+    expect(res.status).toBe(200);
+  });
+
+  it('deletes archives older than the archive TTL', async () => {
+    const { endpoint, archiveDir } = await startWithLifecycle({ idleTtlMs: 30, sweepIntervalMs: 10, archiveTtlMs: 80 });
+    const id = await createSession(endpoint);
+    await new Promise((r) => setTimeout(r, 120)); // archive 로 전환될 시간
+    await new Promise((r) => setTimeout(r, 200)); // archive TTL 초과
+    await expect(fsp.stat(path.join(archiveDir, `${id}.tar`))).rejects.toThrow();
+    const dead = await fetch(`${endpoint}/sessions/${id}/reattach`, { method: 'POST' });
+    expect(((await dead.json()) as { alive: boolean }).alive).toBe(false);
   });
 });

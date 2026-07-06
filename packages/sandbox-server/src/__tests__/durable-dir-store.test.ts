@@ -21,6 +21,25 @@ describe('DurableDirStore', () => {
     await expect(fsp.stat(path.join(convDir, 'a', 'workspace'))).resolves.toBeTruthy();
   });
 
+  it('archive 는 stillValid 가 false 이고 force 도 아니면 false 를 반환하고 meta 를 쓰지 않는다', async () => {
+    const { client, store, convDir } = await setup();
+    const session = await client.create({ metadata: { sessionKey: 'race' } });
+    const metaPath = path.join(convDir, 'race', 'meta.json');
+    const before = JSON.parse(await fsp.readFile(metaPath, 'utf8')) as { lastUsedAt: number };
+    const ok = await store.archive('race', session, { stillValid: () => false });
+    expect(ok).toBe(false);
+    const after = JSON.parse(await fsp.readFile(metaPath, 'utf8')) as { lastUsedAt: number };
+    expect(after.lastUsedAt).toBe(before.lastUsedAt);
+  });
+
+  it('archive 는 force 면 stillValid 가 false 여도 meta 를 쓰고 true 를 반환한다', async () => {
+    const { client, store, convDir } = await setup();
+    const session = await client.create({ metadata: { sessionKey: 'forced' } });
+    const ok = await store.archive('forced', session, { force: true, stillValid: () => false });
+    expect(ok).toBe(true);
+    await expect(fsp.stat(path.join(convDir, 'forced', 'meta.json'))).resolves.toBeTruthy();
+  });
+
   it('thaw 는 기존 디렉토리에 재-attach, 없으면 null', async () => {
     const { client, store, convDir } = await setup();
     await client.create({ metadata: { sessionKey: 'b' } });

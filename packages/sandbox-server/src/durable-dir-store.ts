@@ -25,8 +25,11 @@ export class DurableDirStore implements ArchiveStore {
     this.convDir = path.resolve(options.convDir);
   }
 
-  async archive(id: string, _session: WorkspaceSession, _opts: { force?: boolean; stillValid: () => boolean }): Promise<boolean> {
-    // 디스크가 이미 정본 — stillValid 재체크가 필요한 느린 스냅샷 단계가 없다.
+  async archive(id: string, _session: WorkspaceSession, opts: { force?: boolean; stillValid: () => boolean }): Promise<boolean> {
+    // 디스크가 이미 정본이라 느린 스냅샷 단계는 없지만, meta 쓰기를 await 하는 동안
+    // 요청이 acquire() 해 inFlight/lastUsedAt 을 갱신할 수 있다 — TarArchiveStore 와
+    // 동일하게 stillValid 를 존중해야 registry 가 살아있는 세션을 드롭하지 않는다.
+    if (!opts.force && !opts.stillValid()) return false;
     await this.writeMeta(id, Date.now());
     return true;
   }

@@ -6,6 +6,7 @@ import {
   createExecTool,
   createReadTool,
   createGrepTool,
+  createGlobTool,
   createWriteTool,
   createEditTool,
   createKnowledgeTool,
@@ -288,6 +289,84 @@ describe('grep tool', () => {
     });
     expect(result.type).toBe('error');
     if (result.type === 'error') expect(result.message).toMatch(/aborted/);
+  });
+});
+
+describe('glob tool', () => {
+  // Mirrors the grep suite. glob is ripgrep-only; where a case needs the engine
+  // we skip if rg is absent (same spirit as the read-tool poppler skip) so the
+  // suite stays green on machines without ripgrep.
+  const skipIfNoRg = (r: ToolResult): boolean =>
+    r.type === 'error' && /ripgrep/i.test(r.message);
+
+  it('finds files matching a glob pattern', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'a.ts'), 'x');
+    fs.writeFileSync(path.join(tmpDir, 'b.ts'), 'y');
+    fs.writeFileSync(path.join(tmpDir, 'c.md'), 'z');
+    const result = await createGlobTool().execute('1', { pattern: '*.ts' }, makeContext(tmpDir));
+    if (skipIfNoRg(result)) return;
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('a.ts');
+      expect(result.text).toContain('b.ts');
+      expect(result.text).not.toContain('c.md');
+      expect(result.text).toMatch(/Found 2 files/);
+    }
+  });
+
+  it('matches nested files with a **/ pattern', async () => {
+    const sub = path.join(tmpDir, 'src', 'deep');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'nested.ts'), 'x');
+    const result = await createGlobTool().execute('1', { pattern: '**/*.ts' }, makeContext(tmpDir));
+    if (skipIfNoRg(result)) return;
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toContain('nested.ts');
+  });
+
+  it('scopes the search to a subdirectory via path', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'top.ts'), 'x');
+    const sub = path.join(tmpDir, 'pkg');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'inner.ts'), 'y');
+    const result = await createGlobTool().execute('1', { pattern: '*.ts', path: 'pkg' }, makeContext(tmpDir));
+    if (skipIfNoRg(result)) return;
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toContain('inner.ts');
+      expect(result.text).not.toContain('top.ts');
+    }
+  });
+
+  it('returns "No files found." when nothing matches', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'a.ts'), 'x');
+    const result = await createGlobTool().execute('1', { pattern: '*.nomatch' }, makeContext(tmpDir));
+    if (skipIfNoRg(result)) return;
+    expect(result.type).toBe('text');
+    if (result.type === 'text') expect(result.text).toBe('No files found.');
+  });
+
+  it('paginates with head_limit + offset', async () => {
+    for (let i = 0; i < 5; i++) fs.writeFileSync(path.join(tmpDir, `f${i}.ts`), 'x');
+    const result = await createGlobTool().execute('1', { pattern: '*.ts', head_limit: 2 }, makeContext(tmpDir));
+    if (skipIfNoRg(result)) return;
+    expect(result.type).toBe('text');
+    if (result.type === 'text') {
+      expect(result.text).toMatch(/Found 2 files \(limit 2\)/);
+      expect(result.text.split('\n').filter(l => l.endsWith('.ts')).length).toBe(2);
+    }
+  });
+
+  it('rejects a pattern containing ".."', async () => {
+    const result = await createGlobTool().execute('1', { pattern: '../*.ts' }, makeContext(tmpDir));
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toMatch(/\.\./);
+  });
+
+  it('requires a pattern', async () => {
+    const result = await createGlobTool().execute('1', {}, makeContext(tmpDir));
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toMatch(/pattern is required/);
   });
 });
 

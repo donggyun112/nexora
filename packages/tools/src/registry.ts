@@ -112,12 +112,12 @@ export class ToolRegistry {
  *
  * Usage:
  * ```ts
- * const fsTools = TOOL_GROUPS['group:fs']; // ['read', 'write', 'edit', 'grep']
+ * const fsTools = TOOL_GROUPS['group:fs']; // ['read', 'write', 'edit', 'grep', 'glob']
  * const resolved = resolveToolNames(['read', 'group:runtime']); // ['read', 'Bash']
  * ```
  */
 export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
-  'group:fs': ['read', 'write', 'edit', 'grep'],
+  'group:fs': ['read', 'write', 'edit', 'grep', 'glob'],
   'group:runtime': ['Bash'],
   'group:web': ['web-search', 'web-fetch'],
   'group:memory': ['knowledge'],

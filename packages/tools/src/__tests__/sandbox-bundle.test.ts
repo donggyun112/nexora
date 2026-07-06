@@ -3,9 +3,9 @@ import { sandboxToolDefinitions, registerSandboxTools } from '../builtin/sandbox
 import { ToolRegistry } from '../registry.js';
 
 describe('sandboxToolDefinitions', () => {
-  it('returns the five sandbox-aware builtin tools', () => {
+  it('returns the six sandbox-aware builtin tools', () => {
     const names = sandboxToolDefinitions().map(t => t.name).sort();
-    expect(names).toEqual(['Bash', 'edit', 'grep', 'read', 'write']);
+    expect(names).toEqual(['Bash', 'edit', 'glob', 'grep', 'read', 'write']);
   });
 
   it('accepts exec options without throwing', () => {
@@ -15,12 +15,12 @@ describe('sandboxToolDefinitions', () => {
 });
 
 describe('registerSandboxTools', () => {
-  it('registers all five tools into a registry', () => {
+  it('registers all six tools into a registry', () => {
     const registry = new ToolRegistry();
     registerSandboxTools(registry);
     // assemble({}) has no availability gating for fs/exec tools, so it returns all registered tools
     const assembled = registry.assemble({}).map(t => t.name).sort();
-    for (const name of ['Bash', 'edit', 'grep', 'read', 'write']) {
+    for (const name of ['Bash', 'edit', 'glob', 'grep', 'read', 'write']) {
       expect(assembled).toContain(name);
     }
   });

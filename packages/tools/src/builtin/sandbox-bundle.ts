@@ -3,8 +3,9 @@
  * 소비 프로젝트가 한 번에 등록하는 파일/프로세스 도구 세트.
  *
  * read/write/edit/grep는 ctx.workspace.resolve()/run()을 통해 워크스페이스 경계
- * 안에서 동작하고, exec는 ctx.workspace.run()으로 샌드박스 안에서 임의 명령을
- * 실행한다. exec의 allowList 등 하드닝은 소비자가 options.exec로 정한다.
+ * 안에서 동작하고, glob은 ctx.workspace.run()으로 워크스페이스 안에서 파일을
+ * 찾고, exec는 ctx.workspace.run()으로 샌드박스 안에서 임의 명령을 실행한다.
+ * exec의 allowList 등 하드닝은 소비자가 options.exec로 정한다.
  */
 
 import type { ToolDefinition } from '@dongkseo/contracts';
@@ -12,6 +13,7 @@ import { createReadTool } from './read.js';
 import { createWriteTool } from './write.js';
 import { createEditTool } from './edit.js';
 import { createGrepTool } from './grep.js';
+import { createGlobTool } from './glob.js';
 import { createExecTool, type ExecToolOptions } from './exec.js';
 import type { ToolRegistry } from '../registry.js';
 
@@ -20,7 +22,7 @@ export interface SandboxToolBundleOptions {
   exec?: ExecToolOptions;
 }
 
-/** read/write/edit/grep/exec 도구 정의 묶음을 만든다. */
+/** read/write/edit/grep/glob/exec 도구 정의 묶음을 만든다. */
 export function sandboxToolDefinitions(
   options: SandboxToolBundleOptions = {},
 ): ToolDefinition[] {
@@ -29,6 +31,7 @@ export function sandboxToolDefinitions(
     createWriteTool(),
     createEditTool(),
     createGrepTool(),
+    createGlobTool(),
     createExecTool(options.exec ?? {}),
   ];
 }

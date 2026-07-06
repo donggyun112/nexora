@@ -7,6 +7,7 @@ export type { ExecToolOptions } from './exec.js';
 
 export { createReadTool } from './read.js';
 export { createGrepTool } from './grep.js';
+export { createGlobTool } from './glob.js';
 export { createWriteTool } from './write.js';
 export { createEditTool } from './edit.js';
 

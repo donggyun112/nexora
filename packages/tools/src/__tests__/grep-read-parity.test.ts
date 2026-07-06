@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createGrepTool, createReadTool } from '../builtin/index.js';
+import { createGrepTool, createGlobTool, createReadTool } from '../builtin/index.js';
 import type { FileReadState, ToolContext } from '@dongkseo/contracts';
 
 let tmpDir: string;
@@ -159,6 +159,41 @@ describe('grep — sandbox/shell-wrapped run (! glob escaping)', () => {
       makeSandboxLikeContext(tmpDir));
     expect(r.type).toBe('text');
     if (r.type === 'text') expect(r.text).toContain('ChatService.java');
+  });
+});
+
+describe('glob — sandbox/shell-wrapped run (backend-agnostic via workspace.run)', () => {
+  beforeEach(() => {
+    fs.writeFileSync(path.join(tmpDir, 'MessageService.java'), 'class X {}\n');
+    const sub = path.join(tmpDir, 'src', 'main', 'java');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'ChatService.java'), 'interface Y {}\n');
+  });
+
+  it('lists files through the workspace.run seam (not local execFile)', async () => {
+    const r = await createGlobTool().execute('1',
+      { pattern: '**/*.java' },
+      makeSandboxLikeContext(tmpDir));
+    // glob is ripgrep-only; skip if rg is unavailable in this environment.
+    if (r.type === 'error' && /ripgrep/i.test(r.message)) return;
+    expect(r.type).toBe('text');
+    if (r.type === 'text') {
+      expect(r.text).not.toBe('No files found.');
+      expect(r.text).toContain('MessageService.java');
+      expect(r.text).toContain('ChatService.java');
+    }
+  });
+
+  it('scopes to a subdirectory path under the sandbox', async () => {
+    const r = await createGlobTool().execute('1',
+      { pattern: '*.java', path: 'src/main/java' },
+      makeSandboxLikeContext(tmpDir));
+    if (r.type === 'error' && /ripgrep/i.test(r.message)) return;
+    expect(r.type).toBe('text');
+    if (r.type === 'text') {
+      expect(r.text).toContain('ChatService.java');
+      expect(r.text).not.toContain('MessageService.java');
+    }
   });
 });
 

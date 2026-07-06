@@ -74,17 +74,21 @@ afterEach(async () => {
 
 async function startServer(token?: string): Promise<{ endpoint: string; backend: FakeLocalClient }> {
   const backend = new FakeLocalClient();
-  const server = createSandboxServer({ client: backend, token });
+  const { server } = createSandboxServer({ client: backend, token });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   return { endpoint: `http://127.0.0.1:${port}`, backend };
 }
 
-function mkClient(endpoint: string, token?: string): RemoteSandboxClient {
+function mkClient(
+  endpoint: string,
+  token?: string,
+  opts: { endOfTurn?: 'release' | 'delete' } = {},
+): RemoteSandboxClient {
   const spoolDir = path.join(os.tmpdir(), `remote-spool-${crypto.randomUUID()}`);
   spools.push(spoolDir);
-  return new RemoteSandboxClient({ endpoint, token, spoolDir });
+  return new RemoteSandboxClient({ endpoint, token, spoolDir, ...opts });
 }
 
 /** Raw wire helpers exercising the server's /fs routes directly. */
@@ -136,18 +140,71 @@ describe('RemoteSandboxClient ↔ sandbox-server (portability axis)', () => {
 
   it('recreates and rehydrates when the session is gone (COLD)', async () => {
     const { endpoint } = await startServer();
-    const client = mkClient(endpoint);
+    const client = mkClient(endpoint, undefined, { endOfTurn: 'delete' });
     const session = await client.create();
     await putFile(endpoint, session.id, 'keep.txt', 'survives-restart');
 
-    const state = await session.sessionState!();
-    await session.cleanup(); // remote session is now gone → reattach must fail
+    const snapshot = await session.snapshot!();
+    const state: SandboxSessionState = { backend: 'remote', ref: session.id, snapshot };
+    await session.cleanup(); // delete mode → remote session gone, reattach must fail
 
     const resumed = await client.resume(state);
     expect(resumed.id).not.toBe(session.id); // a fresh session
     expect(await getFile(endpoint, resumed.id, 'keep.txt')).toBe('survives-restart');
 
     await resumed.cleanup();
+  });
+
+  it('release (default): cleanup keeps the session alive → hot resume', async () => {
+    const { endpoint } = await startServer();
+    const client = mkClient(endpoint);
+    const session = await client.create();
+    await putFile(endpoint, session.id, 'live.txt', 'still-here');
+
+    const state = await session.sessionState!();
+    await session.cleanup(); // release: no DELETE crosses the wire
+
+    const resumed = await client.resume(state);
+    expect(resumed.id).toBe(session.id); // same live session
+    expect(await getFile(endpoint, resumed.id, 'live.txt')).toBe('still-here');
+  });
+
+  it('sessionState is ref-only: no snapshot, nothing spooled', async () => {
+    const { endpoint } = await startServer();
+    const spoolDir = path.join(os.tmpdir(), `remote-spool-${crypto.randomUUID()}`);
+    spools.push(spoolDir);
+    const client = new RemoteSandboxClient({ endpoint, spoolDir });
+    const session = await client.create();
+
+    const state = await session.sessionState!();
+    expect(state).toEqual({ backend: 'remote', ref: session.id });
+    await expect(fsp.readdir(spoolDir)).rejects.toThrow(); // persist 가 없어 spool dir 자체가 안 생김
+  });
+
+  it('thaws an idle-archived session transparently on resume', async () => {
+    const backend = new FakeLocalClient();
+    const archiveDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'thaw-arch-'));
+    spools.push(archiveDir);
+    const { server } = createSandboxServer({
+      client: backend,
+      lifecycle: { idleTtlMs: 40, sweepIntervalMs: 15, archiveTtlMs: 60_000, archiveDir },
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as AddressInfo;
+    const endpoint = `http://127.0.0.1:${port}`;
+
+    const client = mkClient(endpoint);
+    const session = await client.create();
+    await putFile(endpoint, session.id, 'frozen.txt', 'thawed-content');
+    const state = await session.sessionState!();
+    await session.cleanup();
+
+    await new Promise((r) => setTimeout(r, 250)); // idle TTL 경과 → sweep 이 archive 로
+
+    const resumed = await client.resume(state);
+    expect(resumed.id).toBe(session.id); // thaw 는 같은 wire id
+    expect(await getFile(endpoint, resumed.id, 'frozen.txt')).toBe('thawed-content');
   });
 
   it('reads and writes files through the session over the wire', async () => {

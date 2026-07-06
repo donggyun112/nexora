@@ -54,6 +54,12 @@ export interface RemoteSandboxClientOptions {
   spoolDir?: string;
   /** Injected fetch (for tests); defaults to global fetch. */
   fetch?: typeof fetch;
+  /**
+   * End-of-turn semantics. 'release' (default) keeps the remote session alive —
+   * the server's idle TTL owns its lifecycle (archive → thaw on reattach).
+   * 'delete' restores eager teardown for servers without lifecycle management.
+   */
+  endOfTurn?: 'release' | 'delete';
 }
 
 export class RemoteSandboxError extends Error {
@@ -73,12 +79,14 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
   private readonly token?: string;
   private readonly spoolDir: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly endOfTurn: 'release' | 'delete';
 
   constructor(options: RemoteSandboxClientOptions) {
     this.endpoint = options.endpoint.replace(/\/+$/, '');
     this.token = options.token;
     this.spoolDir = options.spoolDir ?? path.join(os.tmpdir(), 'nexora-remote-snapshots');
     this.fetchImpl = options.fetch ?? fetch;
+    this.endOfTurn = options.endOfTurn ?? 'release';
   }
 
   async acquire(options?: WorkspaceAcquireOptions): Promise<WorkspaceSession> {
@@ -132,6 +140,7 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
       sessionId,
       root,
       spoolDir: this.spoolDir,
+      endOfTurn: this.endOfTurn,
       request: this.request.bind(this),
     });
   }
@@ -217,6 +226,7 @@ interface RemoteSessionOptions {
   sessionId: string;
   root: string;
   spoolDir: string;
+  endOfTurn: 'release' | 'delete';
   request: <T>(method: string, path: string, opts?: { json?: unknown; body?: Buffer }) => Promise<T>;
 }
 
@@ -227,6 +237,7 @@ class RemoteSandboxSession implements WorkspaceSession {
   readonly mounts = [];
   readonly fs: WorkspaceFs;
   private readonly spoolDir: string;
+  private readonly endOfTurn: 'release' | 'delete';
   private readonly request: RemoteSessionOptions['request'];
   private cleaned = false;
 
@@ -234,6 +245,7 @@ class RemoteSandboxSession implements WorkspaceSession {
     this.id = options.sessionId;
     this.root = options.root;
     this.spoolDir = options.spoolDir;
+    this.endOfTurn = options.endOfTurn;
     this.request = options.request;
     this.fs = this.buildFs();
   }
@@ -312,18 +324,24 @@ class RemoteSandboxSession implements WorkspaceSession {
   }
 
   async sessionState(): Promise<SandboxSessionState> {
-    // `ref` is the live remote session id (for re-attach); the embedded snapshot
-    // is the cold-recovery fallback. No credentials are included.
-    return { backend: 'remote', ref: this.id, snapshot: await this.snapshot() };
+    // `ref` alone: the server keeps the session alive (or archived) and thaws it
+    // on reattach, so no per-turn workspace snapshot crosses the wire. Apps that
+    // want a client-side copy call snapshot() explicitly.
+    return { backend: 'remote', ref: this.id };
   }
 
   async cleanup(): Promise<void> {
     if (this.cleaned) return;
     this.cleaned = true;
+    if (this.endOfTurn === 'release') {
+      // Keep-alive: the session stays live server-side; the server's idle TTL
+      // sweep owns its lifecycle from here (archive → thaw on a later reattach).
+      return;
+    }
     try {
       await this.request('DELETE', `/sessions/${encode(this.id)}`);
     } catch {
-      // Best-effort teardown: the server sweeps idle sessions via TTL anyway.
+      // Best-effort teardown: the server's idle TTL sweep reclaims it anyway.
     }
   }
 }

@@ -186,4 +186,49 @@ describe('RemoteSandboxClient ↔ sandbox-server (portability axis)', () => {
     expect(session.wrapCommand).toBeUndefined();
     await session.cleanup();
   });
+
+  it('seeds seedDirs into the remote workspace on create', async () => {
+    const { endpoint } = await startServer();
+    const client = mkClient(endpoint);
+
+    const srcDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'seed-src-'));
+    spools.push(srcDir); // afterEach 정리
+    await fsp.mkdir(path.join(srcDir, 'scripts'), { recursive: true });
+    await fsp.writeFile(path.join(srcDir, 'SKILL.md'), 'skill body');
+    await fsp.writeFile(path.join(srcDir, 'scripts', 'run.py'), 'print(1)');
+
+    const session = await client.create({
+      runId: 'seed-conv',
+      seedDirs: [{ source: srcDir, destSubpath: '.skill_refs/pdf' }],
+    });
+
+    expect(await getFile(endpoint, session.id, '.skill_refs/pdf/SKILL.md')).toBe('skill body');
+    expect(await getFile(endpoint, session.id, '.skill_refs/pdf/scripts/run.py')).toBe('print(1)');
+  });
+
+  it('skips a missing seed source (best-effort, no throw)', async () => {
+    const { endpoint } = await startServer();
+    const client = mkClient(endpoint);
+    const session = await client.create({
+      runId: 'seed-missing',
+      seedDirs: [{ source: '/nonexistent/skill/dir', destSubpath: '.skill_refs/x' }],
+    });
+    expect(session.id).toBeTruthy(); // 예외 없이 세션 생성
+  });
+
+  it('does not transfer symlinks (root-jail safety)', async () => {
+    const { endpoint } = await startServer();
+    const client = mkClient(endpoint);
+    const srcDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'seed-sym-'));
+    spools.push(srcDir);
+    await fsp.writeFile(path.join(srcDir, 'real.txt'), 'real');
+    await fsp.symlink('/etc/passwd', path.join(srcDir, 'link.txt'));
+
+    const session = await client.create({
+      runId: 'seed-sym',
+      seedDirs: [{ source: srcDir, destSubpath: '.skill_refs/s' }],
+    });
+    expect(await getFile(endpoint, session.id, '.skill_refs/s/real.txt')).toBe('real');
+    await expect(getFile(endpoint, session.id, '.skill_refs/s/link.txt')).rejects.toThrow();
+  });
 });

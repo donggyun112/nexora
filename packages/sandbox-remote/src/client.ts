@@ -89,6 +89,7 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
     const created = await this.request<CreateSessionResponse>('POST', '/sessions', {
       json: { runId: options.runId, manifest: options.manifest },
     });
+    await this.seedRemote(created.sessionId, options.seedDirs);
     return this.buildSession(created.sessionId, created.root);
   }
 
@@ -132,6 +133,44 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
       spoolDir: this.spoolDir,
       request: this.request.bind(this),
     });
+  }
+
+  private async putFileRemote(sessionId: string, relPath: string, bytes: Buffer): Promise<void> {
+    await this.request('PUT', `/sessions/${encode(sessionId)}/fs?path=${encodeURIComponent(relPath)}`, {
+      body: bytes,
+    });
+  }
+
+  /** Seed declared dirs into the remote workspace over the /fs wire — the remote
+   *  analogue of core's materializeSeedDirs (host FS copy). best-effort: a missing
+   *  source or a failed file transfer never aborts session creation. Symlinks are
+   *  skipped so a link can't seed outside the root-jail. */
+  private async seedRemote(
+    sessionId: string,
+    seedDirs?: WorkspaceAcquireOptions['seedDirs'],
+  ): Promise<void> {
+    if (!seedDirs?.length) return;
+    for (const { source, destSubpath } of seedDirs) {
+      try {
+        const entries = await fsp.readdir(source, { withFileTypes: true, recursive: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) continue; // 디렉토리·symlink 제외
+          const direntCompat = entry as { parentPath?: string; path?: string };
+          const parent = direntCompat.parentPath ?? direntCompat.path!;
+          const abs = path.join(parent, entry.name);
+          const relFromSource = path.relative(source, abs).split(path.sep).join(posix.sep);
+          const relPath = posix.join(destSubpath, relFromSource);
+          try {
+            const bytes = await fsp.readFile(abs);
+            await this.putFileRemote(sessionId, relPath, bytes);
+          } catch (err) {
+            console.warn(`[remote-seed] ${relPath}: ${(err as Error).message}`);
+          }
+        }
+      } catch {
+        continue; // 소스 부재/읽기 실패 → best-effort skip
+      }
+    }
   }
 
   private async request<T = unknown>(

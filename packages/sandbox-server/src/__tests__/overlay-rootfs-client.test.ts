@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -53,6 +54,15 @@ describe('buildBwrapArgs', () => {
     expect(args.slice(args.indexOf('--') + 1)).toEqual(['python3', '-V']);
     expect(args[args.indexOf('--chdir') + 1]).toBe('/vol/conv/abc/workspace');
   });
+
+  it('usrMergeLinks 를 명시하면 결정적으로 --symlink 쌍을 만든다 (호스트 무관)', () => {
+    const args = buildBwrapArgs(base, cmd, ['bin', 'lib']);
+    const s = args.join(' ');
+    expect(s).toContain('--symlink usr/bin /bin');
+    expect(s).toContain('--symlink usr/lib /lib');
+    // 결정적 — 같은 입력이면 항상 같은 출력, 호스트 filesystem 조회 없음.
+    expect(buildBwrapArgs(base, cmd, ['bin', 'lib'])).toEqual(args);
+  });
 });
 
 describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => {
@@ -74,6 +84,15 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
     expect(ok.path).toBe(path.join(convDir, 'k2', 'workspace', 'sub', 'file.txt'));
   });
 
+  it('create 는 sessionKey 가 convDir 을 탈출하면 거부한다 (path traversal)', async () => {
+    const convDir = await tmpConvDir();
+    const client = new OverlayRootfsSandboxClient({ convDir });
+    await expect(client.create({ metadata: { sessionKey: '..' } })).rejects.toThrow();
+    // 정상 키는 여전히 동작한다.
+    const session = await client.create({ metadata: { sessionKey: 'normal-key' } });
+    expect(session.root).toBe(path.join(convDir, 'normal-key', 'workspace'));
+  });
+
   it('attach 는 기존 디렉토리에 핸들을 재구성하고, 없으면 null', async () => {
     const convDir = await tmpConvDir();
     const client = new OverlayRootfsSandboxClient({ convDir });
@@ -81,6 +100,19 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
     const again = await client.attach('k3');
     expect(again?.root).toBe(path.join(convDir, 'k3', 'workspace'));
     expect(await client.attach('nope')).toBeNull();
+  });
+
+  it('spawn 오류 시 abort 리스너를 해제해 시그널 재사용시 누수를 막는다', async () => {
+    const convDir = await tmpConvDir();
+    const client = new OverlayRootfsSandboxClient({
+      convDir,
+      bwrapPath: path.join(convDir, 'does-not-exist-bwrap'),
+    });
+    const session = await client.create({ metadata: { sessionKey: 'errkey' } });
+    const controller = new AbortController();
+    const result = await session.run!({ argv: ['true'], signal: controller.signal });
+    expect(result.exitCode).toBeNull();
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
   });
 
   it('seedDirs 를 workspace 안으로 복사한다 (fresh create)', async () => {

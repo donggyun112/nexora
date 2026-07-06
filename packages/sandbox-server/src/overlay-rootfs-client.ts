@@ -36,18 +36,21 @@ export interface OverlayRootfsOptions {
 const DEFAULT_SYSTEM_DIRS = ['usr', 'etc', 'var', 'opt', 'srv', 'root'];
 // merged-usr 심링크 재현 대상 — 호스트에 실제 존재하는 것만 적용된다.
 const USR_MERGE_LINKS = ['bin', 'sbin', 'lib', 'lib32', 'lib64', 'libx32'];
+// 프로세스 시작 시 1회만 호스트 `/` 를 조회한다 — buildBwrapArgs 를 호출마다
+// I/O 없는 순수 함수로 유지하기 위함 (테스트 표면 계약).
+const DEFAULT_USR_MERGE_LINKS = USR_MERGE_LINKS.filter((l) => {
+  try {
+    return existsSync(`/${l}`);
+  } catch {
+    return false;
+  }
+});
 const SANDBOX_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 export function buildBwrapArgs(
   base: { convDir: string; sessionDir: string; workspaceDir: string; systemDirs: string[]; network: 'none' | 'share' },
   cmd: { argv: string[]; cwd: string },
-  usrMergeLinks: string[] = USR_MERGE_LINKS.filter((l) => {
-    try {
-      return existsSync(`/${l}`);
-    } catch {
-      return false;
-    }
-  }),
+  usrMergeLinks: string[] = DEFAULT_USR_MERGE_LINKS,
 ): string[] {
   const args = ['--unshare-all'];
   if (base.network === 'share') args.push('--share-net');
@@ -127,7 +130,12 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
   }
 
   private sessionDir(key: string): string {
-    return path.join(this.convDir, encodeURIComponent(key));
+    const dir = path.join(this.convDir, encodeURIComponent(key));
+    const relative = path.relative(this.convDir, dir);
+    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error(`sessionKey escapes convDir: ${key}`);
+    }
+    return dir;
   }
 
   private async touchMeta(sessionDir: string): Promise<void> {
@@ -198,6 +206,7 @@ async function spawnCollect(bin: string, args: string[], cmd: SandboxCommand): P
     child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
     child.on('error', (err) => {
       if (timer) clearTimeout(timer);
+      cmd.signal?.removeEventListener('abort', onAbort);
       resolve({ exitCode: null, signal: null, stdout, stderr: `${stderr}\n${String(err)}`.trim() });
     });
     child.on('close', (code, signal) => {

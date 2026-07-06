@@ -5,4 +5,5 @@
  */
 
 export { createSandboxServer } from './server.js';
-export type { SandboxServerOptions } from './server.js';
+export type { SandboxServerHandle, SandboxServerOptions } from './server.js';
+export { SessionRegistry, type SessionLifecycleOptions } from './session-registry.js';

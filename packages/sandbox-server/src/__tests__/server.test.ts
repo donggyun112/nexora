@@ -13,7 +13,7 @@ import {
   type WorkspaceResolveOptions,
   type WorkspaceSession,
 } from '@dongkseo/contracts';
-import { createSandboxServer } from '../server.js';
+import { createSandboxServer, type SandboxServerHandle, type SessionLifecycleOptions } from '../server.js';
 
 class FakeClient implements SandboxClient {
   async create(): Promise<WorkspaceSession> {
@@ -48,8 +48,8 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => new Promise<void>((r) => s.close(() => r()))));
 });
 
-async function start(): Promise<string> {
-  const server = createSandboxServer({ client: new FakeClient() });
+async function start(lifecycle?: SessionLifecycleOptions): Promise<string> {
+  const { server } = createSandboxServer({ client: new FakeClient(), lifecycle });
   servers.push(server);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const { port } = server.address() as AddressInfo;
@@ -117,5 +117,22 @@ describe('createSandboxServer', () => {
     const body = (await res.json()) as { code: string; message: string };
     expect(body.code).toBe('path_denied');
     expect(body.message).toContain('outside workspace root');
+  });
+
+  it('shutdown archives live sessions before closing', async () => {
+    const archiveDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'srv-arch-'));
+    const handle = createSandboxServer({ client: new FakeClient(), lifecycle: { archiveDir } });
+    servers.push(handle.server);
+    await new Promise<void>((r) => handle.server.listen(0, '127.0.0.1', r));
+    const { port } = handle.server.address() as AddressInfo;
+    const endpoint = `http://127.0.0.1:${port}`;
+
+    const id = await createSession(endpoint);
+    await fetch(`${endpoint}/sessions/${id}/fs?path=a.txt`, { method: 'PUT', body: 'archive-me' });
+    await handle.shutdown();
+
+    const stat = await fsp.stat(path.join(archiveDir, `${id}.tar`));
+    expect(stat.size).toBeGreaterThan(0);
+    await fsp.rm(archiveDir, { recursive: true, force: true });
   });
 });

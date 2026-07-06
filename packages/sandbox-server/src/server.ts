@@ -37,6 +37,9 @@ import type {
   WorkspaceSession,
 } from '@dongkseo/contracts';
 import { safeExtractTar, writeTar } from '@dongkseo/contracts';
+import { SessionRegistry, type SessionLifecycleOptions } from './session-registry.js';
+
+export type { SessionLifecycleOptions } from './session-registry.js';
 
 export interface SandboxServerOptions {
   /** Backend that provisions and rehydrates sessions (e.g. AsrtSandboxClient). */
@@ -45,6 +48,8 @@ export interface SandboxServerOptions {
   token?: string;
   /** Extraction limits applied on hydrate. */
   archiveLimits?: ArchiveLimits;
+  /** Session lifecycle (idle archive / thaw / archive TTL). Defaults always apply. */
+  lifecycle?: SessionLifecycleOptions;
 }
 
 class HttpError extends Error {
@@ -58,25 +63,36 @@ class HttpError extends Error {
   }
 }
 
-export function createSandboxServer(options: SandboxServerOptions): Server {
-  const sessions = new Map<string, WorkspaceSession>();
+export interface SandboxServerHandle {
+  server: Server;
+  /** Stop the sweep, archive every live session, and close the server. */
+  shutdown(): Promise<void>;
+}
 
+export function createSandboxServer(options: SandboxServerOptions): SandboxServerHandle {
+  const registry = new SessionRegistry(options.client, options.lifecycle, options.archiveLimits);
   const server = createServer((req, res) => {
-    handle(req, res, options, sessions).catch((err) => sendError(res, err));
+    handle(req, res, options, registry).catch((err) => sendError(res, err));
   });
-  // Ensure sessions are released if the server is closed abruptly.
+  registry.start();
+  // Abrupt close (no shutdown()): stop sweeping and drop live sessions un-archived.
   server.on('close', () => {
-    for (const session of sessions.values()) void session.cleanup().catch(() => {});
-    sessions.clear();
+    registry.stop();
+    void registry.destroyAllLive().catch(() => {});
   });
-  return server;
+  const shutdown = async (): Promise<void> => {
+    registry.stop();
+    await registry.archiveAll();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  };
+  return { server, shutdown };
 }
 
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   options: SandboxServerOptions,
-  sessions: Map<string, WorkspaceSession>,
+  registry: SessionRegistry,
 ): Promise<void> {
   authorize(req, options.token);
 
@@ -91,7 +107,7 @@ async function handle(
     const body = await readJson<CreateSessionRequest>(req);
     const session = await options.client.create({ runId: body.runId, manifest: body.manifest });
     const id = crypto.randomUUID();
-    sessions.set(id, session);
+    registry.register(id, session);
     return sendJson(res, 200, { sessionId: id, root: session.root } satisfies CreateSessionResponse);
   }
 
@@ -101,101 +117,97 @@ async function handle(
 
   // DELETE /sessions/:id
   if (parts.length === 2 && method === 'DELETE') {
-    const session = sessions.get(id);
-    if (session) {
-      await session.cleanup();
-      sessions.delete(id);
-    }
+    await registry.destroy(id);
     return sendJson(res, 200, { ok: true });
   }
 
   // POST /sessions/:id/reattach — tolerated even if the session is gone.
   if (sub === 'reattach' && method === 'POST') {
-    const session = sessions.get(id);
-    return sendJson(res, 200, {
-      alive: session !== undefined,
-      root: session?.root,
-    } satisfies ReattachResponse);
+    const state = await registry.reattach(id);
+    return sendJson(res, 200, state satisfies ReattachResponse);
   }
 
-  const session = sessions.get(id);
+  const session = registry.acquire(id);
   if (!session) throw new HttpError(404, 'session_not_found', `no live session ${id}`, false);
-
-  // POST /sessions/:id/exec
-  if (sub === 'exec' && method === 'POST') {
-    const body = await readJson<ExecRequest>(req);
-    if (!Array.isArray(body.argv) || body.argv.length === 0) {
-      throw new HttpError(400, 'bad_request', 'argv must be a non-empty array');
+  try {
+    // POST /sessions/:id/exec
+    if (sub === 'exec' && method === 'POST') {
+      const body = await readJson<ExecRequest>(req);
+      if (!Array.isArray(body.argv) || body.argv.length === 0) {
+        throw new HttpError(400, 'bad_request', 'argv must be a non-empty array');
+      }
+      if (!session.run) throw new HttpError(501, 'not_supported', 'session does not support exec');
+      const cwd = body.cwd ? (await resolveOrDeny(session, body.cwd, 'read')).path : session.root;
+      const result = await session.run({ argv: body.argv, cwd, env: body.env, timeoutMs: body.timeoutMs });
+      return sendJson(res, 200, result);
     }
-    if (!session.run) throw new HttpError(501, 'not_supported', 'session does not support exec');
-    const cwd = body.cwd ? (await resolveOrDeny(session, body.cwd, 'read')).path : session.root;
-    const result = await session.run({ argv: body.argv, cwd, env: body.env, timeoutMs: body.timeoutMs });
-    return sendJson(res, 200, result);
-  }
 
-  // GET/PUT /sessions/:id/fs?path=
-  if (sub === 'fs') {
-    const rel = url.searchParams.get('path');
-    if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
-    if (method === 'GET') {
+    // GET/PUT /sessions/:id/fs?path=
+    if (sub === 'fs') {
+      const rel = url.searchParams.get('path');
+      if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
+      if (method === 'GET') {
+        const resolved = await resolveOrDeny(session, rel, 'read');
+        const bytes = await fsp.readFile(resolved.path);
+        return sendBytes(res, 200, bytes);
+      }
+      if (method === 'PUT') {
+        const resolved = await resolveOrDeny(session, rel, 'write');
+        const bytes = await readBytes(req);
+        await writeFileNoFollow(resolved.path, bytes);
+        return sendJson(res, 200, { ok: true });
+      }
+    }
+
+    // GET /sessions/:id/stat?path=
+    if (sub === 'stat' && method === 'GET') {
+      const rel = url.searchParams.get('path');
+      if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
       const resolved = await resolveOrDeny(session, rel, 'read');
-      const bytes = await fsp.readFile(resolved.path);
-      return sendBytes(res, 200, bytes);
+      let s;
+      try {
+        s = await fsp.lstat(resolved.path); // lstat: report a final-component symlink as-is
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new HttpError(404, 'not_found', `no such path: ${rel}`, false);
+        }
+        throw err;
+      }
+      return sendJson(res, 200, {
+        size: s.size,
+        mtimeMs: s.mtimeMs,
+        isFile: s.isFile(),
+        isDirectory: s.isDirectory(),
+        mode: s.mode & 0o7777,
+      });
     }
-    if (method === 'PUT') {
-      const resolved = await resolveOrDeny(session, rel, 'write');
-      const bytes = await readBytes(req);
-      await writeFileNoFollow(resolved.path, bytes);
+
+    // GET /sessions/:id/readdir?path=
+    if (sub === 'readdir' && method === 'GET') {
+      const rel = url.searchParams.get('path');
+      if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
+      const resolved = await resolveOrDeny(session, rel, 'read');
+      const entries = await fsp.readdir(resolved.path, { withFileTypes: true });
+      return sendJson(res, 200, entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() })));
+    }
+
+    // POST /sessions/:id/persist → tar bytes of the workspace root.
+    if (sub === 'persist' && method === 'POST') {
+      const archive = await writeTar(session.root);
+      return sendBytes(res, 200, archive);
+    }
+
+    // POST /sessions/:id/hydrate ← tar bytes, extracted safely into the root.
+    if (sub === 'hydrate' && method === 'POST') {
+      const archive = await readBytes(req);
+      await safeExtractTar(archive, session.root, options.archiveLimits);
       return sendJson(res, 200, { ok: true });
     }
-  }
 
-  // GET /sessions/:id/stat?path=
-  if (sub === 'stat' && method === 'GET') {
-    const rel = url.searchParams.get('path');
-    if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
-    const resolved = await resolveOrDeny(session, rel, 'read');
-    let s;
-    try {
-      s = await fsp.lstat(resolved.path); // lstat: report a final-component symlink as-is
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new HttpError(404, 'not_found', `no such path: ${rel}`, false);
-      }
-      throw err;
-    }
-    return sendJson(res, 200, {
-      size: s.size,
-      mtimeMs: s.mtimeMs,
-      isFile: s.isFile(),
-      isDirectory: s.isDirectory(),
-      mode: s.mode & 0o7777,
-    });
+    throw new HttpError(404, 'not_found', `unknown route ${method} ${url.pathname}`);
+  } finally {
+    registry.release(id);
   }
-
-  // GET /sessions/:id/readdir?path=
-  if (sub === 'readdir' && method === 'GET') {
-    const rel = url.searchParams.get('path');
-    if (!rel) throw new HttpError(400, 'bad_request', 'missing path');
-    const resolved = await resolveOrDeny(session, rel, 'read');
-    const entries = await fsp.readdir(resolved.path, { withFileTypes: true });
-    return sendJson(res, 200, entries.map((e) => ({ name: e.name, isDirectory: e.isDirectory() })));
-  }
-
-  // POST /sessions/:id/persist → tar bytes of the workspace root.
-  if (sub === 'persist' && method === 'POST') {
-    const archive = await writeTar(session.root);
-    return sendBytes(res, 200, archive);
-  }
-
-  // POST /sessions/:id/hydrate ← tar bytes, extracted safely into the root.
-  if (sub === 'hydrate' && method === 'POST') {
-    const archive = await readBytes(req);
-    await safeExtractTar(archive, session.root, options.archiveLimits);
-    return sendJson(res, 200, { ok: true });
-  }
-
-  throw new HttpError(404, 'not_found', `unknown route ${method} ${url.pathname}`);
 }
 
 function authorize(req: IncomingMessage, token?: string): void {

@@ -58,7 +58,12 @@ export class DurableDirStore implements ArchiveStore {
   }
 
   private sessionDir(id: string): string {
-    return path.join(this.convDir, encodeURIComponent(id));
+    const dir = path.join(this.convDir, encodeURIComponent(id));
+    const relative = path.relative(this.convDir, dir);
+    if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error(`sessionId escapes convDir: ${id}`);
+    }
+    return dir;
   }
 
   private async writeMeta(id: string, lastUsedAt: number): Promise<void> {

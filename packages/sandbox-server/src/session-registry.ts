@@ -121,8 +121,16 @@ export class SessionRegistry {
 
   /** Archive every live session (graceful shutdown). */
   async archiveAll(): Promise<void> {
-    for (const id of [...this.entries.keys()]) {
-      await this.archiveEntry(id).catch((err) =>
+    // Bounded drain: availability over perfection — give in-flight requests a
+    // short grace period, then archive anyway so shutdown can't hang forever.
+    const drainPollMs = 50;
+    const drainTimeoutMs = 5000;
+    for (const [id, entry] of [...this.entries]) {
+      const deadline = Date.now() + drainTimeoutMs;
+      while (entry.inFlight > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, drainPollMs));
+      }
+      await this.archiveEntry(id, { force: true }).catch((err) =>
         console.warn(`[sandbox-server] shutdown archive failed for ${id}:`, err),
       );
     }
@@ -163,14 +171,31 @@ export class SessionRegistry {
     }
   }
 
-  private async archiveEntry(id: string): Promise<void> {
+  private async archiveEntry(id: string, opts: { force?: boolean } = {}): Promise<void> {
     const entry = this.entries.get(id);
     if (!entry) return;
+    const lastUsedAtAtDecision = entry.lastUsedAt;
     const bytes = await writeTar(entry.session.root);
+    if (!opts.force) {
+      // A request may have acquired the session while the tar await was in
+      // progress — archiving now would delete the root under it. Nothing was
+      // persisted yet (tar is only in memory), so aborting leaves no stale file.
+      const current = this.entries.get(id);
+      if (current !== entry || current.inFlight > 0 || current.lastUsedAt !== lastUsedAtAtDecision) {
+        return;
+      }
+    }
     await fsp.mkdir(this.archiveDir, { recursive: true, mode: 0o700 });
     await fsp.writeFile(this.archivePath(id), bytes, { mode: 0o600 });
     this.entries.delete(id);
-    await entry.session.cleanup();
+    try {
+      await entry.session.cleanup();
+    } catch (err) {
+      // The archive is already persisted and the entry removed — a cleanup
+      // failure only leaks the workspace dir, so don't let it propagate as
+      // "archive failed (kept live)", which would be false on both counts.
+      console.warn(`[sandbox-server] workspace cleanup failed after archive for ${id}:`, err);
+    }
   }
 
   private archivePath(id: string): string {

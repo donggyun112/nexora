@@ -43,10 +43,16 @@ describe('buildBwrapArgs', () => {
     expect(args.slice(bind, bind + 3)).toEqual(['--bind', '/vol/conv/abc/workspace', '/vol/conv/abc/workspace']);
   });
 
-  it('network none 은 --unshare-all 만, share 는 --share-net 추가', () => {
-    expect(buildBwrapArgs(base, cmd)).toContain('--unshare-all');
-    expect(buildBwrapArgs(base, cmd)).not.toContain('--share-net');
-    expect(buildBwrapArgs({ ...base, network: 'share' }, cmd)).toContain('--share-net');
+  it('network none 은 --unshare-net 포함, share 는 미포함 — 둘 다 --unshare-user 는 없다', () => {
+    const denyArgs = buildBwrapArgs(base, cmd);
+    expect(denyArgs).toContain('--unshare-net');
+    expect(denyArgs).not.toContain('--share-net');
+    expect(denyArgs).not.toContain('--unshare-all');
+    expect(denyArgs).not.toContain('--unshare-user');
+
+    const shareArgs = buildBwrapArgs({ ...base, network: 'share' }, cmd);
+    expect(shareArgs).not.toContain('--unshare-net');
+    expect(shareArgs).not.toContain('--unshare-user');
   });
 
   it('argv 는 -- 뒤에 그대로, chdir 은 cwd', () => {

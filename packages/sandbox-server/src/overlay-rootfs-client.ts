@@ -52,8 +52,15 @@ export function buildBwrapArgs(
   cmd: { argv: string[]; cwd: string },
   usrMergeLinks: string[] = DEFAULT_USR_MERGE_LINKS,
 ): string[] {
-  const args = ['--unshare-all'];
-  if (base.network === 'share') args.push('--share-net');
+  // Unshare everything EXCEPT the user namespace. A userns forces bwrap's
+  // overlay mounts to use `userxattr`, which the kernel refuses to stack over
+  // the container's own `nouserxattr` overlay rootfs (containerd/overlay2) —
+  // it fails with "Invalid argument". Running without a userns (as the
+  // privileged container root — the trust boundary here) makes the overlay use
+  // trusted xattrs, which nest correctly. Isolation still comes from the mount/
+  // pid/ipc/uts/cgroup(/net) namespaces + the overlay rootfs + workspace jail.
+  const args = ['--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup'];
+  if (base.network !== 'share') args.push('--unshare-net');
   args.push('--die-with-parent', '--uid', '0', '--gid', '0');
   for (const dir of base.systemDirs) {
     args.push(

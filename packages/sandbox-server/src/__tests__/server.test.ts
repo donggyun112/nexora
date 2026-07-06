@@ -14,6 +14,8 @@ import {
   type WorkspaceSession,
 } from '@dongkseo/contracts';
 import { createSandboxServer, type SandboxServerHandle, type SessionLifecycleOptions } from '../server.js';
+import { OverlayRootfsSandboxClient } from '../overlay-rootfs-client.js';
+import { DurableDirStore } from '../durable-dir-store.js';
 
 class FakeClient implements SandboxClient {
   async create(): Promise<WorkspaceSession> {
@@ -228,5 +230,43 @@ describe('session lifecycle (idle TTL / archive)', () => {
     await expect(fsp.stat(path.join(archiveDir, `${id}.tar`))).rejects.toThrow();
     const dead = await fetch(`${endpoint}/sessions/${id}/reattach`, { method: 'POST' });
     expect(((await dead.json()) as { alive: boolean }).alive).toBe(false);
+  });
+});
+
+describe('overlay backend 조립 (fs wire — bwrap 불필요)', () => {
+  it('create → fs 쓰기 → 강제 archive → reattach(thaw) 가 workspace 를 보존한다', async () => {
+    const convDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'srv-conv-'));
+    const client = new OverlayRootfsSandboxClient({ convDir, systemDirs: ['usr'] });
+    const store = new DurableDirStore(client, { convDir });
+    const handle = createSandboxServer({ client, archiveStore: store, lifecycle: { idleTtlMs: 0, sweepIntervalMs: 30 } });
+    await new Promise<void>((resolve) => handle.server.listen(0, '127.0.0.1', resolve));
+    const addr = handle.server.address() as { port: number };
+    const base = `http://127.0.0.1:${addr.port}`;
+
+    const created = (await (await fetch(`${base}/sessions`, { method: 'POST', body: '{}' })).json()) as {
+      sessionId: string;
+      root: string;
+    };
+    expect(created.root).toBe(path.join(convDir, created.sessionId, 'workspace'));
+
+    const put = await fetch(`${base}/sessions/${created.sessionId}/fs?path=hello.txt`, {
+      method: 'PUT',
+      body: 'hi',
+    });
+    expect(put.status).toBe(200);
+
+    // idleTtlMs=0 + 30ms sweep → 곧 archive(핸들 해제; durable 이라 디스크 보존)
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const reattach = (await (
+      await fetch(`${base}/sessions/${created.sessionId}/reattach`, { method: 'POST' })
+    ).json()) as { alive: boolean; root?: string };
+    expect(reattach).toEqual({ alive: true, root: created.root });
+
+    const got = await fetch(`${base}/sessions/${created.sessionId}/fs?path=hello.txt`);
+    expect(await got.text()).toBe('hi');
+
+    await handle.shutdown();
+    await fsp.rm(convDir, { recursive: true, force: true });
   });
 });

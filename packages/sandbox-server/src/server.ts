@@ -114,8 +114,14 @@ async function handle(
   // POST /sessions
   if (parts.length === 1 && method === 'POST') {
     const body = await readJson<CreateSessionRequest>(req);
-    const session = await options.client.create({ runId: body.runId, manifest: body.manifest });
+    // wire id 를 먼저 민팅해 backend 에 키로 전달한다 — durable backend 는
+    // 이 키로 디스크 상태를 잡아 thaw(wire id) 가 성립한다. (tar backend 는 무시)
     const id = crypto.randomUUID();
+    const session = await options.client.create({
+      runId: body.runId,
+      manifest: body.manifest,
+      metadata: { sessionKey: id },
+    });
     registry.register(id, session);
     return sendJson(res, 200, { sessionId: id, root: session.root } satisfies CreateSessionResponse);
   }

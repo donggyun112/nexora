@@ -37,6 +37,7 @@ import type {
   WorkspaceSession,
 } from '@dongkseo/contracts';
 import { safeExtractTar, writeTar } from '@dongkseo/contracts';
+import { TarArchiveStore, type ArchiveStore } from './archive-store.js';
 import { SessionRegistry, type SessionLifecycleOptions } from './session-registry.js';
 
 export type { SessionLifecycleOptions } from './session-registry.js';
@@ -49,7 +50,12 @@ export interface SandboxServerOptions {
   /** Extraction limits applied on hydrate. */
   archiveLimits?: ArchiveLimits;
   /** Session lifecycle (idle archive / thaw / archive TTL). Defaults always apply. */
-  lifecycle?: SessionLifecycleOptions;
+  lifecycle?: SessionLifecycleOptions & {
+    /** TarArchiveStore 용 (기본 store 일 때만 의미). */
+    archiveDir?: string;
+  };
+  /** Archive 매체 오버라이드. 미지정 시 tar 파일 store (현행 동작). */
+  archiveStore?: ArchiveStore;
 }
 
 class HttpError extends Error {
@@ -70,7 +76,13 @@ export interface SandboxServerHandle {
 }
 
 export function createSandboxServer(options: SandboxServerOptions): SandboxServerHandle {
-  const registry = new SessionRegistry(options.client, options.lifecycle, options.archiveLimits);
+  const store =
+    options.archiveStore ??
+    new TarArchiveStore(options.client, {
+      archiveDir: options.lifecycle?.archiveDir,
+      archiveLimits: options.archiveLimits,
+    });
+  const registry = new SessionRegistry(store, options.lifecycle);
   const server = createServer((req, res) => {
     handle(req, res, options, registry).catch((err) => sendError(res, err));
   });

@@ -1,27 +1,26 @@
 /**
  * Session lifecycle registry — owns the running→archived→deleted state machine.
  *
- * Live sessions are swept to disk archives after an idle TTL so keep-alive
- * clients don't leak workspaces; an archived session thaws transparently on
- * reattach under the SAME wire id (the client's ref stays valid), which also
- * makes conversations survive a server restart. Archives older than the
- * archive TTL are deleted.
+ * Live sessions are archived via the injected ArchiveStore after an idle TTL so
+ * keep-alive clients don't leak workspaces; an archived session thaws
+ * transparently on reattach under the SAME wire id (the client's ref stays
+ * valid), which also makes conversations survive a server restart. Archived
+ * state older than the archive TTL is swept.
  */
-import fsp from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import type { ArchiveLimits, SandboxClient, WorkspaceSession } from '@dongkseo/contracts';
-import { safeExtractTar, writeTar } from '@dongkseo/contracts';
+import { TarArchiveStore, type ArchiveStore } from './archive-store.js';
 
 export interface SessionLifecycleOptions {
-  /** Idle time before a live session is archived to disk. Default 30 minutes. */
+  /** Idle time before a live session is archived. Default 30 minutes. */
   idleTtlMs?: number;
-  /** Age before an archive file is deleted. Default 7 days. */
+  /** Age before archived state is deleted. Default 7 days. */
   archiveTtlMs?: number;
-  /** Directory holding `<sessionId>.tar` archives. Default `$TMPDIR/nexora-sandbox-archives`. */
-  archiveDir?: string;
   /** Sweep cadence. Default 60 seconds. */
   sweepIntervalMs?: number;
+  /** (Backward compat) Directory for tar archives when using TarArchiveStore. */
+  archiveDir?: string;
+  /** (Backward compat) Extraction limits for tar archives. */
+  archiveLimits?: ArchiveLimits;
 }
 
 interface SessionEntry {
@@ -34,19 +33,33 @@ export class SessionRegistry {
   private readonly entries = new Map<string, SessionEntry>();
   private readonly idleTtlMs: number;
   private readonly archiveTtlMs: number;
-  private readonly archiveDir: string;
   private readonly sweepIntervalMs: number;
   private timer: NodeJS.Timeout | undefined;
+  private readonly store: ArchiveStore;
 
   constructor(
-    private readonly client: SandboxClient,
+    storeOrClient: ArchiveStore | SandboxClient,
     options: SessionLifecycleOptions = {},
-    private readonly archiveLimits?: ArchiveLimits,
+    archiveLimits?: ArchiveLimits,
   ) {
     this.idleTtlMs = options.idleTtlMs ?? 30 * 60 * 1000;
     this.archiveTtlMs = options.archiveTtlMs ?? 7 * 24 * 60 * 60 * 1000;
-    this.archiveDir = options.archiveDir ?? path.join(os.tmpdir(), 'nexora-sandbox-archives');
     this.sweepIntervalMs = options.sweepIntervalMs ?? 60 * 1000;
+
+    // Support both new signature (ArchiveStore) and legacy signature (SandboxClient).
+    // When called with a client, create a TarArchiveStore automatically.
+    if (this.isClient(storeOrClient)) {
+      this.store = new TarArchiveStore(storeOrClient, {
+        archiveDir: options.archiveDir,
+        archiveLimits: archiveLimits ?? options.archiveLimits,
+      });
+    } else {
+      this.store = storeOrClient;
+    }
+  }
+
+  private isClient(obj: ArchiveStore | SandboxClient): obj is SandboxClient {
+    return typeof (obj as SandboxClient).create === 'function';
   }
 
   register(id: string, session: WorkspaceSession): void {
@@ -69,14 +82,14 @@ export class SessionRegistry {
     entry.lastUsedAt = Date.now();
   }
 
-  /** Explicit teardown: destroys the live session AND its archive. */
+  /** Explicit teardown: destroys the live session AND its archived state. */
   async destroy(id: string): Promise<void> {
     const entry = this.entries.get(id);
     if (entry) {
       this.entries.delete(id);
       await entry.session.cleanup();
     }
-    await fsp.rm(this.archivePath(id), { force: true });
+    await this.store.delete(id);
   }
 
   /** live → reuse; archived → thaw under the same id; otherwise dead. */
@@ -86,23 +99,9 @@ export class SessionRegistry {
       entry.lastUsedAt = Date.now();
       return { alive: true, root: entry.session.root };
     }
-    let archive: Buffer;
-    try {
-      archive = await fsp.readFile(this.archivePath(id));
-    } catch {
-      return { alive: false };
-    }
-    const session = await this.client.create({});
-    try {
-      await safeExtractTar(archive, session.root, this.archiveLimits);
-    } catch (err) {
-      // Keep the archive for a later retry; the client falls back to its cold path.
-      await session.cleanup().catch(() => {});
-      console.warn(`[sandbox-server] thaw failed for ${id}:`, err);
-      return { alive: false };
-    }
+    const session = await this.store.thaw(id);
+    if (!session) return { alive: false };
     this.register(id, session);
-    await fsp.rm(this.archivePath(id), { force: true });
     return { alive: true, root: session.root };
   }
 
@@ -153,53 +152,29 @@ export class SessionRegistry {
         console.warn(`[sandbox-server] archive failed for ${id} (kept live):`, err),
       );
     }
-    let names: string[];
-    try {
-      names = await fsp.readdir(this.archiveDir);
-    } catch {
-      return; // no archives yet
-    }
-    for (const name of names) {
-      if (!name.endsWith('.tar')) continue;
-      const file = path.join(this.archiveDir, name);
-      try {
-        const stat = await fsp.stat(file);
-        if (now - stat.mtimeMs > this.archiveTtlMs) await fsp.rm(file, { force: true });
-      } catch {
-        // raced with a thaw/destroy — fine
-      }
-    }
+    await this.store
+      .sweepStale(this.archiveTtlMs, new Set(this.entries.keys()), now)
+      .catch((err) => console.warn('[sandbox-server] archive sweep failed:', err));
   }
 
   private async archiveEntry(id: string, opts: { force?: boolean } = {}): Promise<void> {
     const entry = this.entries.get(id);
     if (!entry) return;
     const lastUsedAtAtDecision = entry.lastUsedAt;
-    const bytes = await writeTar(entry.session.root);
-    if (!opts.force) {
-      // A request may have acquired the session while the tar await was in
-      // progress — archiving now would delete the root under it. Nothing was
-      // persisted yet (tar is only in memory), so aborting leaves no stale file.
+    const stillValid = (): boolean => {
       const current = this.entries.get(id);
-      if (current !== entry || current.inFlight > 0 || current.lastUsedAt !== lastUsedAtAtDecision) {
-        return;
-      }
-    }
-    await fsp.mkdir(this.archiveDir, { recursive: true, mode: 0o700 });
-    await fsp.writeFile(this.archivePath(id), bytes, { mode: 0o600 });
+      return current === entry && current.inFlight === 0 && current.lastUsedAt === lastUsedAtAtDecision;
+    };
+    const archived = await this.store.archive(id, entry.session, { force: opts.force, stillValid });
+    if (!archived) return;
     this.entries.delete(id);
     try {
       await entry.session.cleanup();
     } catch (err) {
-      // The archive is already persisted and the entry removed — a cleanup
-      // failure only leaks the workspace dir, so don't let it propagate as
+      // Archived state is already persisted and the entry removed — a cleanup
+      // failure only leaks the workspace, so don't let it propagate as
       // "archive failed (kept live)", which would be false on both counts.
       console.warn(`[sandbox-server] workspace cleanup failed after archive for ${id}:`, err);
     }
-  }
-
-  private archivePath(id: string): string {
-    // Session ids are server-minted UUIDs, but sanitize before touching the FS anyway.
-    return path.join(this.archiveDir, `${encodeURIComponent(id)}.tar`);
   }
 }

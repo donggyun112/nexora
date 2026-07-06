@@ -10,6 +10,7 @@ import {
   type ResolvedWorkspacePath,
   type SandboxClient,
   type SandboxCommand,
+  type SandboxSessionState,
   type WorkspaceAcquireOptions,
   type WorkspaceResolveOptions,
   type WorkspaceSession,
@@ -214,6 +215,21 @@ describe('RemoteSandboxClient ↔ sandbox-server (portability axis)', () => {
       seedDirs: [{ source: '/nonexistent/skill/dir', destSubpath: '.skill_refs/x' }],
     });
     expect(session.id).toBeTruthy(); // 예외 없이 세션 생성
+  });
+
+  it('re-seeds on cold resume (recreate path)', async () => {
+    const { endpoint } = await startServer();
+    const client = mkClient(endpoint);
+    const srcDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'seed-resume-'));
+    spools.push(srcDir);
+    await fsp.writeFile(path.join(srcDir, 'SKILL.md'), 'resumed skill');
+
+    const session = await client.resume(
+      { ref: undefined, snapshot: undefined } as unknown as SandboxSessionState,
+      { runId: 'seed-resume', seedDirs: [{ source: srcDir, destSubpath: '.skill_refs/pdf' }] },
+    );
+
+    expect(await getFile(endpoint, session.id, '.skill_refs/pdf/SKILL.md')).toBe('resumed skill');
   });
 
   it('does not transfer symlinks (root-jail safety)', async () => {

@@ -119,6 +119,7 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
         // Best-effort: a missing/unreadable archive yields an empty fresh workspace.
       }
     }
+    await this.seedRemote(created.sessionId, options.seedDirs);
     return this.buildSession(created.sessionId, created.root);
   }
 

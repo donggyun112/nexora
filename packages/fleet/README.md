@@ -1,6 +1,6 @@
 # @dongkseo/fleet
 
-**Stability: beta** · `pnpm add @dongkseo/fleet`
+**Stability: advanced** · `pnpm add @dongkseo/fleet`
 
 > 이 파일은 에이전트(사람·LLM)가 **소스를 열지 않고도** 이 패키지를 쓸 수 있게 하는 오리엔테이션 문서다.
 > 정확한 API 타입은 "API 표면" 섹션의 방법으로 `signatures`만 읽어라 — 본문을 베끼지 말 것.

@@ -12,7 +12,7 @@
 - ✅ 담는 것: `GatewayRouter`(transport로 발행), `LocalRuntimeRouter`(transport 없이 런타임 직접 호출·스트리밍), `StreamingGatewayRouter`, 의도 해석기(`createMentionResolver`), 인증·레이트리밋 미들웨어
 - ❌ 안 담는 것: HTTP/Discord 등 채널 어댑터(→ `@dongkseo/adapters`), 에이전트 레지스트리 구현(→ `@dongkseo/registry`), 트랜스포트 구현(→ `@dongkseo/transport`)
 
-의존 방향: **gateway → adapters, registry, contracts**.
+의존 방향: **gateway → adapters, contracts**. 에이전트/Capability 조회가 필요하면 호출자가 `@dongkseo/registry`로 resolver를 구성해 주입한다.
 
 ## 핵심 개념
 

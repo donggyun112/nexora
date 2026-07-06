@@ -14,7 +14,7 @@
 - ✅ 담는 것: 내장 도구 팩토리(`create*Tool`), `ToolRegistry`/프로파일·정책 조립, handraise/approval, MCP 브리지, reporter 미들웨어
 - ❌ 안 담는 것: 도구 실행 루프(에이전트 런타임)·LLM 호출 — 그건 `core`/`architectures` 몫. 도구 결과 타입(`ToolDefinition`, `ToolResult`, `textResult` …)은 `contracts`가 정의
 
-의존 방향은 **tools → contracts** 단방향. 도구는 `ToolDefinition`(contracts)을 만들어 내보내고, 실행은 다른 패키지가 한다.
+의존 방향은 **tools → contracts** 단방향. 도구는 `ToolDefinition`(contracts)을 만들어 내보내고, 실행은 다른 패키지가 한다. `skill_reload`만 예외적으로 실행 시점에 optional peer인 `@dongkseo/skills`를 로드하므로, 그 도구를 직접 쓰는 앱은 `@dongkseo/skills`도 설치한다.
 
 ## 핵심 개념
 

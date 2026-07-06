@@ -56,15 +56,20 @@ graph TD
   tenancy --> context
   tenancy --> contracts
   tools --> contracts
-  tools --> skills
-  tools --> store
   transport --> contracts
   gateway --> adapters
   gateway --> contracts
-  gateway --> registry
   registry --> contracts
+  cli --> adapters
+  cli --> architectures
+  cli --> context
+  cli --> contracts
+  cli --> core
+  cli --> gateway
+  cli --> registry
+  cli --> tools
+  cli --> transport
 ```
-> `cli`는 정적 deps가 없어 위 그래프에 노드를 두지 않았다(런타임 간선은 아래 주석 참고).
 
 텍스트 인접목록(에이전트가 그래프 렌더 없이 읽는 용):
 ```
@@ -85,19 +90,19 @@ store-json     -> contracts
 store-memory   -> contracts
 store-pg       -> contracts
 tenancy        -> context, contracts
-tools          -> contracts, skills, store
+tools          -> contracts
 transport      -> contracts
-gateway        -> adapters, contracts, registry
+gateway        -> adapters, contracts
 registry       -> contracts
-cli            -> (정적 deps 없음; 런타임에 core/transport 사용)
+cli            -> adapters, architectures, context, contracts, core, gateway, registry, tools, transport
 ```
-런타임 동적 간선(정적 deps에 없음): `store ⇢ store-json|store-pg`(동적 import), `otel ⇢ transport`(래핑), `cli ⇢ core|transport`(dev 부팅).
+런타임 동적/optional 간선(정적 deps에 없음): `store ⇢ store-json|store-pg`(동적 import), `otel ⇢ transport`(래핑), `tools ⇢ skills`(`skill_reload` 실행 시 optional peer 로드).
 
 ## 계층 요청 흐름
 
 ```
 Adapter (HTTP / Discord / Slack)          @dongkseo/adapters
-  → Gateway (auth + rate-limit → route)   @dongkseo/gateway (+ @dongkseo/registry)
+  → Gateway (auth + rate-limit → route)   @dongkseo/gateway (resolver may use @dongkseo/registry)
     → Transport (Local / Redis / Durable) @dongkseo/transport
       → Bootstrap (subscribe·validate·tenant) @dongkseo/core
         → ContextLoader (persona·limits·tools)  @dongkseo/context

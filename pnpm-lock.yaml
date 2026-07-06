@@ -455,12 +455,6 @@ importers:
       '@dongkseo/contracts':
         specifier: workspace:^
         version: link:../contracts
-      '@dongkseo/skills':
-        specifier: ^0.1.3
-        version: 0.1.3
-      '@dongkseo/store':
-        specifier: ^0.1.5
-        version: 0.1.5
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
@@ -468,6 +462,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@dongkseo/skills':
+        specifier: workspace:^
+        version: link:../skills
       '@types/node':
         specifier: ^26.0.1
         version: 26.0.1
@@ -492,13 +489,16 @@ importers:
         version: 6.0.3
 
   platform/cli:
-    devDependencies:
+    dependencies:
       '@dongkseo/adapters':
         specifier: workspace:^
         version: link:../../packages/adapters
       '@dongkseo/architectures':
         specifier: workspace:^
         version: link:../../packages/architectures
+      '@dongkseo/context':
+        specifier: workspace:^
+        version: link:../../packages/context
       '@dongkseo/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
@@ -508,12 +508,16 @@ importers:
       '@dongkseo/gateway':
         specifier: workspace:^
         version: link:../gateway
+      '@dongkseo/registry':
+        specifier: workspace:^
+        version: link:../registry
       '@dongkseo/tools':
         specifier: workspace:^
         version: link:../../packages/tools
       '@dongkseo/transport':
         specifier: workspace:^
         version: link:../../packages/transport
+    devDependencies:
       '@types/node':
         specifier: ^26.0.1
         version: 26.0.1
@@ -529,9 +533,6 @@ importers:
       '@dongkseo/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
-      '@dongkseo/registry':
-        specifier: workspace:^
-        version: link:../registry
     devDependencies:
       '@dongkseo/architectures':
         specifier: workspace:^
@@ -687,15 +688,6 @@ packages:
   '@babel/runtime@7.29.7':
     resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
     engines: {node: '>=6.9.0'}
-
-  '@dongkseo/contracts@0.1.22':
-    resolution: {integrity: sha512-4kCtOKjzeZVWqfKtio7eM21k63ZEPan2iX/g/eEO+TKPmksOZWjBlPe/7POBVEbtbsLYwHWi4zC0BQ/JmWCRIA==}
-
-  '@dongkseo/skills@0.1.3':
-    resolution: {integrity: sha512-n1LCJ4BKhv6XFQ2WO628m5WQvvphRPuN4tXpftOLkX77Z6SuOfrrd+DX6Y4uGoGbc1OG2RH7vpY7c6ID/KNoJA==}
-
-  '@dongkseo/store@0.1.5':
-    resolution: {integrity: sha512-73x8ZEcll1j1fDSzb/YJEDVGmS2J1xz+ZePR0x31FqGqi4fwxjg3eWtF4LtNdyMf4N0ulcuVMVOjcufDRA9r+w==}
 
   '@earendil-works/pi-ai@0.80.3':
     resolution: {integrity: sha512-jPZLMeGL5kkMSEAwAklfXTMHqZvfhsJtCCpKGIr5Duk7mc0n4skjB1dugk7y0z3z8ZHIUCmPAWHdyDqgUz5vdA==}
@@ -2088,16 +2080,6 @@ snapshots:
   '@aws/lambda-invoke-store@0.2.4': {}
 
   '@babel/runtime@7.29.7': {}
-
-  '@dongkseo/contracts@0.1.22': {}
-
-  '@dongkseo/skills@0.1.3':
-    dependencies:
-      '@dongkseo/contracts': 0.1.22
-
-  '@dongkseo/store@0.1.5':
-    dependencies:
-      '@dongkseo/contracts': 0.1.22
 
   '@earendil-works/pi-ai@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:

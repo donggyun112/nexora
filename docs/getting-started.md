@@ -13,16 +13,16 @@
 ```bash
 mkdir my-project && cd my-project
 pnpm init
-pnpm add @dongkseo/contracts @dongkseo/core @dongkseo/cli
+pnpm add @dongkseo/contracts @dongkseo/core @dongkseo/architectures @dongkseo/cli
+pnpm add -D typescript @types/node
 
 # Scaffold an agent
-npx nexora create agent my-agent --tools read,grep
+pnpm exec nexora create agent my-agent --tools read,grep
 
 # Build + start
-pnpm add typescript @types/node
-npx tsc --init --target ES2022 --module ESNext --moduleResolution Bundler
-pnpm build
-npx nexora dev
+pnpm exec tsc --init --target ES2022 --module ESNext --moduleResolution Bundler
+pnpm exec tsc
+pnpm exec nexora dev
 ```
 
 ## Step 2: Talk to it
@@ -42,9 +42,10 @@ curl → HttpAdapter → LocalTransport → your agent → ReAct loop
   → read tool (lists files) → LLM response → HTTP reply
 ```
 
-Three packages did everything:
+Four direct packages did everything:
 - `@dongkseo/contracts` — types
 - `@dongkseo/core` — runtime
+- `@dongkseo/architectures` — ReAct runtime architecture used by the scaffold
 - `@dongkseo/cli` — scaffold + dev server
 
 ## Step 3: Add capabilities (when you need them)

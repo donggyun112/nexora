@@ -13,16 +13,14 @@ import {
   type ToolResult,
   type ToolContext,
 } from '@dongkseo/contracts';
-import {
-  getLastSkillMenuSnapshot,
-  invalidateSkillMenuCache,
-  refreshSkillMenuSnapshot,
-  snapshotSkills,
-} from '@dongkseo/skills';
-
 export interface SkillReloadToolOptions {
   readonly agentSkillsDir: string;
   readonly sharedSkillsDir?: string;
+}
+
+interface SkillSnapshotEntry {
+  readonly name: string;
+  readonly description: string;
 }
 
 export function createSkillReloadTool(options: SkillReloadToolOptions): ToolDefinition {
@@ -38,6 +36,12 @@ export function createSkillReloadTool(options: SkillReloadToolOptions): ToolDefi
     isConcurrencySafe: false,
     isDestructive: false,
     async execute(_callId: string, _rawInput: unknown, _ctx: ToolContext): Promise<ToolResult> {
+      const {
+        getLastSkillMenuSnapshot,
+        invalidateSkillMenuCache,
+        refreshSkillMenuSnapshot,
+        snapshotSkills,
+      } = await import('@dongkseo/skills');
       const before =
         getLastSkillMenuSnapshot(options.agentSkillsDir, options.sharedSkillsDir) ??
         snapshotSkills(options.agentSkillsDir, options.sharedSkillsDir);
@@ -47,8 +51,8 @@ export function createSkillReloadTool(options: SkillReloadToolOptions): ToolDefi
       const beforeMap = new Map(before.map((s) => [s.name, s.description]));
       const afterMap = new Map(after.map((s) => [s.name, s.description]));
 
-      const added: Array<{ name: string; description: string }> = [];
-      const removed: Array<{ name: string; description: string }> = [];
+      const added: SkillSnapshotEntry[] = [];
+      const removed: SkillSnapshotEntry[] = [];
       for (const s of after) {
         if (!beforeMap.has(s.name)) added.push(s);
       }

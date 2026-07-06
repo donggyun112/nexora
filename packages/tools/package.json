@@ -17,12 +17,19 @@
   },
   "dependencies": {
     "@dongkseo/contracts": "workspace:^",
-    "@dongkseo/skills": "^0.1.3",
-    "@dongkseo/store": "^0.1.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
   },
+  "peerDependencies": {
+    "@dongkseo/skills": "^0.1.4"
+  },
+  "peerDependenciesMeta": {
+    "@dongkseo/skills": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@dongkseo/skills": "workspace:^",
     "@types/node": "^26.0.1",
     "typescript": "^6.0.3"
   },

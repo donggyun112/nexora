@@ -7,8 +7,8 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "test": "turbo test",
-    "test:stable": "turbo test --filter='!@dongkseo/conversation' --filter='!@dongkseo/otel'",
-    "test:experimental": "turbo test --filter=@dongkseo/conversation --filter=@dongkseo/otel",
+    "test:stable": "turbo test --filter=@dongkseo/contracts --filter=@dongkseo/core --filter=@dongkseo/transport --filter=@dongkseo/context --filter=@dongkseo/orchestrator --filter=@dongkseo/architectures --filter=@dongkseo/tools --filter=@dongkseo/adapters --filter=@dongkseo/gateway --filter=@dongkseo/registry --filter=@dongkseo/cli",
+    "test:experimental": "turbo test --filter=@dongkseo/conversation --filter=@dongkseo/fleet --filter=@dongkseo/otel --filter=@dongkseo/store --filter=@dongkseo/store-json --filter=@dongkseo/skills --filter=@dongkseo/sandbox-remote --filter=@dongkseo/sandbox-server --filter=@dongkseo/store-memory --filter=@dongkseo/store-pg --filter=@dongkseo/tenancy",
     "clean": "turbo clean",
     "release": "pnpm -r publish --access public --no-git-checks"
   },

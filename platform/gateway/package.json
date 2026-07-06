@@ -17,8 +17,7 @@
   },
   "dependencies": {
     "@dongkseo/adapters": "workspace:^",
-    "@dongkseo/contracts": "workspace:^",
-    "@dongkseo/registry": "workspace:^"
+    "@dongkseo/contracts": "workspace:^"
   },
   "devDependencies": {
     "@dongkseo/architectures": "workspace:^",

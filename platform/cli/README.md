@@ -28,8 +28,8 @@ Nexora 개발/운영 **CLI**다. 에이전트를 스캐폴드하고, dev 서버�
 
 CLI:
 ```bash
-npx nexora create agent my-agent --tools read,grep
-npx nexora dev
+pnpm exec nexora create agent my-agent --tools read,grep
+pnpm exec nexora dev
 # 다른 터미널
 curl -X POST localhost:3000/messages -H 'Content-Type: application/json' -d '{"content":"hello"}'
 ```

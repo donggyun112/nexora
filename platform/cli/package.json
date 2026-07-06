@@ -18,14 +18,18 @@
     "test": "vitest run",
     "clean": "rm -rf dist .tsbuildinfo"
   },
-  "devDependencies": {
+  "dependencies": {
     "@dongkseo/adapters": "workspace:^",
     "@dongkseo/architectures": "workspace:^",
     "@dongkseo/contracts": "workspace:^",
     "@dongkseo/core": "workspace:^",
     "@dongkseo/gateway": "workspace:^",
+    "@dongkseo/registry": "workspace:^",
     "@dongkseo/tools": "workspace:^",
     "@dongkseo/transport": "workspace:^",
+    "@dongkseo/context": "workspace:^"
+  },
+  "devDependencies": {
     "@types/node": "^26.0.1",
     "typescript": "^6.0.3"
   },

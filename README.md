@@ -28,14 +28,14 @@
 Nexora is a TypeScript framework for running **multiple AI agents as a coordinated team**.
 
 ```
-nexora create agent my-agent
-nexora dev
+pnpm exec nexora create agent my-agent
+pnpm exec nexora dev
 curl localhost:3000/messages -d '{"content": "hello"}'
 ```
 
 ## Start here
 
-You only need **3 packages** to run your first agent:
+You only need a small core to run your first agent manually:
 
 ```
 @dongkseo/core          — agent runtime + LLM providers
@@ -43,7 +43,7 @@ You only need **3 packages** to run your first agent:
 @dongkseo/transport     — message bus (LocalTransport for dev)
 ```
 
-That's it. Everything else is optional and added when you need it.
+That's it for library embedding. For the CLI quickstart, add `@dongkseo/cli` and `@dongkseo/architectures` as shown in the getting-started guide.
 
 | When you need... | Add... |
 |---|---|

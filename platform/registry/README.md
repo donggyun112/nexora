@@ -12,7 +12,7 @@
 - ✅ 담는 것: AgentRegistry 구현(인메모리 `InMemoryAgentRegistry` + 분산 `RedisAgentRegistry`), 설정→구현 팩토리(`createAgentRegistry`), capability 라우팅 레지스트리(`createCapabilityRegistry`, `checkInputContract`)
 - ❌ 안 담는 것: AgentCard 타입 정의(→ `@dongkseo/contracts`), 라우팅/게이트웨이(→ `@dongkseo/gateway`), capability 매칭 기반 워커 dispatch(→ `@dongkseo/fleet`)
 
-의존 방향: **registry → contracts** 단방향. `@dongkseo/gateway`가 registry에 의존한다.
+의존 방향: **registry → contracts** 단방향. `@dongkseo/gateway`에는 registry로 만든 resolver를 주입할 수 있지만, gateway가 registry를 직접 import하지는 않는다.
 
 ## 핵심 개념
 

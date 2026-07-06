@@ -199,4 +199,34 @@ describe('session lifecycle (idle TTL / archive)', () => {
     const dead = await fetch(`${endpoint}/sessions/${id}/reattach`, { method: 'POST' });
     expect(((await dead.json()) as { alive: boolean }).alive).toBe(false);
   });
+
+  it('thaws an archived session on reattach under the same id', async () => {
+    const { endpoint, archiveDir } = await startWithLifecycle({ idleTtlMs: 40, sweepIntervalMs: 15, archiveTtlMs: 60_000 });
+    const id = await createSession(endpoint);
+    await fetch(`${endpoint}/sessions/${id}/fs?path=keep.txt`, { method: 'PUT', body: 'thaw-me' });
+
+    await new Promise((r) => setTimeout(r, 250)); // archive 로 전환
+    await fsp.stat(path.join(archiveDir, `${id}.tar`)); // 전제: archive 존재
+
+    const re = await fetch(`${endpoint}/sessions/${id}/reattach`, { method: 'POST' });
+    const body = (await re.json()) as { alive: boolean; root?: string };
+    expect(body.alive).toBe(true);
+    expect(body.root).toBeTruthy();
+
+    const got = await fetch(`${endpoint}/sessions/${id}/fs?path=keep.txt`);
+    expect(await got.text()).toBe('thaw-me');
+    await expect(fsp.stat(path.join(archiveDir, `${id}.tar`))).rejects.toThrow(); // thaw 후 archive 소거
+  });
+
+  it('DELETE removes the archive too (explicit teardown is total)', async () => {
+    const { endpoint, archiveDir } = await startWithLifecycle({ idleTtlMs: 40, sweepIntervalMs: 15, archiveTtlMs: 60_000 });
+    const id = await createSession(endpoint);
+    await new Promise((r) => setTimeout(r, 250)); // archive 로 전환
+    await fsp.stat(path.join(archiveDir, `${id}.tar`));
+
+    await fetch(`${endpoint}/sessions/${id}`, { method: 'DELETE' });
+    await expect(fsp.stat(path.join(archiveDir, `${id}.tar`))).rejects.toThrow();
+    const dead = await fetch(`${endpoint}/sessions/${id}/reattach`, { method: 'POST' });
+    expect(((await dead.json()) as { alive: boolean }).alive).toBe(false);
+  });
 });

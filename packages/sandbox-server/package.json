@@ -1,6 +1,6 @@
 {
   "name": "@dongkseo/sandbox-server",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "clean": "rm -rf dist .tsbuildinfo"
+    "clean": "rm -rf dist .tsbuildinfo",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
   },
   "dependencies": {
     "@dongkseo/contracts": "workspace:^"

@@ -50,10 +50,7 @@ export interface SandboxServerOptions {
   /** Extraction limits applied on hydrate. */
   archiveLimits?: ArchiveLimits;
   /** Session lifecycle (idle archive / thaw / archive TTL). Defaults always apply. */
-  lifecycle?: SessionLifecycleOptions & {
-    /** TarArchiveStore 용 (기본 store 일 때만 의미). */
-    archiveDir?: string;
-  };
+  lifecycle?: SessionLifecycleOptions;
   /** Archive 매체 오버라이드. 미지정 시 tar 파일 store (현행 동작). */
   archiveStore?: ArchiveStore;
 }

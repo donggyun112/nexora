@@ -7,7 +7,7 @@
  * valid), which also makes conversations survive a server restart. Archived
  * state older than the archive TTL is swept.
  */
-import type { ArchiveLimits, SandboxClient, WorkspaceSession } from '@dongkseo/contracts';
+import type { SandboxClient, WorkspaceSession } from '@dongkseo/contracts';
 import { TarArchiveStore, type ArchiveStore } from './archive-store.js';
 
 export interface SessionLifecycleOptions {
@@ -19,8 +19,6 @@ export interface SessionLifecycleOptions {
   sweepIntervalMs?: number;
   /** (Backward compat) Directory for tar archives when using TarArchiveStore. */
   archiveDir?: string;
-  /** (Backward compat) Extraction limits for tar archives. */
-  archiveLimits?: ArchiveLimits;
 }
 
 interface SessionEntry {
@@ -40,18 +38,16 @@ export class SessionRegistry {
   constructor(
     storeOrClient: ArchiveStore | SandboxClient,
     options: SessionLifecycleOptions = {},
-    archiveLimits?: ArchiveLimits,
   ) {
     this.idleTtlMs = options.idleTtlMs ?? 30 * 60 * 1000;
     this.archiveTtlMs = options.archiveTtlMs ?? 7 * 24 * 60 * 60 * 1000;
     this.sweepIntervalMs = options.sweepIntervalMs ?? 60 * 1000;
 
-    // Support both new signature (ArchiveStore) and legacy signature (SandboxClient).
-    // When called with a client, create a TarArchiveStore automatically.
+    // Support both new signature (ArchiveStore passed directly) and legacy signature
+    // (SandboxClient with options). Pre-existing tests use the legacy path.
     if (this.isClient(storeOrClient)) {
       this.store = new TarArchiveStore(storeOrClient, {
         archiveDir: options.archiveDir,
-        archiveLimits: archiveLimits ?? options.archiveLimits,
       });
     } else {
       this.store = storeOrClient;

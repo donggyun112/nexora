@@ -60,6 +60,13 @@ export interface RemoteSandboxClientOptions {
    * 'delete' restores eager teardown for servers without lifecycle management.
    */
   endOfTurn?: 'release' | 'delete';
+  /**
+   * Externally managed absolute root (server-side path) to bind every session
+   * to. Sent on create AND cold-resume recreation, so the session always lands
+   * back on the same caller-owned directory. The server validates it against
+   * its allowlist (403 otherwise) and treats the session as non-archivable.
+   */
+  rootDir?: string;
 }
 
 export class RemoteSandboxError extends Error {
@@ -80,6 +87,7 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
   private readonly spoolDir: string;
   private readonly fetchImpl: typeof fetch;
   private readonly endOfTurn: 'release' | 'delete';
+  private readonly rootDir?: string;
 
   constructor(options: RemoteSandboxClientOptions) {
     this.endpoint = options.endpoint.replace(/\/+$/, '');
@@ -87,6 +95,7 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
     this.spoolDir = options.spoolDir ?? path.join(os.tmpdir(), 'nexora-remote-snapshots');
     this.fetchImpl = options.fetch ?? fetch;
     this.endOfTurn = options.endOfTurn ?? 'release';
+    this.rootDir = options.rootDir;
   }
 
   async acquire(options?: WorkspaceAcquireOptions): Promise<WorkspaceSession> {
@@ -95,7 +104,7 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
 
   async create(options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
     const created = await this.request<CreateSessionResponse>('POST', '/sessions', {
-      json: { runId: options.runId, manifest: options.manifest },
+      json: { runId: options.runId, manifest: options.manifest, rootDir: options.rootDir ?? this.rootDir },
     });
     await this.seedRemote(created.sessionId, options.seedDirs);
     return this.buildSession(created.sessionId, created.root);
@@ -115,11 +124,14 @@ export class RemoteSandboxClient implements SandboxClient, WorkspaceProvider {
     }
 
     // COLD: recreate a fresh session and rehydrate saved workspace bytes.
+    const rootDir = options.rootDir ?? this.rootDir;
     const created = await this.request<CreateSessionResponse>('POST', '/sessions', {
-      json: { runId: options.runId, manifest: options.manifest },
+      json: { runId: options.runId, manifest: options.manifest, rootDir },
     });
     const snapshot = state.snapshot;
-    if (snapshot?.ref) {
+    // rootDir sessions: the external directory IS the durable state — never
+    // hydrate a spooled archive over the caller-owned tree.
+    if (snapshot?.ref && !rootDir) {
       try {
         const bytes = await fsp.readFile(snapshot.ref);
         await this.request('POST', `/sessions/${encode(created.sessionId)}/hydrate`, { body: bytes });

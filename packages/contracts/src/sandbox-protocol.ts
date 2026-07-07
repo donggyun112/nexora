@@ -18,6 +18,13 @@ import type { SandboxCommandResult, WorkspaceManifest, WorkspaceSnapshot } from 
 export interface CreateSessionRequest {
   runId?: string;
   manifest?: WorkspaceManifest;
+  /**
+   * Externally managed absolute root to bind the session to (see
+   * `WorkspaceAcquireOptions.rootDir`). Servers MUST validate it against an
+   * operator-configured allowlist and reject with 403 otherwise; accepted
+   * sessions are non-archivable and their cleanup never deletes the directory.
+   */
+  rootDir?: string;
 }
 
 /** `POST /sessions` response. */

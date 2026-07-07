@@ -121,12 +121,16 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
 
   async create(options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
     const id = options.runId ?? crypto.randomUUID();
-    const root = this.perRun
-      ? await this.createRunRoot(id)
-      : await this.resolveExistingRoot(options.baseWorkdir);
+    // rootDir = caller-owned external root: overrides per-run minting and the
+    // configured fixed root, and the session must never delete it on cleanup.
+    const root = options.rootDir
+      ? await this.resolveExistingRoot(options.rootDir)
+      : this.perRun
+        ? await this.createRunRoot(id)
+        : await this.resolveExistingRoot(this.root ?? options.baseWorkdir);
     // Manifest seeding/mounts apply to a fresh session only (never on resume).
     const seeds = [...(options.seedDirs ?? []), ...(options.manifest?.seed ?? [])];
-    return this.buildSession(id, root, seeds, options.manifest?.mounts);
+    return this.buildSession(id, root, seeds, options.manifest?.mounts, options.rootDir ? 'keep' : undefined);
   }
 
   /**
@@ -138,9 +142,14 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
   async resume(state: SandboxSessionState, options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
     const snap = state.snapshot;
     const id = snap?.id || crypto.randomUUID();
+    if (options.rootDir) {
+      // External root IS the durable state — never restore an archive over it.
+      const root = await this.resolveExistingRoot(options.rootDir);
+      return this.buildSession(id, root, options.seedDirs, undefined, 'keep');
+    }
     const root = this.perRun
       ? await this.createRunRoot(id)
-      : await this.resolveExistingRoot(snap?.root);
+      : await this.resolveExistingRoot(this.root ?? snap?.root);
     if (snap?.ref && (await this.snapshotBackend.restorable(snap.ref))) {
       // Fixed root may still be live; a per-run root is always fresh (no live fp).
       const live = this.perRun ? undefined : await fingerprintRoot(root);
@@ -162,6 +171,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
     root: string,
     seedDirs?: WorkspaceAcquireOptions['seedDirs'],
     manifestMounts?: WorkspaceMount[],
+    cleanupModeOverride?: 'keep' | 'delete',
   ): Promise<WorkspaceSession> {
     await materializeSeedDirs(root, seedDirs);
     const config = this.buildConfig(root);
@@ -172,7 +182,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
       root,
       mode: this.mode,
       config,
-      cleanupMode: this.cleanupMode,
+      cleanupMode: cleanupModeOverride ?? this.cleanupMode,
       mounts: [
         workspaceRootMount(root, this.mode),
         ...this.mounts,
@@ -189,8 +199,7 @@ export class AsrtSandboxClient implements SandboxClient, WorkspaceProvider {
     return fsp.mkdtemp(path.join(this.baseDir, `${safeWorkspaceSegment(id)}-`));
   }
 
-  private async resolveExistingRoot(baseWorkdir?: string): Promise<string> {
-    const selected = this.root ?? baseWorkdir;
+  private async resolveExistingRoot(selected?: string): Promise<string> {
     if (!selected) {
       throw new Error('AsrtSandboxClient requires root, baseWorkdir, or perRun: true');
     }

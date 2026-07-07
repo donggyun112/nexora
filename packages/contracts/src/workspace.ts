@@ -165,6 +165,15 @@ export interface WorkspaceAcquireOptions {
   input?: unknown;
   metadata?: Record<string, unknown>;
   /**
+   * Externally managed absolute path to root the session at. Unlike
+   * `baseWorkdir` (a hint that per-run backends ignore), `rootDir` overrides
+   * per-run root minting on every backend: the session lives directly on this
+   * directory. The caller owns the directory's lifecycle — backends must not
+   * delete it on cleanup nor archive/restore over it (cleanup is forced to
+   * 'keep'; servers register the session as non-archivable).
+   */
+  rootDir?: string;
+  /**
    * 워크스페이스 root가 정해진 직후 자동으로 복사해 넣을 디렉토리들(예: 런타임 주입 스킬
    * 디렉토리). 소스가 없거나 읽기 실패해도 acquire/resume 자체는 실패하지 않는다
    * (best-effort). 심볼릭 링크는 복사하지 않는다. 매 acquire/resume마다 다시 적용된다.

@@ -25,6 +25,14 @@ interface SessionEntry {
   session: WorkspaceSession;
   lastUsedAt: number;
   inFlight: number;
+  /**
+   * false for sessions rooted on a caller-owned external directory
+   * (CreateSessionRequest.rootDir): the directory IS the durable state, so the
+   * sweep/shutdown must never tar it — they destroy the live session only
+   * (cleanup is 'keep'-mode, files stay on the mount) and a later reattach
+   * misses, prompting the client to cold-recreate on the same rootDir.
+   */
+  archivable: boolean;
 }
 
 export class SessionRegistry {
@@ -58,8 +66,13 @@ export class SessionRegistry {
     return typeof (obj as SandboxClient).create === 'function';
   }
 
-  register(id: string, session: WorkspaceSession): void {
-    this.entries.set(id, { session, lastUsedAt: Date.now(), inFlight: 0 });
+  register(id: string, session: WorkspaceSession, opts: { archivable?: boolean } = {}): void {
+    this.entries.set(id, {
+      session,
+      lastUsedAt: Date.now(),
+      inFlight: 0,
+      archivable: opts.archivable ?? true,
+    });
   }
 
   /** Look up a live session for a request: touches idle time and pins it against the sweep. */
@@ -125,6 +138,13 @@ export class SessionRegistry {
       while (entry.inFlight > 0 && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, drainPollMs));
       }
+      if (!entry.archivable) {
+        this.entries.delete(id);
+        await entry.session.cleanup().catch((err) =>
+          console.warn(`[sandbox-server] shutdown cleanup failed for non-archivable ${id}:`, err),
+        );
+        continue;
+      }
       await this.archiveEntry(id, { force: true }).catch((err) =>
         console.warn(`[sandbox-server] shutdown archive failed for ${id}:`, err),
       );
@@ -143,6 +163,13 @@ export class SessionRegistry {
     for (const [id, entry] of [...this.entries]) {
       if (entry.inFlight > 0) continue;
       if (now - entry.lastUsedAt <= this.idleTtlMs) continue;
+      if (!entry.archivable) {
+        this.entries.delete(id);
+        await entry.session.cleanup().catch((err) =>
+          console.warn(`[sandbox-server] cleanup failed for non-archivable ${id}:`, err),
+        );
+        continue;
+      }
       // Failure keeps the session live (retried next sweep) — leak beats data loss.
       await this.archiveEntry(id).catch((err) =>
         console.warn(`[sandbox-server] archive failed for ${id} (kept live):`, err),

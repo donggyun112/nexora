@@ -53,6 +53,14 @@ export interface SandboxServerOptions {
   lifecycle?: SessionLifecycleOptions;
   /** Archive 매체 오버라이드. 미지정 시 tar 파일 store (현행 동작). */
   archiveStore?: ArchiveStore;
+  /**
+   * Absolute path prefixes a `CreateSessionRequest.rootDir` may live under.
+   * Empty/unset (default) disables external-root sessions entirely — every
+   * rootDir request is rejected with 403. Sessions accepted through this gate
+   * are registered non-archivable: the idle sweep destroys the live session
+   * without tar-ing the caller-owned directory, and cleanup never deletes it.
+   */
+  rootAllowPrefixes?: string[];
 }
 
 class HttpError extends Error {
@@ -114,15 +122,17 @@ async function handle(
   // POST /sessions
   if (parts.length === 1 && method === 'POST') {
     const body = await readJson<CreateSessionRequest>(req);
+    const rootDir = body.rootDir ? validateRootDir(body.rootDir, options.rootAllowPrefixes) : undefined;
     // wire id 를 먼저 민팅해 backend 에 키로 전달한다 — durable backend 는
     // 이 키로 디스크 상태를 잡아 thaw(wire id) 가 성립한다. (tar backend 는 무시)
     const id = crypto.randomUUID();
     const session = await options.client.create({
       runId: body.runId,
       manifest: body.manifest,
+      rootDir,
       metadata: { sessionKey: id },
     });
-    registry.register(id, session);
+    registry.register(id, session, { archivable: rootDir === undefined });
     return sendJson(res, 200, { sessionId: id, root: session.root } satisfies CreateSessionResponse);
   }
 
@@ -235,6 +245,24 @@ function authorize(req: IncomingMessage, token?: string): void {
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
     throw new HttpError(401, 'unauthorized', 'invalid or missing bearer token', false);
   }
+}
+
+/**
+ * Validate an external-root request against the operator allowlist. Lexical
+ * (path.resolve) normalization only — the trust boundary is the operator's
+ * prefix list over a mounted workspace tree, and the backend jail confines
+ * reads/writes to the realpath'd root regardless.
+ */
+function validateRootDir(requested: string, allowPrefixes?: string[]): string {
+  const resolved = path.resolve(requested);
+  const allowed = (allowPrefixes ?? []).some((prefix) => {
+    const p = path.resolve(prefix);
+    return resolved === p || resolved.startsWith(p + path.sep);
+  });
+  if (!allowed) {
+    throw new HttpError(403, 'root_denied', 'rootDir is not under an allowed prefix', false);
+  }
+  return resolved;
 }
 
 /** Resolve a workspace path, translating an out-of-root rejection into a 403. */

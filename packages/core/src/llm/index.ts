@@ -10,3 +10,6 @@ export type { FallbackLLMProviderOptions, FallbackProviderEntry, ErrorClass } fr
 
 export { PiAiProvider } from './pi-ai/index.js';
 export type { PiAiProviderOptions } from './pi-ai/index.js';
+
+export { fallbackAls, bindFallbackContext } from './fallback-als.js';
+export type { FallbackRecord, FallbackSink } from './fallback-als.js';

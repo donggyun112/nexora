@@ -44,7 +44,7 @@ describe('DurableDirStore', () => {
     const { client, store, convDir } = await setup();
     await client.create({ metadata: { sessionKey: 'b' } });
     const revived = await store.thaw('b');
-    expect(revived?.root).toBe(path.join(convDir, 'b', 'workspace'));
+    expect(revived?.root).toBe('/home/agent');
     expect(await store.thaw('missing')).toBeNull();
   });
 
@@ -92,7 +92,7 @@ describe('DurableDirStore', () => {
     const { client, store, convDir } = await setup();
     await client.create({ metadata: { sessionKey: 'normal' } });
     const revived = await store.thaw('normal');
-    expect(revived?.root).toBe(path.join(convDir, 'normal', 'workspace'));
+    expect(revived?.root).toBe('/home/agent');
   });
 
   it('readMeta 는 corrupt meta.json 을 mtime fallback 으로 처리한다', async () => {

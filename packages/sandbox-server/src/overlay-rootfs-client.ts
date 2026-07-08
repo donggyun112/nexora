@@ -47,6 +47,11 @@ const DEFAULT_USR_MERGE_LINKS = USR_MERGE_LINKS.filter((l) => {
 });
 const SANDBOX_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
+// 에이전트 작업 HOME 의 in-jail 경로. 호스트 backing(workspaceDir)을 여기로 bind 해
+// 에이전트가 호스트 절대경로(/Users/…) 대신 깨끗한 관례 경로를 보게 한다
+// (ADR 2026-07-08-agent-world-per-session-rootfs).
+const AGENT_HOME = '/home/agent';
+
 export function buildBwrapArgs(
   base: { convDir: string; sessionDir: string; workspaceDir: string; systemDirs: string[]; network: 'none' | 'share' },
   cmd: { argv: string[]; cwd: string },
@@ -70,10 +75,12 @@ export function buildBwrapArgs(
   }
   for (const link of usrMergeLinks) args.push('--symlink', `usr/${link}`, `/${link}`);
   args.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp');
-  // 다른 대화의 upper/workspace 가 lower 로 비치지 않게 conv 볼륨 전체를 가리고,
-  // 그 다음에 자기 workspace 만 동일 경로로 되살린다 (bwrap 은 선언 순서 적용).
+  // 다른 대화의 upper/workspace 가 lower 로 비치지 않게 conv 볼륨 전체를 가리고, 그 다음에
+  // 자기 workspace 를 깨끗한 in-jail HOME(/home/agent)으로 되살린다 — 호스트 backing 경로가
+  // 에이전트에 노출되지 않는다 (bwrap 은 선언 순서 적용; bind 소스는 tmpfs 마스크와 무관하게
+  // 호스트에서 해석되므로 마스크 뒤 re-bind 가 성립).
   args.push('--tmpfs', base.convDir);
-  args.push('--bind', base.workspaceDir, base.workspaceDir);
+  args.push('--bind', base.workspaceDir, AGENT_HOME);
   args.push('--chdir', cmd.cwd, '--', ...cmd.argv);
   return args;
 }
@@ -159,13 +166,20 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
       network: this.network,
     };
     const bwrapPath = this.bwrapPath;
+    // 에이전트가 보는 논리 root 는 /home/agent(AGENT_HOME); 호스트 backing 은 workspaceDir.
+    // fs-wire(서버 host-side fsp)는 backing 을 읽어야 하므로 resolve 가 in-jail 경로를
+    // backing 으로 되돌린다. (server 의 persist(writeTar(root))·exec-cwd 정합은 Task 2 에서
+    // root vs host-backing 을 분리해 처리한다.)
+    const toHostRel = (rel: string): string =>
+      rel === AGENT_HOME ? '.' : rel.startsWith(AGENT_HOME + '/') ? rel.slice(AGENT_HOME.length + 1) : rel;
     return {
       id: key,
-      root: workspaceDir,
+      root: AGENT_HOME,
+      hostRoot: workspaceDir,
       mode: 'workspace-write',
       mounts: [],
       async resolve(rel: string, options?: WorkspaceResolveOptions): Promise<ResolvedWorkspacePath> {
-        const joined = path.resolve(workspaceDir, rel);
+        const joined = path.resolve(workspaceDir, toHostRel(rel));
         const relative = path.relative(workspaceDir, joined);
         if (relative.startsWith('..') || path.isAbsolute(relative)) {
           throw new Error(`path escapes workspace: ${rel}`);
@@ -173,13 +187,13 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
         const write = options?.access === 'write' || options?.access === 'readwrite';
         return {
           path: joined,
-          root: workspaceDir,
+          root: AGENT_HOME,
           relativePath: relative === '' ? '.' : relative,
           access: write ? 'rw' : 'ro',
         };
       },
       async run(cmd: SandboxCommand): Promise<SandboxCommandResult> {
-        const cwd = cmd.cwd ?? workspaceDir;
+        const cwd = cmd.cwd ?? AGENT_HOME;
         const args = buildBwrapArgs(base, { argv: cmd.argv, cwd });
         return await spawnCollect(bwrapPath, args, cmd);
       },

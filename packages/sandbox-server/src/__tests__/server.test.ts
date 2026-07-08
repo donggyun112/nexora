@@ -39,6 +39,10 @@ class FakeClient implements SandboxClient {
         if (command.argv[0] === 'sleep') {
           await new Promise((r) => setTimeout(r, Number(command.argv[1] ?? 0)));
         }
+        // pwd 는 서버가 넘긴 cwd 를 그대로 돌려줘 exec-cwd 계산을 검증할 수 있게 한다.
+        if (command.argv[0] === 'pwd') {
+          return { exitCode: 0, signal: null, stdout: command.cwd ?? '', stderr: '' };
+        }
         return { exitCode: 0, signal: null, stdout: command.argv.join(' '), stderr: '' };
       },
       async cleanup() {
@@ -64,6 +68,12 @@ async function start(lifecycle?: SessionLifecycleOptions): Promise<string> {
 async function createSession(endpoint: string): Promise<string> {
   const res = await fetch(`${endpoint}/sessions`, { method: 'POST', body: '{}' });
   return ((await res.json()) as { sessionId: string }).sessionId;
+}
+
+async function createSessionWithRoot(endpoint: string): Promise<{ id: string; root: string }> {
+  const res = await fetch(`${endpoint}/sessions`, { method: 'POST', body: '{}' });
+  const j = (await res.json()) as { sessionId: string; root: string };
+  return { id: j.sessionId, root: j.root };
 }
 
 describe('createSandboxServer', () => {
@@ -100,6 +110,17 @@ describe('createSandboxServer', () => {
     await fetch(`${endpoint}/sessions/${id2}/hydrate`, { method: 'POST', body: archive });
     const got = await fetch(`${endpoint}/sessions/${id2}/fs?path=a.txt`);
     expect(await got.text()).toBe('content-A');
+  });
+
+  it('exec cwd 를 in-jail 경로(join(session.root, relativePath))로 넘긴다', async () => {
+    const endpoint = await start();
+    const { id, root } = await createSessionWithRoot(endpoint);
+    await fsp.mkdir(path.join(root, 'sub'), { recursive: true });
+    const res = await fetch(`${endpoint}/sessions/${id}/exec`, {
+      method: 'POST',
+      body: JSON.stringify({ argv: ['pwd'], cwd: 'sub' }),
+    });
+    expect(((await res.json()) as { stdout: string }).stdout).toBe(path.join(root, 'sub'));
   });
 
   it('reports reattach liveness and releases on delete', async () => {
@@ -247,13 +268,19 @@ describe('overlay backend 조립 (fs wire — bwrap 불필요)', () => {
       sessionId: string;
       root: string;
     };
-    expect(created.root).toBe(path.join(convDir, created.sessionId, 'workspace'));
+    // 에이전트가 보는 논리 root 는 이제 in-jail HOME(/home/agent) — 호스트 경로 비노출
+    expect(created.root).toBe('/home/agent');
 
     const put = await fetch(`${base}/sessions/${created.sessionId}/fs?path=hello.txt`, {
       method: 'PUT',
       body: 'hi',
     });
     expect(put.status).toBe(200);
+
+    // persist 는 host backing(hostRoot)을 tar 한다 — root=/home/agent 여도 crash 하지 않음
+    const persisted = await fetch(`${base}/sessions/${created.sessionId}/persist`, { method: 'POST' });
+    expect(persisted.status).toBe(200);
+    expect((await persisted.arrayBuffer()).byteLength).toBeGreaterThan(0);
 
     // idleTtlMs=0 + 30ms sweep → 곧 archive(핸들 해제; durable 이라 디스크 보존)
     await new Promise((resolve) => setTimeout(resolve, 200));

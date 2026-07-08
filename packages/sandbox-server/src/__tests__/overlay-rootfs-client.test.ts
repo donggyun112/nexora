@@ -24,7 +24,7 @@ describe('buildBwrapArgs', () => {
     systemDirs: ['usr', 'etc'],
     network: 'none' as const,
   };
-  const cmd = { argv: ['python3', '-V'], cwd: '/vol/conv/abc/workspace' };
+  const cmd = { argv: ['python3', '-V'], cwd: '/home/agent' };
 
   it('systemDir 마다 overlay-src/overlay 3쌍을 조립한다', () => {
     const args = buildBwrapArgs(base, cmd);
@@ -33,14 +33,14 @@ describe('buildBwrapArgs', () => {
     expect(s).toContain('--overlay-src /etc --overlay /vol/conv/abc/upper/etc /vol/conv/abc/work/etc /etc');
   });
 
-  it('conv 볼륨 마스킹이 자기 workspace bind 보다 먼저 온다 (다른 대화 차단 + 자기 것 복구)', () => {
+  it('conv 볼륨 마스킹이 자기 workspace bind 보다 먼저 온다 (다른 대화 차단 + 자기 것 /home/agent 로 복구)', () => {
     const args = buildBwrapArgs(base, cmd);
     const mask = args.indexOf('/vol/conv');
     const bind = args.indexOf('--bind');
     expect(args[mask - 1]).toBe('--tmpfs');
     expect(mask).toBeGreaterThan(-1);
     expect(bind).toBeGreaterThan(mask);
-    expect(args.slice(bind, bind + 3)).toEqual(['--bind', '/vol/conv/abc/workspace', '/vol/conv/abc/workspace']);
+    expect(args.slice(bind, bind + 3)).toEqual(['--bind', '/vol/conv/abc/workspace', '/home/agent']);
   });
 
   it('network none 은 --unshare-net 포함, share 는 미포함 — 둘 다 --unshare-user 는 없다', () => {
@@ -58,7 +58,7 @@ describe('buildBwrapArgs', () => {
   it('argv 는 -- 뒤에 그대로, chdir 은 cwd', () => {
     const args = buildBwrapArgs(base, cmd);
     expect(args.slice(args.indexOf('--') + 1)).toEqual(['python3', '-V']);
-    expect(args[args.indexOf('--chdir') + 1]).toBe('/vol/conv/abc/workspace');
+    expect(args[args.indexOf('--chdir') + 1]).toBe('/home/agent');
   });
 
   it('usrMergeLinks 를 명시하면 결정적으로 --symlink 쌍을 만든다 (호스트 무관)', () => {
@@ -76,7 +76,7 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
     const convDir = await tmpConvDir();
     const client = new OverlayRootfsSandboxClient({ convDir, systemDirs: ['usr'] });
     const session = await client.create({ metadata: { sessionKey: 'k1' } });
-    expect(session.root).toBe(path.join(convDir, 'k1', 'workspace'));
+    expect(session.root).toBe('/home/agent');
     await expect(fsp.stat(path.join(convDir, 'k1', 'upper', 'usr'))).resolves.toBeTruthy();
     await expect(fsp.stat(path.join(convDir, 'k1', 'work', 'usr'))).resolves.toBeTruthy();
   });
@@ -88,6 +88,10 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
     await expect(session.resolve('../k-other/secret')).rejects.toThrow();
     const ok = await session.resolve('sub/file.txt');
     expect(ok.path).toBe(path.join(convDir, 'k2', 'workspace', 'sub', 'file.txt'));
+    // in-jail 절대경로(/home/agent/...)도 호스트 backing 으로 매핑된다
+    const abs = await session.resolve('/home/agent/sub/file.txt');
+    expect(abs.path).toBe(path.join(convDir, 'k2', 'workspace', 'sub', 'file.txt'));
+    expect(abs.root).toBe('/home/agent');
   });
 
   it('create 는 sessionKey 가 convDir 을 탈출하면 거부한다 (path traversal)', async () => {
@@ -96,7 +100,7 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
     await expect(client.create({ metadata: { sessionKey: '..' } })).rejects.toThrow();
     // 정상 키는 여전히 동작한다.
     const session = await client.create({ metadata: { sessionKey: 'normal-key' } });
-    expect(session.root).toBe(path.join(convDir, 'normal-key', 'workspace'));
+    expect(session.root).toBe('/home/agent');
   });
 
   it('attach 는 기존 디렉토리에 핸들을 재구성하고, 없으면 null', async () => {
@@ -104,7 +108,7 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
     const client = new OverlayRootfsSandboxClient({ convDir });
     await client.create({ metadata: { sessionKey: 'k3' } });
     const again = await client.attach('k3');
-    expect(again?.root).toBe(path.join(convDir, 'k3', 'workspace'));
+    expect(again?.root).toBe('/home/agent');
     expect(await client.attach('nope')).toBeNull();
   });
 
@@ -130,7 +134,8 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
       metadata: { sessionKey: 'k4' },
       seedDirs: [{ source: src, destSubpath: '.skill_refs/demo' }],
     });
-    const seeded = await fsp.readFile(path.join(session.root, '.skill_refs/demo/SKILL.md'), 'utf8');
+    // session.root 는 이제 in-jail 논리 경로(/home/agent)라 호스트 backing 에서 확인한다
+    const seeded = await fsp.readFile(path.join(convDir, 'k4', 'workspace', '.skill_refs/demo/SKILL.md'), 'utf8');
     expect(seeded).toBe('hi');
   });
 });

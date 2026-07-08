@@ -130,6 +130,15 @@ export interface SandboxCommandResult {
 export interface WorkspaceSession {
   id: string;
   root: string;
+  /**
+   * Host-side backing directory for host-process byte operations (persist/hydrate
+   * tar) when the logical `root` the agent sees is an in-jail path that does not
+   * exist on the server host — e.g. an overlay backend that binds a host dir at
+   * `/home/agent`. Absent means `root` IS the host path (asrt/host backends).
+   * fs reads/writes always go through `resolve()`, which maps to the host backing;
+   * this field only covers whole-root tar ops that bypass `resolve()`.
+   */
+  hostRoot?: string;
   mode: WorkspaceAccessMode;
   mounts: WorkspaceMount[];
   /**

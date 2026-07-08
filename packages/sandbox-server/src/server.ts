@@ -32,6 +32,7 @@ import type {
   CreateSessionResponse,
   ExecRequest,
   ReattachResponse,
+  ResolvedWorkspacePath,
   SandboxClient,
   SandboxErrorResponse,
   WorkspaceSession,
@@ -162,7 +163,15 @@ async function handle(
         throw new HttpError(400, 'bad_request', 'argv must be a non-empty array');
       }
       if (!session.run) throw new HttpError(501, 'not_supported', 'session does not support exec');
-      const cwd = body.cwd ? (await resolveOrDeny(session, body.cwd, 'read')).path : session.root;
+      // exec cwd must be the in-jail path. resolveOrDeny validates the jail and
+      // returns a host-mapped `.path` (needed for fs byte ops), but for a backend
+      // whose logical root differs from its host backing (overlay: /home/agent),
+      // the in-jail cwd is join(session.root, relativePath). For asrt they coincide.
+      let cwd = session.root;
+      if (body.cwd) {
+        const r = await resolveOrDeny(session, body.cwd, 'read');
+        cwd = r.relativePath === '.' ? session.root : path.join(session.root, r.relativePath);
+      }
       const result = await session.run({ argv: body.argv, cwd, env: body.env, timeoutMs: body.timeoutMs });
       return sendJson(res, 200, result);
     }
@@ -218,14 +227,14 @@ async function handle(
 
     // POST /sessions/:id/persist → tar bytes of the workspace root.
     if (sub === 'persist' && method === 'POST') {
-      const archive = await writeTar(session.root);
+      const archive = await writeTar(session.hostRoot ?? session.root);
       return sendBytes(res, 200, archive);
     }
 
     // POST /sessions/:id/hydrate ← tar bytes, extracted safely into the root.
     if (sub === 'hydrate' && method === 'POST') {
       const archive = await readBytes(req);
-      await safeExtractTar(archive, session.root, options.archiveLimits);
+      await safeExtractTar(archive, session.hostRoot ?? session.root, options.archiveLimits);
       return sendJson(res, 200, { ok: true });
     }
 
@@ -270,7 +279,7 @@ async function resolveOrDeny(
   session: WorkspaceSession,
   rel: string,
   access: 'read' | 'write',
-): Promise<{ path: string }> {
+): Promise<ResolvedWorkspacePath> {
   try {
     return await session.resolve(rel, { access });
   } catch (err) {

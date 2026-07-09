@@ -29,6 +29,7 @@ import type {
   ToolResult,
   TopicString,
   MessageEnvelope,
+  WorkspaceSession,
 } from '@dongkseo/contracts';
 import { textResult, errorResult } from '@dongkseo/contracts';
 import type { ApprovalChoice, ApprovalRequest, ApprovalReply } from './approval.js';
@@ -112,6 +113,8 @@ export interface ApprovalGatePolicyContext {
   channel: string;
   tenantId: string;
   sessionKey: string;
+  /** Active workspace boundary for the tool call, when the tool has one. */
+  workspace?: WorkspaceSession;
 }
 
 export type ApprovalGatePolicyDecision =
@@ -257,7 +260,13 @@ export function createApprovalGateMiddleware(
           resolveSessionKey?.({ tenantId, toolName: tool.name }) ??
           `tenant:${tenantId}`;
 
-        const groupGate = await resolvePolicyGroupGate(tool, input, tenantId, sessionKey);
+        const groupGate = await resolvePolicyGroupGate(
+          tool,
+          input,
+          tenantId,
+          sessionKey,
+          toolCtx.workspace,
+        );
         if (groupGate?.kind === 'deny' || groupGate?.kind === 'block') {
           toolCtx.logger.info(`approval.policy_group.${groupGate.kind}`, {
             tool: tool.name,
@@ -401,6 +410,7 @@ export function createApprovalGateMiddleware(
     input: unknown,
     tenantId: string,
     sessionKey: string,
+    workspace: WorkspaceSession | undefined,
   ): Promise<
     | { kind: 'ask'; policyGroup: string; spec: ApprovalGateSpec }
     | { kind: 'block' | 'deny'; policyGroup: string; message: string }
@@ -420,6 +430,7 @@ export function createApprovalGateMiddleware(
         channel,
         tenantId,
         sessionKey,
+        workspace,
       });
       const decision = normalizePolicyDecision(raw);
       if (!decision || decision.action === 'skip') continue;

@@ -20,6 +20,7 @@ import type {
   Subscription,
   TopicString,
   TransportDescription,
+  WorkspaceSession,
 } from '@dongkseo/contracts';
 import { matchTopic, messageId, textResult } from '@dongkseo/contracts';
 
@@ -284,6 +285,35 @@ describe('approvalGateMiddleware', () => {
       expect(payload.context.approvalKey).toBe('outline-review');
       expect(payload.context.review).toBe('preview body');
     }
+  });
+
+  it('threads toolCtx.workspace through to the policy-group resolver', async () => {
+    const calls: { input: unknown }[] = [];
+    const tool: ToolDefinition = {
+      ...makeTool('outline_create_document', calls),
+      policyGroups: ['requires_review'],
+    };
+    const stubWorkspace = {
+      id: 'ws-1',
+      root: '/workspace',
+      mode: 'workspace-write',
+      mounts: [],
+      resolve: async () => {
+        throw new Error('not implemented in stub');
+      },
+      cleanup: async () => {},
+    } as unknown as WorkspaceSession;
+    let receivedWorkspace: WorkspaceSession | undefined;
+    const { wrapped } = wrapPolicyGroupTool({
+      resolveGroupAction: (ctx) => {
+        receivedWorkspace = ctx.workspace;
+        return 'skip';
+      },
+    }, tool);
+
+    await wrapped.execute('c1', { title: 'doc' }, makeCtx({ workspace: stubWorkspace }));
+
+    expect(receivedWorkspace).toBe(stubWorkspace);
   });
 
   it('policy group action=block short-circuits without prompting', async () => {

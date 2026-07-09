@@ -26,8 +26,14 @@ import type {
 export interface OverlayRootfsOptions {
   /** Volume-backed dir holding per-session rootfs state. MUST NOT be on overlayfs. */
   convDir: string;
-  /** 'share' = full egress (host netns). Default deny-all. */
-  network?: 'none' | 'share';
+  /**
+   * 'none' = deny-all (--unshare-net, 기본). 'share' = full egress (host netns).
+   * 'proxy' = --unshare-net 유지 + 잽 안 socat 브리지로 host-side allowlist CONNECT
+   * 프록시(egressSocketPath)만 통과 — 도메인 allowlist egress. egressSocketPath 필수.
+   */
+  network?: 'none' | 'share' | 'proxy';
+  /** network:'proxy' 일 때 host-side egress 프록시가 listen 하는 유닉스소켓 경로. */
+  egressSocketPath?: string;
   /** Toplevel dirs overlaid rw. */
   systemDirs?: string[];
   bwrapPath?: string;
@@ -52,8 +58,41 @@ const SANDBOX_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/b
 // (ADR 2026-07-08-agent-world-per-session-rootfs).
 const AGENT_HOME = '/home/agent';
 
+// proxy egress: 잽은 --unshare-net 이라 외부 경로가 없다. 잽 안 socat 이
+// loopback:PROXY_LISTEN_PORT → bind-mount 된 유닉스소켓(EGRESS_SOCK_IN_JAIL)으로
+// 포워딩하고, 호스트측 allowlist CONNECT 프록시가 그 소켓에 listen 한다. 이 경로가
+// 유일한 egress 라 container-root 여도 allowlist 밖으로 못 나간다 (allowlist 집행은
+// 호스트측 프록시가; 여기선 배관만 깐다). HTTPS_PROXY=http://127.0.0.1:PROXY_LISTEN_PORT
+// 는 호출자(buildClaudeEnv 등)가 cmd.env 로 주입한다.
+const EGRESS_SOCK_IN_JAIL = '/run/nexora/egress.sock';
+const PROXY_LISTEN_PORT = 3128;
+
+/**
+ * network:'proxy' 일 때 실제 argv 를 감싸는 인너-런처. 잽 안에서 socat 브리지를 띄워
+ * 127.0.0.1:PROXY_LISTEN_PORT → 유닉스소켓 포워딩을 세우고, 준비되면 실제 명령("$@")을
+ * 실행한다. 명령 종료 시 socat 을 정리한다. `sh -lc <script> <argv0> ...cmd.argv` 형태로
+ * 넘겨 "$@" 가 cmd.argv 가 되게 한다. 순수 문자열 — I/O 없음(buildBwrapArgs 계약 유지).
+ */
+function egressLauncherScript(): string {
+  return (
+    `socat TCP-LISTEN:${PROXY_LISTEN_PORT},fork,reuseaddr,bind=127.0.0.1 ` +
+    `UNIX-CONNECT:${EGRESS_SOCK_IN_JAIL} >/dev/null 2>&1 & _egp=$!; ` +
+    `for _i in 1 2 3 4 5 6 7 8 9 10; do ` +
+    `socat -u OPEN:/dev/null TCP:127.0.0.1:${PROXY_LISTEN_PORT} >/dev/null 2>&1 && break; ` +
+    `sleep 0.1; done; ` +
+    `"$@"; _rc=$?; kill $_egp >/dev/null 2>&1; exit $_rc`
+  );
+}
+
 export function buildBwrapArgs(
-  base: { convDir: string; sessionDir: string; workspaceDir: string; systemDirs: string[]; network: 'none' | 'share' },
+  base: {
+    convDir: string;
+    sessionDir: string;
+    workspaceDir: string;
+    systemDirs: string[];
+    network: 'none' | 'share' | 'proxy';
+    egressSocketPath?: string;
+  },
   cmd: { argv: string[]; cwd: string },
   usrMergeLinks: string[] = DEFAULT_USR_MERGE_LINKS,
 ): string[] {
@@ -81,19 +120,37 @@ export function buildBwrapArgs(
   // 호스트에서 해석되므로 마스크 뒤 re-bind 가 성립).
   args.push('--tmpfs', base.convDir);
   args.push('--bind', base.workspaceDir, AGENT_HOME);
-  args.push('--chdir', cmd.cwd, '--', ...cmd.argv);
+  if (base.network === 'proxy') {
+    // egress 유닉스소켓을 잽에 bind (tmpfs 마스크 뒤 — 소스는 호스트에서 해석되고
+    // dest 경로는 bwrap 이 생성) 하고, 실제 명령을 socat 브리지 런처로 감싼다.
+    if (!base.egressSocketPath) {
+      throw new Error("buildBwrapArgs: network 'proxy' requires base.egressSocketPath");
+    }
+    args.push('--bind', base.egressSocketPath, EGRESS_SOCK_IN_JAIL);
+    args.push(
+      '--chdir', cmd.cwd,
+      '--', '/bin/sh', '-lc', egressLauncherScript(), 'nexora-egress', ...cmd.argv,
+    );
+  } else {
+    args.push('--chdir', cmd.cwd, '--', ...cmd.argv);
+  }
   return args;
 }
 
 export class OverlayRootfsSandboxClient implements SandboxClient {
   private readonly convDir: string;
-  private readonly network: 'none' | 'share';
+  private readonly network: 'none' | 'share' | 'proxy';
+  private readonly egressSocketPath?: string;
   private readonly systemDirs: string[];
   private readonly bwrapPath: string;
 
   constructor(options: OverlayRootfsOptions) {
     this.convDir = path.resolve(options.convDir);
     this.network = options.network ?? 'none';
+    this.egressSocketPath = options.egressSocketPath;
+    if (this.network === 'proxy' && !this.egressSocketPath) {
+      throw new Error("OverlayRootfsSandboxClient: network 'proxy' requires egressSocketPath");
+    }
     this.systemDirs = options.systemDirs ?? DEFAULT_SYSTEM_DIRS;
     this.bwrapPath = options.bwrapPath ?? 'bwrap';
   }
@@ -164,6 +221,7 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
       workspaceDir,
       systemDirs: this.systemDirs,
       network: this.network,
+      egressSocketPath: this.egressSocketPath,
     };
     const bwrapPath = this.bwrapPath;
     // 에이전트가 보는 논리 root 는 /home/agent(AGENT_HOME); 호스트 backing 은 workspaceDir.

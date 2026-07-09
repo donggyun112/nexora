@@ -69,9 +69,39 @@ describe('buildBwrapArgs', () => {
     // 결정적 — 같은 입력이면 항상 같은 출력, 호스트 filesystem 조회 없음.
     expect(buildBwrapArgs(base, cmd, ['bin', 'lib'])).toEqual(args);
   });
+
+  it("network 'proxy' 는 --unshare-net 유지 + egress 소켓 bind + socat 런처로 argv 를 감싼다", () => {
+    const proxyBase = { ...base, network: 'proxy' as const, egressSocketPath: '/run/host/egress.sock' };
+    const args = buildBwrapArgs(proxyBase, cmd);
+    // unshare-net 유지(우회 불가), share 아님
+    expect(args).toContain('--unshare-net');
+    // 호스트 소켓 → 잽 안 고정 경로로 bind
+    const s = args.join(' ');
+    expect(s).toContain('--bind /run/host/egress.sock /run/nexora/egress.sock');
+    // 실제 argv 는 sh 런처 뒤에 그대로 온다 ("$@" 로 실행됨)
+    const after = args.slice(args.indexOf('--') + 1);
+    expect(after[0]).toBe('/bin/sh');
+    expect(after[1]).toBe('-lc');
+    expect(after[2]).toContain('socat TCP-LISTEN:3128');
+    expect(after[2]).toContain('UNIX-CONNECT:/run/nexora/egress.sock');
+    expect(after[2]).toContain('"$@"');
+    expect(after[3]).toBe('nexora-egress'); // $0
+    expect(after.slice(4)).toEqual(['python3', '-V']); // "$@"
+  });
+
+  it("network 'proxy' 인데 egressSocketPath 가 없으면 던진다", () => {
+    const bad = { ...base, network: 'proxy' as const };
+    expect(() => buildBwrapArgs(bad, cmd)).toThrow(/egressSocketPath/);
+  });
 });
 
 describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => {
+  it("network 'proxy' 인데 egressSocketPath 가 없으면 생성자에서 던진다", () => {
+    expect(() => new OverlayRootfsSandboxClient({ convDir: '/vol/conv', network: 'proxy' })).toThrow(
+      /egressSocketPath/,
+    );
+  });
+
   it('create 는 sessionKey 로 workspace/upper/work 레이아웃을 만든다', async () => {
     const convDir = await tmpConvDir();
     const client = new OverlayRootfsSandboxClient({ convDir, systemDirs: ['usr'] });

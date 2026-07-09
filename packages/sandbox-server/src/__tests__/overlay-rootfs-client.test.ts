@@ -78,6 +78,9 @@ describe('buildBwrapArgs', () => {
     // 호스트 소켓 → 잽 안 고정 경로로 bind
     const s = args.join(' ');
     expect(s).toContain('--bind /run/host/egress.sock /run/nexora/egress.sock');
+    // 잽 실행 자체에 프록시 env 를 --setenv 로 박는다(호출자가 손 안 대게)
+    expect(s).toContain('--setenv HTTPS_PROXY http://127.0.0.1:3128');
+    expect(s).toContain('--setenv https_proxy http://127.0.0.1:3128');
     // 실제 argv 는 sh 런처 뒤에 그대로 온다 ("$@" 로 실행됨)
     const after = args.slice(args.indexOf('--') + 1);
     expect(after[0]).toBe('/bin/sh');

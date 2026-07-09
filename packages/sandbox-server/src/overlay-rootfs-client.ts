@@ -66,6 +66,7 @@ const AGENT_HOME = '/home/agent';
 // 는 호출자(buildClaudeEnv 등)가 cmd.env 로 주입한다.
 const EGRESS_SOCK_IN_JAIL = '/run/nexora/egress.sock';
 const PROXY_LISTEN_PORT = 3128;
+const PROXY_URL_IN_JAIL = `http://127.0.0.1:${PROXY_LISTEN_PORT}`;
 
 /**
  * network:'proxy' 일 때 실제 argv 를 감싸는 인너-런처. 잽 안에서 socat 브리지를 띄워
@@ -127,6 +128,19 @@ export function buildBwrapArgs(
       throw new Error("buildBwrapArgs: network 'proxy' requires base.egressSocketPath");
     }
     args.push('--bind', base.egressSocketPath, EGRESS_SOCK_IN_JAIL);
+    // 잽 실행 자체에 egress 프록시 env 를 박는다(--setenv) — 어떤 spawner(server /exec,
+    // jail-run 등)든 잽 안 명령이 자동으로 confined egress 를 쓴다(호출자가 손 안 댐).
+    // 대/소문자 둘 다: claude(undici)는 대문자, wget/일부 CLI 는 소문자를 읽는다.
+    for (const [k, v] of [
+      ['HTTPS_PROXY', PROXY_URL_IN_JAIL],
+      ['HTTP_PROXY', PROXY_URL_IN_JAIL],
+      ['https_proxy', PROXY_URL_IN_JAIL],
+      ['http_proxy', PROXY_URL_IN_JAIL],
+      ['NO_PROXY', ''],
+      ['no_proxy', ''],
+    ] as const) {
+      args.push('--setenv', k, v);
+    }
     args.push(
       '--chdir', cmd.cwd,
       '--', '/bin/sh', '-lc', egressLauncherScript(), 'nexora-egress', ...cmd.argv,

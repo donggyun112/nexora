@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FallbackLLMProvider } from '../llm/fallback.js';
 import { MockLLMProvider } from './mock-llm.js';
+import { fallbackAls, type FallbackRecord } from '../llm/fallback-als.js';
 
 describe('FallbackLLMProvider', () => {
   it('uses primary when it succeeds', async () => {
@@ -350,5 +351,44 @@ describe('FallbackLLMProvider', () => {
     expect(chunks.join('')).toBe('secondary streamed');
     expect(primary.callLog[0].options?.model).toBe('primary-model');
     expect(secondary.callLog[0].options?.model).toBe('secondary-model');
+  });
+});
+
+describe('FallbackLLMProvider ALS recording', () => {
+  it('records errorClass=rate-limit to the ALS sink on 429', async () => {
+    const primary = new MockLLMProvider([{ text: '', throwError: 'rate limit exceeded' }]);
+    const secondary = new MockLLMProvider([{ text: 'ok' }]);
+    const fb = new FallbackLLMProvider({
+      providers: [{ name: 'primary', provider: primary }, { name: 'secondary', provider: secondary }],
+      rateLimitRetryMs: 0,
+    });
+    const records: FallbackRecord[] = [];
+    const res = await fallbackAls.run({ record: (r) => records.push(r) },
+      () => fb.complete([{ role: 'user', content: 'hi' }]));
+    expect(res.content).toBe('ok');
+    expect(records).toEqual([{ from: 'primary', to: 'secondary', errorClass: 'rate-limit' }]);
+  });
+
+  it('records errorClass=empty on empty-response fallback', async () => {
+    const primary = new MockLLMProvider([{ text: '' }]);
+    const secondary = new MockLLMProvider([{ text: 'real' }]);
+    const fb = new FallbackLLMProvider({
+      providers: [{ name: 'primary', provider: primary }, { name: 'secondary', provider: secondary }],
+    });
+    const records: FallbackRecord[] = [];
+    await fallbackAls.run({ record: (r) => records.push(r) },
+      () => fb.complete([{ role: 'user', content: 'hi' }]));
+    expect(records).toEqual([{ from: 'primary', to: 'secondary', errorClass: 'empty' }]);
+  });
+
+  it('does not throw when no ALS sink is set (getStore undefined)', async () => {
+    const primary = new MockLLMProvider([{ text: '', throwError: 'rate limit exceeded' }]);
+    const secondary = new MockLLMProvider([{ text: 'ok' }]);
+    const fb = new FallbackLLMProvider({
+      providers: [{ name: 'primary', provider: primary }, { name: 'secondary', provider: secondary }],
+      rateLimitRetryMs: 0,
+    });
+    const res = await fb.complete([{ role: 'user', content: 'hi' }]);
+    expect(res.content).toBe('ok');
   });
 });

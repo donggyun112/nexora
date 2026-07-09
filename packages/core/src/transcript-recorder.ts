@@ -8,6 +8,7 @@ import type {
   ImageContent,
 } from '@dongkseo/contracts';
 import { imageBlocksFromResult } from '@dongkseo/contracts';
+import type { FallbackRecord } from './llm/fallback-als.js';
 
 export class TranscriptRecorder {
   private lastUuid: string | null = null;
@@ -190,6 +191,33 @@ export class TranscriptRecorder {
     } catch {
       return null; // best-effort: a storage hiccup drops the image, never the turn
     }
+  }
+
+  /**
+   * fallback 이벤트를 <synthetic-fallback> assistant 엔트리로 기록.
+   * store.appendEntry를 직접 호출한다(write() 아님) — lastUuid를 갱신하지 않아
+   * 실제 user/assistant lineage를 끊지 않고, pending 버퍼도 건드리지 않아
+   * 스트리밍 중 동시 호출돼도 turn 상태를 오염시키지 않는다. best-effort.
+   */
+  async recordFallback(rec: FallbackRecord): Promise<void> {
+    const text = `LLM fallback: ${rec.from} \u2192 ${rec.to} (${rec.errorClass}`
+      + (typeof rec.status === 'number' ? ` / ${rec.status}` : '') + ')';
+    const entry: TranscriptEntry = {
+      ...this.base(),
+      type: 'assistant',
+      uuid: randomUUID(),
+      parentUuid: this.lastUuid,
+      model: '<synthetic-fallback>',
+      content: [{ type: 'text', text }],
+      metadata: {
+        event: 'llm_fallback',
+        from: rec.from,
+        to: rec.to,
+        errorClass: rec.errorClass,
+        ...(typeof rec.status === 'number' ? { status: rec.status } : {}),
+      },
+    };
+    try { await this.store.appendEntry(entry); } catch { /* best-effort */ }
   }
 
   async flush(): Promise<void> {

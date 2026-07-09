@@ -18,6 +18,7 @@ import type {
   LLMChunk,
   LLMResponse,
 } from '@dongkseo/contracts';
+import { fallbackAls } from './fallback-als.js';
 
 export interface FallbackProviderEntry {
   /** 사용자 표시용 이름 */
@@ -123,6 +124,19 @@ export class FallbackLLMProvider implements LLMProvider {
     this.transientRetryMaxAttempts = options.transientRetryMaxAttempts ?? 2;
   }
 
+  /** onFallback(3인자, 불변) + fallbackAls sink 기록. err가 있으면 status 추출. */
+  private emitFallback(from: string, to: string, reason: string, errorClass: string, err?: Error): void {
+    this.onFallback?.(from, to, reason);
+    const status = err
+      ? (err as Error & { status?: number; statusCode?: number }).status
+        ?? (err as Error & { status?: number; statusCode?: number }).statusCode
+      : undefined;
+    fallbackAls.getStore()?.record({
+      from, to, errorClass,
+      ...(typeof status === 'number' ? { status } : {}),
+    });
+  }
+
   async *stream(messages: LLMMessage[], options?: LLMOptions): AsyncGenerator<LLMChunk> {
     // Pre-check: if the caller already cancelled before we even started,
     // do not waste time or tokens on ANY provider call.
@@ -164,7 +178,7 @@ export class FallbackLLMProvider implements LLMProvider {
         // 빈 응답 → provider 장애로 간주, fallback
         if (!receivedAny && !isLast) {
           const next = this.entries[i + 1];
-          this.onFallback?.(entry.name, next.name, 'empty response');
+          this.emitFallback(entry.name, next.name, 'empty response', 'empty');
           continue;
         }
         return; // 성공
@@ -212,7 +226,7 @@ export class FallbackLLMProvider implements LLMProvider {
 
         if (isLast) throw lastError;
         const next = this.entries[i + 1];
-        this.onFallback?.(entry.name, next.name, `[${errorClass}] ${lastError.message}`);
+        this.emitFallback(entry.name, next.name, `[${errorClass}] ${lastError.message}`, errorClass, lastError);
         retried = false;
         transientRetries = 0;
       }
@@ -254,7 +268,7 @@ export class FallbackLLMProvider implements LLMProvider {
           && !isLast
         ) {
           const next = this.entries[i + 1];
-          this.onFallback?.(entry.name, next.name, 'empty response');
+          this.emitFallback(entry.name, next.name, 'empty response', 'empty');
           continue;
         }
         return response;
@@ -299,7 +313,7 @@ export class FallbackLLMProvider implements LLMProvider {
 
         if (isLast) throw lastError;
         const next = this.entries[i + 1];
-        this.onFallback?.(entry.name, next.name, `[${errorClass}] ${lastError.message}`);
+        this.emitFallback(entry.name, next.name, `[${errorClass}] ${lastError.message}`, errorClass, lastError);
         retried = false;
         transientRetries = 0;
       }

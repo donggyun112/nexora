@@ -31,6 +31,7 @@ import type {
 } from '@dongkseo/contracts';
 import { InMemoryBackgroundTaskRegistry, InMemoryTriggerHost } from '@dongkseo/contracts';
 import { TranscriptRecorder } from './transcript-recorder.js';
+import { bindFallbackContext, type FallbackSink } from './llm/index.js';
 import {
   MiddlewarePipeline,
   type AgentMiddleware,
@@ -216,8 +217,11 @@ export class LocalExecutionHarness implements ExecutionHarness {
       // Per-execute services snapshot — signal injected so architectures can forward.
       // Wrap the shared ToolExecutor so its execute() always sees this call's signal.
       // Wrap LLM with middleware so afterLLMCall actually fires.
+      const fallbackSink: FallbackSink | undefined = recorder
+        ? { record: (r) => { void recorder.recordFallback(r); } }
+        : undefined;
       const services: RuntimeServices = {
-        llm: wrapLLMWithMiddleware(this.llm, this.pipeline),
+        llm: bindFallbackContext(wrapLLMWithMiddleware(this.llm, this.pipeline), fallbackSink),
         tools: wrapToolExecutorWithSignal(toolExecutor, controller.signal),
         memory: this.memory,
         logger: this.logger,

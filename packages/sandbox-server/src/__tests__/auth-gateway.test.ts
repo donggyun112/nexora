@@ -135,3 +135,8 @@ describe('startAuthInjectingGateway', () => {
     expect(res.status).toBe(502);
   });
 });
+
+import * as pkg from '../index.js';
+it('re-exports the gateway from the package entrypoint', () => {
+  expect(typeof pkg.startAuthInjectingGateway).toBe('function');
+});

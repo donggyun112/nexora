@@ -16,4 +16,9 @@ export {
   type EgressProxyOptions,
   type EgressProxyHandle,
 } from './egress-proxy.js';
+export {
+  startAuthInjectingGateway,
+  type AuthInjectingGatewayOptions,
+  type AuthInjectingGatewayHandle,
+} from './auth-gateway.js';
 export { DurableDirStore } from './durable-dir-store.js';

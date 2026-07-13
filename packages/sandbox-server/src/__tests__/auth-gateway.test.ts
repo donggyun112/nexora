@@ -134,6 +134,52 @@ describe('startAuthInjectingGateway', () => {
     const res = await request(gw.socketPath, { path: '/v1/messages', method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     expect(res.status).toBe(502);
   });
+
+  it('rejects a percent-encoded traversal without ever contacting upstream (FIX 1)', async () => {
+    let upstreamHits = 0;
+    upstream = http.createServer((_req, res) => { upstreamHits += 1; res.writeHead(200).end('{}'); });
+    await new Promise<void>((r) => upstream!.listen(0, '127.0.0.1', r));
+    const port = (upstream.address() as { port: number }).port;
+    gw = await startAuthInjectingGateway({ socketPath: sock(), upstreamOrigin: `http://127.0.0.1:${port}`, getAuthHeaders: () => ({}) });
+    const res = await request(gw.socketPath, { path: '/v1/messages/%2e%2e/organizations', method: 'GET' });
+    expect(res.status).toBe(403);
+    expect(upstreamHits).toBe(0);
+  });
+
+  it('rejects a literal dot-segment traversal via path normalization without contacting upstream (FIX 1)', async () => {
+    let upstreamHits = 0;
+    upstream = http.createServer((_req, res) => { upstreamHits += 1; res.writeHead(200).end('{}'); });
+    await new Promise<void>((r) => upstream!.listen(0, '127.0.0.1', r));
+    const port = (upstream.address() as { port: number }).port;
+    gw = await startAuthInjectingGateway({ socketPath: sock(), upstreamOrigin: `http://127.0.0.1:${port}`, getAuthHeaders: () => ({}) });
+    const res = await request(gw.socketPath, { path: '/v1/messages/../organizations', method: 'GET' });
+    expect(res.status).toBe(403);
+    expect(upstreamHits).toBe(0);
+  });
+
+  it('destroys the in-flight upstream request when the client aborts (FIX 2)', async () => {
+    const upstreamSocketClosed = new Promise<void>((resolve) => {
+      upstream = http.createServer((req) => {
+        // Never respond — simulate an upstream that holds the connection open.
+        req.socket.on('close', () => resolve());
+      });
+    });
+    await new Promise<void>((r) => upstream!.listen(0, '127.0.0.1', r));
+    const port = (upstream!.address() as { port: number }).port;
+    gw = await startAuthInjectingGateway({ socketPath: sock(), upstreamOrigin: `http://127.0.0.1:${port}`, getAuthHeaders: () => ({}) });
+
+    await new Promise<void>((resolve) => {
+      const req = http.request(
+        { socketPath: gw!.socketPath, path: '/v1/messages', method: 'POST', headers: { 'content-type': 'application/json' } },
+        () => {},
+      );
+      req.on('error', () => {}); // destroying the request triggers a benign socket error; swallow it
+      req.end('{}');
+      setTimeout(() => { req.destroy(); resolve(); }, 50);
+    });
+
+    await upstreamSocketClosed;
+  });
 });
 
 import * as pkg from '../index.js';

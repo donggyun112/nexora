@@ -7,7 +7,12 @@ const STRIP_HEADERS = new Set(['authorization', 'x-api-key', 'host', 'connection
 export function isPathAllowed(pathname: string, allowedPrefixes: string[]): boolean {
   if (pathname.includes('..')) return false;
   const path = pathname.split('?')[0];
-  return allowedPrefixes.some((p) => path === p || path.startsWith(`${p}/`) || pathname.startsWith(`${p}?`));
+  return allowedPrefixes.some((p) => path === p || path.startsWith(`${p}/`));
+}
+
+/** True if the raw (pre-parse) request target contains a percent-encoded dot or slash. */
+function hasPercentEncodedDotOrSlash(rawTarget: string): boolean {
+  return /%2e|%2f/i.test(rawTarget);
 }
 
 export function sanitizeForwardHeaders(
@@ -53,8 +58,28 @@ export async function startAuthInjectingGateway(
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (req.method === 'HEAD') { res.writeHead(200); res.end(); return; }
-    const url = req.url ?? '/';
-    if (!isPathAllowed(url, allowed)) { res.writeHead(403).end('gateway: path not allowed\n'); return; }
+    const rawUrl = req.url ?? '/';
+
+    // Reject percent-encoded dot/slash before parsing — these are how a literal-`..` guard
+    // gets bypassed (e.g. `%2e%2e` decodes to `..` upstream, `%2f` decodes to `/`).
+    if (hasPercentEncodedDotOrSlash(rawUrl)) {
+      res.writeHead(403).end('gateway: path not allowed\n');
+      return;
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(rawUrl, 'http://gw');
+    } catch {
+      res.writeHead(400).end('gateway: bad request\n');
+      return;
+    }
+
+    if (!isPathAllowed(parsedUrl.pathname, allowed)) {
+      res.writeHead(403).end('gateway: path not allowed\n');
+      return;
+    }
+    const forwardPath = parsedUrl.pathname + parsedUrl.search;
 
     const headers = sanitizeForwardHeaders(req.headers, await options.getAuthHeaders());
     const upstreamReq = transport.request(
@@ -63,15 +88,20 @@ export async function startAuthInjectingGateway(
         hostname: upstream.hostname,
         port: upstream.port || (upstream.protocol === 'http:' ? 80 : 443),
         method: req.method,
-        path: url,
+        path: forwardPath,
         headers,
       },
       (upstreamRes) => {
         res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
         upstreamRes.pipe(res);
+        upstreamRes.on('error', () => { res.destroy(); });
       },
     );
     upstreamReq.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    // Both-ends teardown: don't leave a credential-bearing upstream request in flight once
+    // the client side is gone (jail disconnects mid-request, or the response closes early).
+    req.on('aborted', () => { upstreamReq.destroy(); });
+    res.on('close', () => { if (!res.writableEnded) upstreamReq.destroy(); });
     req.pipe(upstreamReq);
   }
 

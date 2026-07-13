@@ -97,21 +97,39 @@ const EGRESS_SOCK_IN_JAIL = '/run/nexora/egress.sock';
 const PROXY_LISTEN_PORT = 3128;
 const PROXY_URL_IN_JAIL = `http://127.0.0.1:${PROXY_LISTEN_PORT}`;
 
+// auth-injecting gateway: 위 egress 브리지와 같은 패턴으로, 잽 안 loopback:GW_LISTEN_PORT
+// 를 host-side 대화별 gateway 유닉스소켓(GW_SOCK_IN_JAIL)에 연결한다. ANTHROPIC_BASE_URL
+// 을 이 loopback 으로 --setenv 해 claude 가 자동으로 게이트웨이를 거치게 한다.
+const GW_SOCK_IN_JAIL = '/run/nexora/gateway.sock';
+const GW_LISTEN_PORT = 3129;
+const GW_BASE_URL_IN_JAIL = `http://127.0.0.1:${GW_LISTEN_PORT}`;
+
+type LoopbackBridge = { listenPort: number; socketInJail: string };
+
 /**
- * network:'proxy' 일 때 실제 argv 를 감싸는 인너-런처. 잽 안에서 socat 브리지를 띄워
- * 127.0.0.1:PROXY_LISTEN_PORT → 유닉스소켓 포워딩을 세우고, 준비되면 실제 명령("$@")을
- * 실행한다. 명령 종료 시 socat 을 정리한다. `sh -lc <script> <argv0> ...cmd.argv` 형태로
- * 넘겨 "$@" 가 cmd.argv 가 되게 한다. 순수 문자열 — I/O 없음(buildBwrapArgs 계약 유지).
+ * Wraps argv in an inner launcher that brings up one socat TCP→unix bridge per
+ * entry (127.0.0.1:listenPort → socketInJail), waits until each accepts a probe
+ * connection, runs the real command ("$@"), then tears every bridge down.
+ * Pure string — no I/O (buildBwrapArgs purity contract).
  */
-function egressLauncherScript(): string {
-  return (
-    `socat TCP-LISTEN:${PROXY_LISTEN_PORT},fork,reuseaddr,bind=127.0.0.1 ` +
-    `UNIX-CONNECT:${EGRESS_SOCK_IN_JAIL} >/dev/null 2>&1 & _egp=$!; ` +
-    `for _i in 1 2 3 4 5 6 7 8 9 10; do ` +
-    `socat -u OPEN:/dev/null TCP:127.0.0.1:${PROXY_LISTEN_PORT} >/dev/null 2>&1 && break; ` +
-    `sleep 0.1; done; ` +
-    `"$@"; _rc=$?; kill $_egp >/dev/null 2>&1; exit $_rc`
-  );
+function loopbackBridgeScript(bridges: LoopbackBridge[]): string {
+  const starts = bridges
+    .map(
+      (b) =>
+        `socat TCP-LISTEN:${b.listenPort},fork,reuseaddr,bind=127.0.0.1 ` +
+        `UNIX-CONNECT:${b.socketInJail} >/dev/null 2>&1 & _p${b.listenPort}=$!;`,
+    )
+    .join(' ');
+  const waits = bridges
+    .map(
+      (b) =>
+        `for _i in 1 2 3 4 5 6 7 8 9 10; do ` +
+        `socat -u OPEN:/dev/null TCP:127.0.0.1:${b.listenPort} >/dev/null 2>&1 && break; ` +
+        `sleep 0.1; done;`,
+    )
+    .join(' ');
+  const kills = bridges.map((b) => `kill $_p${b.listenPort} >/dev/null 2>&1;`).join(' ');
+  return `${starts} ${waits} "$@"; _rc=$?; ${kills} exit $_rc`;
 }
 
 export function buildBwrapArgs(
@@ -122,6 +140,9 @@ export function buildBwrapArgs(
     systemDirs: string[];
     network: 'none' | 'share' | 'proxy';
     egressSocketPath?: string;
+    /** Per-conversation auth-injecting gateway unix socket. When set (network 'proxy'),
+     *  the jail reaches it at GW_SOCK_IN_JAIL via a loopback bridge and ANTHROPIC_BASE_URL. */
+    authGatewaySocketPath?: string;
     /**
      * Capabilities to drop from the jailed process. Undefined → {@link DEFAULT_CAP_DROPS};
      * `[]` → drop nothing (legacy full-root); `['ALL']` → drop every capability.
@@ -207,6 +228,7 @@ export function buildBwrapArgs(
       throw new Error("buildBwrapArgs: network 'proxy' requires base.egressSocketPath");
     }
     args.push('--dir', '/run/nexora', '--bind', base.egressSocketPath, EGRESS_SOCK_IN_JAIL);
+    const bridges: LoopbackBridge[] = [{ listenPort: PROXY_LISTEN_PORT, socketInJail: EGRESS_SOCK_IN_JAIL }];
     // 잽 실행 자체에 egress 프록시 env 를 박는다(--setenv) — 어떤 spawner(server /exec,
     // jail-run 등)든 잽 안 명령이 자동으로 confined egress 를 쓴다(호출자가 손 안 댐).
     // 대/소문자 둘 다: claude(undici)는 대문자, wget/일부 CLI 는 소문자를 읽는다.
@@ -220,9 +242,14 @@ export function buildBwrapArgs(
     ] as const) {
       args.push('--setenv', k, v);
     }
+    if (base.authGatewaySocketPath) {
+      args.push('--bind', base.authGatewaySocketPath, GW_SOCK_IN_JAIL);
+      args.push('--setenv', 'ANTHROPIC_BASE_URL', GW_BASE_URL_IN_JAIL);
+      bridges.push({ listenPort: GW_LISTEN_PORT, socketInJail: GW_SOCK_IN_JAIL });
+    }
     args.push(
       '--chdir', cmd.cwd,
-      '--', '/bin/sh', '-lc', egressLauncherScript(), 'nexora-egress', ...cmd.argv,
+      '--', '/bin/sh', '-lc', loopbackBridgeScript(bridges), 'nexora-egress', ...cmd.argv,
     );
   } else {
     args.push('--chdir', cmd.cwd, '--', ...cmd.argv);

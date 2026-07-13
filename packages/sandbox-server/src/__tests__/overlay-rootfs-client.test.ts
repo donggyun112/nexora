@@ -181,6 +181,50 @@ describe('buildBwrapArgs', () => {
   });
 });
 
+describe('buildBwrapArgs auth gateway', () => {
+  const base = {
+    convDir: '/var/lib/nexora/conv',
+    sessionDir: '/var/lib/nexora/conv/abc',
+    workspaceDir: '/var/lib/nexora/conv/abc/workspace',
+    systemDirs: ['usr', 'etc'],
+    network: 'proxy' as const,
+    egressSocketPath: '/run/nexora-egress.sock',
+    authGatewaySocketPath: '/var/lib/nexora/conv/abc/gateway.sock',
+  };
+
+  it('binds the gateway socket and sets ANTHROPIC_BASE_URL to the gateway loopback', () => {
+    const args = buildBwrapArgs(base, { argv: ['claude', '-p', 'hi'], cwd: '/home/agent' });
+    // gateway socket bound into the jail
+    const bindIdx = args.indexOf('/var/lib/nexora/conv/abc/gateway.sock');
+    expect(bindIdx).toBeGreaterThan(-1);
+    expect(args[bindIdx - 1]).toBe('--bind');
+    expect(args[bindIdx + 1]).toBe('/run/nexora/gateway.sock');
+    // base URL points claude at the in-jail gateway loopback port
+    const beIdx = args.indexOf('ANTHROPIC_BASE_URL');
+    expect(beIdx).toBeGreaterThan(-1);
+    expect(args[beIdx - 1]).toBe('--setenv');
+    expect(args[beIdx + 1]).toBe('http://127.0.0.1:3129');
+  });
+
+  it('starts a second socat bridge for the gateway in the wrapping script', () => {
+    const args = buildBwrapArgs(base, { argv: ['claude', '-p', 'hi'], cwd: '/home/agent' });
+    const script = args[args.indexOf('-lc') + 1];
+    expect(script).toContain('TCP-LISTEN:3128'); // egress bridge still present
+    expect(script).toContain('TCP-LISTEN:3129'); // gateway bridge added
+    expect(script).toContain('UNIX-CONNECT:/run/nexora/gateway.sock');
+  });
+
+  it('omits the gateway wiring when authGatewaySocketPath is absent', () => {
+    const { authGatewaySocketPath: _drop, ...noGw } = base;
+    const args = buildBwrapArgs(noGw, { argv: ['claude'], cwd: '/home/agent' });
+    expect(args).not.toContain('ANTHROPIC_BASE_URL');
+    expect(args.indexOf('/run/nexora/gateway.sock')).toBe(-1);
+    const script = args[args.indexOf('-lc') + 1];
+    expect(script).toContain('TCP-LISTEN:3128');
+    expect(script).not.toContain('TCP-LISTEN:3129');
+  });
+});
+
 describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => {
   it("network 'proxy' 인데 egressSocketPath 가 없으면 생성자에서 던진다", () => {
     expect(() => new OverlayRootfsSandboxClient({ convDir: '/vol/conv', network: 'proxy' })).toThrow(

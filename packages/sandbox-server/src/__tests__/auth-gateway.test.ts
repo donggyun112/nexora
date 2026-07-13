@@ -157,6 +157,31 @@ describe('startAuthInjectingGateway', () => {
     expect(upstreamHits).toBe(0);
   });
 
+  it('rejects a DOUBLE percent-encoded traversal without ever contacting upstream (FIX 3)', async () => {
+    // %252e%252e decodes once to %2e%2e (still encoded — contains no literal %2e/%2f
+    // substring and `new URL()` alone won't decode it), and only a second decode pass
+    // reveals the `..` segment. A single-decode/blacklist guard misses this.
+    let upstreamHits = 0;
+    upstream = http.createServer((_req, res) => { upstreamHits += 1; res.writeHead(200).end('{}'); });
+    await new Promise<void>((r) => upstream!.listen(0, '127.0.0.1', r));
+    const port = (upstream.address() as { port: number }).port;
+    gw = await startAuthInjectingGateway({ socketPath: sock(), upstreamOrigin: `http://127.0.0.1:${port}`, getAuthHeaders: () => ({}) });
+    const res = await request(gw.socketPath, { path: '/v1/messages/%252e%252e/organizations', method: 'GET' });
+    expect(res.status).toBe(403);
+    expect(upstreamHits).toBe(0);
+  });
+
+  it('rejects malformed percent-encoding with 400 without contacting upstream (FIX 3)', async () => {
+    let upstreamHits = 0;
+    upstream = http.createServer((_req, res) => { upstreamHits += 1; res.writeHead(200).end('{}'); });
+    await new Promise<void>((r) => upstream!.listen(0, '127.0.0.1', r));
+    const port = (upstream.address() as { port: number }).port;
+    gw = await startAuthInjectingGateway({ socketPath: sock(), upstreamOrigin: `http://127.0.0.1:${port}`, getAuthHeaders: () => ({}) });
+    const res = await request(gw.socketPath, { path: '/v1/messages/%2g', method: 'GET' });
+    expect(res.status).toBe(400);
+    expect(upstreamHits).toBe(0);
+  });
+
   it('destroys the in-flight upstream request when the client aborts (FIX 2)', async () => {
     const upstreamSocketClosed = new Promise<void>((resolve) => {
       upstream = http.createServer((req) => {

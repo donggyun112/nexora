@@ -10,9 +10,25 @@ export function isPathAllowed(pathname: string, allowedPrefixes: string[]): bool
   return allowedPrefixes.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
-/** True if the raw (pre-parse) request target contains a percent-encoded dot or slash. */
-function hasPercentEncodedDotOrSlash(rawTarget: string): boolean {
-  return /%2e|%2f/i.test(rawTarget);
+/**
+ * Deep-decodes `pathname` for the allow/deny DECISION only, then collapses the resulting
+ * dot-segments via WHATWG URL parsing. Iterates until decoding stabilizes (capped) so that
+ * layered/double percent-encoding (e.g. `%252e%252e` -> `%2e%2e` -> `..`) can't slip past a
+ * single-pass decode/blacklist. Throws (URIError) if the input contains malformed
+ * percent-encoding, e.g. a bare `%` or `%2g` — callers must treat that as an invalid request.
+ *
+ * This is intentionally NOT what gets forwarded upstream: forwarding the aggressively-decoded
+ * string could change the meaning of a legitimately percent-encoded query value. It exists only
+ * to decide whether the request is in-bounds.
+ */
+function canonicalizePathForDecision(pathname: string, maxIterations = 5): string {
+  let current = pathname;
+  for (let i = 0; i < maxIterations; i++) {
+    const decoded = decodeURIComponent(current); // throws on malformed % sequences
+    if (decoded === current) break;
+    current = decoded;
+  }
+  return new URL(current, 'http://gw').pathname;
 }
 
 export function sanitizeForwardHeaders(
@@ -60,13 +76,6 @@ export async function startAuthInjectingGateway(
     if (req.method === 'HEAD') { res.writeHead(200); res.end(); return; }
     const rawUrl = req.url ?? '/';
 
-    // Reject percent-encoded dot/slash before parsing — these are how a literal-`..` guard
-    // gets bypassed (e.g. `%2e%2e` decodes to `..` upstream, `%2f` decodes to `/`).
-    if (hasPercentEncodedDotOrSlash(rawUrl)) {
-      res.writeHead(403).end('gateway: path not allowed\n');
-      return;
-    }
-
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(rawUrl, 'http://gw');
@@ -75,10 +84,24 @@ export async function startAuthInjectingGateway(
       return;
     }
 
-    if (!isPathAllowed(parsedUrl.pathname, allowed)) {
+    // Canonicalize-then-validate: the allow/deny decision is made against the fully decoded
+    // and dot-collapsed path, not the raw (possibly layered-encoded) one — see
+    // canonicalizePathForDecision for why a blacklist substring check isn't enough.
+    let canonicalPath: string;
+    try {
+      canonicalPath = canonicalizePathForDecision(parsedUrl.pathname);
+    } catch {
+      res.writeHead(400).end('gateway: bad request\n');
+      return;
+    }
+
+    if (!isPathAllowed(canonicalPath, allowed)) {
       res.writeHead(403).end('gateway: path not allowed\n');
       return;
     }
+    // Forward the WHATWG-normalized path the client actually sent, never the
+    // aggressively-decoded canonicalPath (decoding could change a legitimately-encoded query
+    // value's meaning).
     const forwardPath = parsedUrl.pathname + parsedUrl.search;
 
     const headers = sanitizeForwardHeaders(req.headers, await options.getAuthHeaders());

@@ -13,7 +13,7 @@ interface CapturedRequest {
 // Fetch stub capturing wire bodies — the assertions here are about WHAT the
 // client sends, not server behavior (covered in sandbox-server's tests).
 function makeFetch(captured: CapturedRequest[]): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+  return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const url = new URL(String(input));
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
     captured.push({ method: init?.method ?? 'GET', path: url.pathname, body });

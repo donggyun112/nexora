@@ -93,6 +93,12 @@ export function buildBwrapArgs(
     systemDirs: string[];
     network: 'none' | 'share' | 'proxy';
     egressSocketPath?: string;
+    /** Optional session-private home mount used by the agent jail runner. */
+    sessionHomeDir?: string;
+    /** Task source exposed inside a session home as read-only input. */
+    inputDir?: string;
+    /** Host worktree root to hide after the selected input has been mounted. */
+    workdirRoot?: string;
     /**
      * workspace 를 잽 안에서 마운트할 경로. 기본 AGENT_HOME(/home/agent) — 호스트 backing 경로를
      * 에이전트에 숨긴다(잽 안에서 claude 를 돌리는 whole-jail 모델). 호스트에서 도는
@@ -128,7 +134,23 @@ export function buildBwrapArgs(
   // 되살린다 — bwrap 은 선언 순서 적용; bind 소스는 tmpfs 마스크와 무관하게 호스트에서
   // 해석되므로 마스크 뒤 re-bind 가 성립.
   args.push('--tmpfs', base.convDir);
-  args.push('--bind', base.workspaceDir, base.mountPath ?? AGENT_HOME);
+  // --ro-bind / / makes the root filesystem read-only, so Bubblewrap cannot
+  // create the /home/agent bind destination implicitly.
+  args.push('--tmpfs', '/home');
+  args.push('--dir', AGENT_HOME);
+  const sessionHomeMode = base.sessionHomeDir || base.inputDir || base.workdirRoot;
+  if (sessionHomeMode) {
+    if (!base.sessionHomeDir || !base.inputDir || !base.workdirRoot) {
+      throw new Error('buildBwrapArgs: sessionHomeDir, inputDir, and workdirRoot must be supplied together');
+    }
+    args.push('--bind', base.sessionHomeDir, AGENT_HOME);
+    args.push('--ro-bind', base.inputDir, `${AGENT_HOME}/input`);
+    // The input source stays available at its host path after --ro-bind / /.
+    // Mask the whole task tree only after the selected input has been mounted.
+    args.push('--tmpfs', base.workdirRoot);
+  } else {
+    args.push('--bind', base.workspaceDir, base.mountPath ?? AGENT_HOME);
+  }
   if (base.network === 'proxy') {
     // egress 유닉스소켓을 잽에 bind (tmpfs 마스크 뒤 — 소스는 호스트에서 해석되고
     // dest 경로는 bwrap 이 생성) 하고, 실제 명령을 socat 브리지 런처로 감싼다.

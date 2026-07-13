@@ -41,7 +41,33 @@ describe('buildBwrapArgs', () => {
     expect(args[mask - 1]).toBe('--tmpfs');
     expect(mask).toBeGreaterThan(-1);
     expect(bind).toBeGreaterThan(mask);
+    expect(args.slice(bind - 4, bind - 2)).toEqual(['--tmpfs', '/home']);
+    expect(args.slice(bind - 2, bind)).toEqual(['--dir', '/home/agent']);
     expect(args.slice(bind, bind + 3)).toEqual(['--bind', '/vol/conv/abc/workspace', '/home/agent']);
+  });
+
+  it('session home 은 writable, task input 은 read-only, workdir root 는 마스킹한다', () => {
+    const args = buildBwrapArgs(
+      {
+        ...base,
+        sessionHomeDir: '/vol/conv/abc/home',
+        inputDir: '/workspaces/task/workdir',
+        workdirRoot: '/workspaces',
+      },
+      { ...cmd, cwd: '/home/agent/output' },
+    );
+    const homeBind = args.indexOf('/vol/conv/abc/home');
+    const inputBind = args.indexOf('/workspaces/task/workdir');
+    const rootMask = args.lastIndexOf('/workspaces');
+    expect(args.slice(homeBind - 1, homeBind + 2)).toEqual(['--bind', '/vol/conv/abc/home', '/home/agent']);
+    expect(args.slice(inputBind - 1, inputBind + 2)).toEqual([
+      '--ro-bind',
+      '/workspaces/task/workdir',
+      '/home/agent/input',
+    ]);
+    expect(args[rootMask - 1]).toBe('--tmpfs');
+    expect(rootMask).toBeGreaterThan(inputBind);
+    expect(args[args.indexOf('--chdir') + 1]).toBe('/home/agent/output');
   });
 
   it('network none 은 --unshare-net 포함, share 는 미포함 — 둘 다 --unshare-user 는 없다', () => {
@@ -78,7 +104,7 @@ describe('buildBwrapArgs', () => {
     expect(args).toContain('--unshare-net');
     // 호스트 소켓 → 잽 안 고정 경로로 bind
     const s = args.join(' ');
-    const dirIndex = args.indexOf('--dir');
+    const dirIndex = args.findIndex((arg, index) => arg === '--dir' && args[index + 1] === '/run/nexora');
     const socketIndex = args.indexOf('/run/nexora/egress.sock');
     expect(args).toContain('--tmpfs');
     expect(args).toContain('/run');

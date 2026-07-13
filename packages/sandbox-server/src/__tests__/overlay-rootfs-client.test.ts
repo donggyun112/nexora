@@ -41,7 +41,8 @@ describe('buildBwrapArgs', () => {
     expect(args[mask - 1]).toBe('--tmpfs');
     expect(mask).toBeGreaterThan(-1);
     expect(bind).toBeGreaterThan(mask);
-    expect(args.slice(bind - 4, bind - 2)).toEqual(['--tmpfs', '/home']);
+    expect(args.slice(bind - 6, bind - 4)).toEqual(['--tmpfs', '/home']);
+    expect(args.slice(bind - 4, bind - 2)).toEqual(['--tmpfs', '/mnt']);
     expect(args.slice(bind - 2, bind)).toEqual(['--dir', '/home/agent']);
     expect(args.slice(bind, bind + 3)).toEqual(['--bind', '/vol/conv/abc/workspace', '/home/agent']);
   });
@@ -68,6 +69,25 @@ describe('buildBwrapArgs', () => {
     expect(args[rootMask - 1]).toBe('--tmpfs');
     expect(rootMask).toBeGreaterThan(inputBind);
     expect(args[args.indexOf('--chdir') + 1]).toBe('/home/agent/output');
+  });
+
+  it('configured skills are read-only mounted into the agent config directory', () => {
+    const args = buildBwrapArgs(
+      {
+        ...base,
+        readOnlyMounts: [{ source: '/opt/sandbox-skills/codex', destination: '/root/.codex/skills' }],
+      },
+      cmd,
+    );
+    const source = args.indexOf('/opt/sandbox-skills/codex');
+    expect(args.slice(source - 1, source + 2)).toEqual([
+      '--ro-bind',
+      '/opt/sandbox-skills/codex',
+      '/root/.codex/skills',
+    ]);
+    expect(args.slice(source - 5, source - 1)).toEqual(['--dir', '/root/.codex', '--dir', '/root/.codex/skills']);
+    expect(args).toContain('/mnt');
+    expect(args[args.indexOf('/mnt') - 1]).toBe('--tmpfs');
   });
 
   it('network none 은 --unshare-net 포함, share 는 미포함 — 둘 다 --unshare-user 는 없다', () => {

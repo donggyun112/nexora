@@ -99,6 +99,8 @@ export function buildBwrapArgs(
     inputDir?: string;
     /** Host worktree root to hide after the selected input has been mounted. */
     workdirRoot?: string;
+    /** Trusted host directories exposed in the jail at read-only destinations. */
+    readOnlyMounts?: ReadonlyArray<{ source: string; destination: string }>;
     /**
      * workspace 를 잽 안에서 마운트할 경로. 기본 AGENT_HOME(/home/agent) — 호스트 backing 경로를
      * 에이전트에 숨긴다(잽 안에서 claude 를 돌리는 whole-jail 모델). 호스트에서 도는
@@ -137,6 +139,7 @@ export function buildBwrapArgs(
   // --ro-bind / / makes the root filesystem read-only, so Bubblewrap cannot
   // create the /home/agent bind destination implicitly.
   args.push('--tmpfs', '/home');
+  args.push('--tmpfs', '/mnt');
   args.push('--dir', AGENT_HOME);
   const sessionHomeMode = base.sessionHomeDir || base.inputDir || base.workdirRoot;
   if (sessionHomeMode) {
@@ -150,6 +153,14 @@ export function buildBwrapArgs(
     args.push('--tmpfs', base.workdirRoot);
   } else {
     args.push('--bind', base.workspaceDir, base.mountPath ?? AGENT_HOME);
+  }
+  for (const mount of base.readOnlyMounts ?? []) {
+    if (!path.posix.isAbsolute(mount.source) || !path.posix.isAbsolute(mount.destination)) {
+      throw new Error('buildBwrapArgs: readOnlyMounts require absolute source and destination paths');
+    }
+    args.push('--dir', path.posix.dirname(mount.destination));
+    args.push('--dir', mount.destination);
+    args.push('--ro-bind', mount.source, mount.destination);
   }
   if (base.network === 'proxy') {
     // egress 유닉스소켓을 잽에 bind (tmpfs 마스크 뒤 — 소스는 호스트에서 해석되고

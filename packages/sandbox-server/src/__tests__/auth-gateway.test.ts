@@ -182,6 +182,42 @@ describe('startAuthInjectingGateway', () => {
     expect(upstreamHits).toBe(0);
   });
 
+  it('appends appendHeaders to the existing header value without clobbering', async () => {
+    let seenBeta: string | undefined;
+    upstream = http.createServer((req, res) => {
+      seenBeta = req.headers['anthropic-beta'] as string;
+      res.writeHead(200).end('{}');
+    });
+    await new Promise<void>((r) => upstream!.listen(0, '127.0.0.1', r));
+    const port = (upstream.address() as { port: number }).port;
+    gw = await startAuthInjectingGateway({
+      socketPath: sock(),
+      upstreamOrigin: `http://127.0.0.1:${port}`,
+      getAuthHeaders: () => ({ authorization: 'Bearer REAL' }),
+      appendHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+    });
+    await request(gw.socketPath, {
+      path: '/v1/messages',
+      method: 'POST',
+      headers: { 'anthropic-beta': 'claude-code-20250219,interleaved-thinking-2025-05-14', 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(seenBeta).toBe('claude-code-20250219,interleaved-thinking-2025-05-14,oauth-2025-04-20');
+  });
+
+  it('sets an appendHeader when the incoming request lacks it', async () => {
+    let seenBeta: string | undefined;
+    upstream = http.createServer((req, res) => { seenBeta = req.headers['anthropic-beta'] as string; res.writeHead(200).end('{}'); });
+    await new Promise<void>((r) => upstream!.listen(0, '127.0.0.1', r));
+    const port = (upstream.address() as { port: number }).port;
+    gw = await startAuthInjectingGateway({
+      socketPath: sock(), upstreamOrigin: `http://127.0.0.1:${port}`,
+      getAuthHeaders: () => ({}), appendHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+    });
+    await request(gw.socketPath, { path: '/v1/messages', method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    expect(seenBeta).toBe('oauth-2025-04-20');
+  });
+
   it('destroys the in-flight upstream request when the client aborts (FIX 2)', async () => {
     const upstreamSocketClosed = new Promise<void>((resolve) => {
       upstream = http.createServer((req) => {

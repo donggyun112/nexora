@@ -50,6 +50,11 @@ export interface AuthInjectingGatewayOptions {
   upstreamOrigin: string;
   getAuthHeaders: () => Promise<Record<string, string>> | Record<string, string>;
   allowedPathPrefixes?: string[];
+  /** For each entry, its value is appended (comma-joined) to the forwarded request's
+   *  same-named header if present, else set. Applied AFTER getAuthHeaders injection —
+   *  lets the caller add e.g. oauth-2025-04-20 to the client's anthropic-beta list
+   *  without clobbering it. */
+  appendHeaders?: Record<string, string>;
 }
 
 export interface AuthInjectingGatewayHandle {
@@ -105,6 +110,13 @@ export async function startAuthInjectingGateway(
     const forwardPath = parsedUrl.pathname + parsedUrl.search;
 
     const headers = sanitizeForwardHeaders(req.headers, await options.getAuthHeaders());
+    for (const [k, v] of Object.entries(options.appendHeaders ?? {})) {
+      // header names arrive lowercased from sanitizeForwardHeaders (it preserves incoming
+      // casing, and Node lowercases inbound names); match case-insensitively.
+      const existingKey = Object.keys(headers).find((h) => h.toLowerCase() === k.toLowerCase());
+      if (existingKey) headers[existingKey] = `${headers[existingKey]},${v}`;
+      else headers[k] = v;
+    }
     const upstreamReq = transport.request(
       {
         protocol: upstream.protocol,

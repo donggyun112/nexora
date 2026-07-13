@@ -93,6 +93,14 @@ export function buildBwrapArgs(
     systemDirs: string[];
     network: 'none' | 'share' | 'proxy';
     egressSocketPath?: string;
+    /**
+     * workspace 를 잽 안에서 마운트할 경로. 기본 AGENT_HOME(/home/agent) — 호스트 backing 경로를
+     * 에이전트에 숨긴다(잽 안에서 claude 를 돌리는 whole-jail 모델). 호스트에서 도는
+     * 오케스트레이터(예: 훅으로 Bash 만 잽에 보내는 모델)는 잽 안 명령의 경로를 자기 것과
+     * 일치시키기 위해 호스트 workdir 경로를 넘긴다(그때 cmd.cwd 도 같은 값). 경로 은닉 이점은
+     * 그 모델에선 무의미하므로(오케스트레이터가 이미 호스트 경로를 앎) 안전하다.
+     */
+    mountPath?: string;
   },
   cmd: { argv: string[]; cwd: string },
   usrMergeLinks: string[] = DEFAULT_USR_MERGE_LINKS,
@@ -104,7 +112,7 @@ export function buildBwrapArgs(
   // privileged container root — the trust boundary here) makes the overlay use
   // trusted xattrs, which nest correctly. Isolation still comes from the mount/
   // pid/ipc/uts/cgroup(/net) namespaces + the overlay rootfs + workspace jail.
-  const args = ['--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup'];
+  const args = ['--ro-bind', '/', '/', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup'];
   if (base.network !== 'share') args.push('--unshare-net');
   args.push('--die-with-parent', '--uid', '0', '--gid', '0');
   for (const dir of base.systemDirs) {
@@ -114,20 +122,20 @@ export function buildBwrapArgs(
     );
   }
   for (const link of usrMergeLinks) args.push('--symlink', `usr/${link}`, `/${link}`);
-  args.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp');
+  args.push('--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--tmpfs', '/run');
   // 다른 대화의 upper/workspace 가 lower 로 비치지 않게 conv 볼륨 전체를 가리고, 그 다음에
-  // 자기 workspace 를 깨끗한 in-jail HOME(/home/agent)으로 되살린다 — 호스트 backing 경로가
-  // 에이전트에 노출되지 않는다 (bwrap 은 선언 순서 적용; bind 소스는 tmpfs 마스크와 무관하게
-  // 호스트에서 해석되므로 마스크 뒤 re-bind 가 성립).
+  // 자기 workspace 를 in-jail 마운트 경로(기본 /home/agent, base.mountPath 로 override)로
+  // 되살린다 — bwrap 은 선언 순서 적용; bind 소스는 tmpfs 마스크와 무관하게 호스트에서
+  // 해석되므로 마스크 뒤 re-bind 가 성립.
   args.push('--tmpfs', base.convDir);
-  args.push('--bind', base.workspaceDir, AGENT_HOME);
+  args.push('--bind', base.workspaceDir, base.mountPath ?? AGENT_HOME);
   if (base.network === 'proxy') {
     // egress 유닉스소켓을 잽에 bind (tmpfs 마스크 뒤 — 소스는 호스트에서 해석되고
     // dest 경로는 bwrap 이 생성) 하고, 실제 명령을 socat 브리지 런처로 감싼다.
     if (!base.egressSocketPath) {
       throw new Error("buildBwrapArgs: network 'proxy' requires base.egressSocketPath");
     }
-    args.push('--bind', base.egressSocketPath, EGRESS_SOCK_IN_JAIL);
+    args.push('--dir', '/run/nexora', '--bind', base.egressSocketPath, EGRESS_SOCK_IN_JAIL);
     // 잽 실행 자체에 egress 프록시 env 를 박는다(--setenv) — 어떤 spawner(server /exec,
     // jail-run 등)든 잽 안 명령이 자동으로 confined egress 를 쓴다(호출자가 손 안 댐).
     // 대/소문자 둘 다: claude(undici)는 대문자, wget/일부 CLI 는 소문자를 읽는다.

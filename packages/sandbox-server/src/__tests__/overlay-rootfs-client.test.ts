@@ -28,6 +28,7 @@ describe('buildBwrapArgs', () => {
 
   it('systemDir 마다 overlay-src/overlay 3쌍을 조립한다', () => {
     const args = buildBwrapArgs(base, cmd);
+    expect(args.slice(0, 3)).toEqual(['--ro-bind', '/', '/']);
     const s = args.join(' ');
     expect(s).toContain('--overlay-src /usr --overlay /vol/conv/abc/upper/usr /vol/conv/abc/work/usr /usr');
     expect(s).toContain('--overlay-src /etc --overlay /vol/conv/abc/upper/etc /vol/conv/abc/work/etc /etc');
@@ -77,6 +78,13 @@ describe('buildBwrapArgs', () => {
     expect(args).toContain('--unshare-net');
     // 호스트 소켓 → 잽 안 고정 경로로 bind
     const s = args.join(' ');
+    const dirIndex = args.indexOf('--dir');
+    const socketIndex = args.indexOf('/run/nexora/egress.sock');
+    expect(args).toContain('--tmpfs');
+    expect(args).toContain('/run');
+    expect(args[dirIndex + 1]).toBe('/run/nexora');
+    expect(dirIndex).toBeGreaterThan(-1);
+    expect(socketIndex).toBeGreaterThan(dirIndex);
     expect(s).toContain('--bind /run/host/egress.sock /run/nexora/egress.sock');
     // 잽 실행 자체에 프록시 env 를 --setenv 로 박는다(호출자가 손 안 대게)
     expect(s).toContain('--setenv HTTPS_PROXY http://127.0.0.1:3128');

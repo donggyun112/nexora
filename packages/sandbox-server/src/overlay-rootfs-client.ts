@@ -36,6 +36,12 @@ export interface OverlayRootfsOptions {
   egressSocketPath?: string;
   /** Toplevel dirs overlaid rw. */
   systemDirs?: string[];
+  /**
+   * Capabilities dropped from the in-jail process (bwrap `--cap-drop`). Defaults to
+   * {@link DEFAULT_CAP_DROPS} — the escape-relevant caps, keeping the ones apt/dpkg need.
+   * Pass `['ALL']` to drop everything, or `[]` to disable dropping (legacy full-root).
+   */
+  capDrops?: readonly string[];
   bwrapPath?: string;
 }
 
@@ -52,6 +58,29 @@ const DEFAULT_USR_MERGE_LINKS = USR_MERGE_LINKS.filter((l) => {
   }
 });
 const SANDBOX_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
+// 잽 안 프로세스는 uid 0 으로 돈다(userns 없음 — Colima/overlay userxattr 제약, 위 참조).
+// userns 를 포기해도 capability 는 독립적으로 떨굴 수 있다: 아래는 컨테이너 탈출·호스트
+// 접근에 쓰이는 caps 만 정밀 드롭한다. pip/apt postinst 가 필요로 하는 CHOWN/DAC_OVERRIDE/
+// FOWNER/FSETID/SETUID/SETGID/SETPCAP/SETFCAP/KILL 은 남긴다(overlay 로 /usr·/var RW 유지가
+// 목적이므로). 더 조이려면 capDrops 를 ['ALL'] 로 주고 필요한 것만 환경에서 되돌리면 된다.
+//  - SYS_ADMIN: mount/namespace 조작   - MKNOD: device node → raw disk 읽기
+//  - DAC_READ_SEARCH: open_by_handle_at (Shocker 류 탈출)
+//  - SYS_MODULE/SYS_RAWIO/SYS_PTRACE/SYS_BOOT/SYS_TIME/SYSLOG: 커널 표면
+//  - NET_ADMIN/NET_RAW: (net 은 이미 unshare 되지만 방어적으로)
+const DEFAULT_CAP_DROPS: readonly string[] = [
+  'CAP_SYS_ADMIN',
+  'CAP_MKNOD',
+  'CAP_DAC_READ_SEARCH',
+  'CAP_SYS_MODULE',
+  'CAP_SYS_RAWIO',
+  'CAP_SYS_PTRACE',
+  'CAP_SYS_BOOT',
+  'CAP_SYS_TIME',
+  'CAP_SYSLOG',
+  'CAP_NET_ADMIN',
+  'CAP_NET_RAW',
+];
 
 // 에이전트 작업 HOME 의 in-jail 경로. 호스트 backing(workspaceDir)을 여기로 bind 해
 // 에이전트가 호스트 절대경로(/Users/…) 대신 깨끗한 관례 경로를 보게 한다
@@ -93,6 +122,11 @@ export function buildBwrapArgs(
     systemDirs: string[];
     network: 'none' | 'share' | 'proxy';
     egressSocketPath?: string;
+    /**
+     * Capabilities to drop from the jailed process. Undefined → {@link DEFAULT_CAP_DROPS};
+     * `[]` → drop nothing (legacy full-root); `['ALL']` → drop every capability.
+     */
+    capDrops?: readonly string[];
     /** Optional session-private home mount used by the agent jail runner. */
     sessionHomeDir?: string;
     /** Task source exposed inside a session home as read-only input. */
@@ -123,6 +157,10 @@ export function buildBwrapArgs(
   const args = ['--ro-bind', '/', '/', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup'];
   if (base.network !== 'share') args.push('--unshare-net');
   args.push('--die-with-parent', '--uid', '0', '--gid', '0');
+  // Drop escape-relevant capabilities even though we run as uid 0 without a userns
+  // (cap-drop is independent of the userns decision). Order before the overlay/bind
+  // mounts is irrelevant to bwrap; kept here next to uid/gid for readability.
+  for (const cap of base.capDrops ?? DEFAULT_CAP_DROPS) args.push('--cap-drop', cap);
   for (const dir of base.systemDirs) {
     args.push(
       '--overlay-src', `/${dir}`,
@@ -197,6 +235,7 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
   private readonly network: 'none' | 'share' | 'proxy';
   private readonly egressSocketPath?: string;
   private readonly systemDirs: string[];
+  private readonly capDrops: readonly string[];
   private readonly bwrapPath: string;
 
   constructor(options: OverlayRootfsOptions) {
@@ -207,6 +246,7 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
       throw new Error("OverlayRootfsSandboxClient: network 'proxy' requires egressSocketPath");
     }
     this.systemDirs = options.systemDirs ?? DEFAULT_SYSTEM_DIRS;
+    this.capDrops = options.capDrops ?? DEFAULT_CAP_DROPS;
     this.bwrapPath = options.bwrapPath ?? 'bwrap';
   }
 
@@ -277,6 +317,7 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
       systemDirs: this.systemDirs,
       network: this.network,
       egressSocketPath: this.egressSocketPath,
+      capDrops: this.capDrops,
     };
     const bwrapPath = this.bwrapPath;
     // 에이전트가 보는 논리 root 는 /home/agent(AGENT_HOME); 호스트 backing 은 workspaceDir.

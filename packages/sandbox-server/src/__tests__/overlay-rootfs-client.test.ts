@@ -102,6 +102,35 @@ describe('buildBwrapArgs', () => {
     expect(shareArgs).not.toContain('--unshare-user');
   });
 
+  it('기본 cap-drop: 탈출용 caps 는 떨구고 apt 필요 caps 는 남긴다', () => {
+    const args = buildBwrapArgs(base, cmd);
+    const dropped = args
+      .map((a, i) => (a === '--cap-drop' ? args[i + 1] : undefined))
+      .filter((c): c is string => c !== undefined);
+    // 탈출·호스트접근 caps 는 드롭
+    for (const cap of ['CAP_SYS_ADMIN', 'CAP_MKNOD', 'CAP_DAC_READ_SEARCH', 'CAP_SYS_PTRACE']) {
+      expect(dropped).toContain(cap);
+    }
+    // pip/apt postinst 가 필요로 하는 caps 는 유지(=드롭 안 함)
+    for (const cap of ['CAP_CHOWN', 'CAP_DAC_OVERRIDE', 'CAP_FOWNER', 'CAP_SETUID', 'CAP_SETGID']) {
+      expect(dropped).not.toContain(cap);
+    }
+    // cap-drop 은 --ro-bind / / 프리픽스와 argv 종료 -- 사이에 위치
+    expect(args.indexOf('--cap-drop')).toBeGreaterThan(2);
+    expect(args.indexOf('--cap-drop')).toBeLessThan(args.indexOf('--'));
+  });
+
+  it("capDrops override: ['ALL'] 은 --cap-drop ALL, [] 은 cap-drop 없음(legacy full-root)", () => {
+    const allArgs = buildBwrapArgs({ ...base, capDrops: ['ALL'] }, cmd);
+    const allDropped = allArgs
+      .map((a, i) => (a === '--cap-drop' ? allArgs[i + 1] : undefined))
+      .filter((c): c is string => c !== undefined);
+    expect(allDropped).toEqual(['ALL']);
+
+    const noneArgs = buildBwrapArgs({ ...base, capDrops: [] }, cmd);
+    expect(noneArgs).not.toContain('--cap-drop');
+  });
+
   it('argv 는 -- 뒤에 그대로, chdir 은 cwd', () => {
     const args = buildBwrapArgs(base, cmd);
     expect(args.slice(args.indexOf('--') + 1)).toEqual(['python3', '-V']);

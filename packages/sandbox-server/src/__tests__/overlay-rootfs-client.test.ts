@@ -223,6 +223,43 @@ describe('buildBwrapArgs auth gateway', () => {
     expect(script).toContain('TCP-LISTEN:3128');
     expect(script).not.toContain('TCP-LISTEN:3129');
   });
+
+  it('bypasses the egress proxy for loopback so the gateway base URL stays reachable', () => {
+    const args = buildBwrapArgs(base, { argv: ['claude', '-p', 'hi'], cwd: '/home/agent' });
+    // NO_PROXY / no_proxy setenv pairs: index[0]='' default from the egress block,
+    // the LAST occurrence must be the loopback override (bwrap applies last --setenv wins).
+    const setenvNoProxyIdxs = args
+      .map((a, i) => (a === '--setenv' && args[i + 1] === 'NO_PROXY' ? i + 2 : -1))
+      .filter((i) => i !== -1);
+    const setenvNoProxyLowerIdxs = args
+      .map((a, i) => (a === '--setenv' && args[i + 1] === 'no_proxy' ? i + 2 : -1))
+      .filter((i) => i !== -1);
+    expect(setenvNoProxyIdxs.length).toBe(2);
+    expect(setenvNoProxyLowerIdxs.length).toBe(2);
+    // default '' comes first, loopback override comes after (later index wins per bwrap semantics)
+    expect(args[setenvNoProxyIdxs[0]]).toBe('');
+    expect(args[setenvNoProxyIdxs[1]]).toBe('127.0.0.1,localhost');
+    expect(args[setenvNoProxyLowerIdxs[0]]).toBe('');
+    expect(args[setenvNoProxyLowerIdxs[1]]).toBe('127.0.0.1,localhost');
+    expect(setenvNoProxyIdxs[1]).toBeGreaterThan(setenvNoProxyIdxs[0]);
+    expect(setenvNoProxyLowerIdxs[1]).toBeGreaterThan(setenvNoProxyLowerIdxs[0]);
+  });
+
+  it('leaves the egress-only path (no gateway) with the unchanged empty NO_PROXY defaults', () => {
+    const { authGatewaySocketPath: _drop, ...noGw } = base;
+    const args = buildBwrapArgs(noGw, { argv: ['claude'], cwd: '/home/agent' });
+    const setenvNoProxyIdxs = args
+      .map((a, i) => (a === '--setenv' && args[i + 1] === 'NO_PROXY' ? i + 2 : -1))
+      .filter((i) => i !== -1);
+    const setenvNoProxyLowerIdxs = args
+      .map((a, i) => (a === '--setenv' && args[i + 1] === 'no_proxy' ? i + 2 : -1))
+      .filter((i) => i !== -1);
+    expect(setenvNoProxyIdxs).toEqual([args.indexOf('NO_PROXY') + 1]);
+    expect(setenvNoProxyLowerIdxs).toEqual([args.indexOf('no_proxy') + 1]);
+    expect(args[setenvNoProxyIdxs[0]]).toBe('');
+    expect(args[setenvNoProxyLowerIdxs[0]]).toBe('');
+    expect(args).not.toContain('127.0.0.1,localhost');
+  });
 });
 
 describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => {

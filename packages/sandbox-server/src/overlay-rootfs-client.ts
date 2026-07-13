@@ -245,6 +245,13 @@ export function buildBwrapArgs(
     if (base.authGatewaySocketPath) {
       args.push('--bind', base.authGatewaySocketPath, GW_SOCK_IN_JAIL);
       args.push('--setenv', 'ANTHROPIC_BASE_URL', GW_BASE_URL_IN_JAIL);
+      // The default NO_PROXY '' above (undici honors HTTP_PROXY) would otherwise route the
+      // gateway loopback request THROUGH the egress CONNECT proxy, which only allowlists
+      // egress domains and rejects it. Override (bwrap keeps the LAST --setenv per name) so
+      // loopback bypasses the egress proxy — 127.0.0.1 in this netns is only the jail's own
+      // socat bridges, never real egress, so this doesn't weaken egress confinement.
+      args.push('--setenv', 'NO_PROXY', '127.0.0.1,localhost');
+      args.push('--setenv', 'no_proxy', '127.0.0.1,localhost');
       bridges.push({ listenPort: GW_LISTEN_PORT, socketInJail: GW_SOCK_IN_JAIL });
     }
     args.push(

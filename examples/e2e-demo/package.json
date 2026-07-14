@@ -23,7 +23,7 @@
     "@dongkseo/store-json": "workspace:*",
     "@dongkseo/tools": "workspace:*",
     "@dongkseo/transport": "workspace:*",
-    "@earendil-works/pi-ai": "^0.80.3"
+    "@earendil-works/pi-ai": "^0.80.6"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

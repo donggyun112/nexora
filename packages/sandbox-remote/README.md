@@ -19,13 +19,12 @@
 
 - **create** → `POST /sessions`(manifest seed) → 원격 세션.
 - **run** → `POST /sessions/:id/exec` → 버퍼링된 `SandboxCommandResult`(기존 seam과 동일).
+- **파일 I/O** → `WorkspaceSession.fs`(`WorkspaceFs`: read/write/stat/readdir/realPath)를 wire(`GET·PUT /fs`, `GET /stat`, `GET /readdir`)로 구현. root-jail 재검증은 서버가 강제(탈출은 403).
 - **snapshot / sessionState** → `POST /persist`로 tar를 받아 로컬에 스풀 → `SandboxSessionState{ backend:'remote', ref:<원격 세션 id>, snapshot }`.
 - **resume** → `ref`가 살아있으면 `POST /reattach`로 **재접속(HOT)**, 아니면 새 세션 + `POST /hydrate`로 **재수화(COLD)**.
 - 자격증명(토큰)은 옵션/헤더에만 존재하며 `SandboxSessionState`·로그·에러에 절대 실리지 않는다.
 
-> 참고(후속): 내장 파일 도구(read/grep/edit/write)는 워크스페이스 root에 **로컬 fs**로 접근하므로, 진짜 원격 root에 대한
-> 파일 I/O는 `WorkspaceSession`에 read/write 메서드를 추가하고 그 도구들을 리팩터해야 완성된다. wire 프로토콜의 `/fs`가
-> 그 토대를 이미 제공한다. 현재 이 클라이언트는 exec + persist/hydrate + reattach를 완결한다.
+> 원격-root 파일 I/O는 완결됐다: 빌트인 파일 도구(read/write/edit)가 로컬 `node:fs`가 아니라 `ctx.workspace.fs`(`WorkspaceFs` seam)를 통과하도록 리팩터됐고(`@dongkseo/tools`), `RemoteSandboxClient`가 그 seam을 위 wire 라우트로 구현한다. detached/background 실행만은 호스트 비격리 spawn으로 폴백하지 말고 서버측 task로 라우팅한다(위 참고).
 
 ## 사용 레시피
 

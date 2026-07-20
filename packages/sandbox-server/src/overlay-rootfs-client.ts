@@ -8,7 +8,6 @@
  *
  * cleanup() 은 no-op 이다 — 디스크 상태가 곧 archive 이며 삭제는 store 소관.
  */
-import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -22,6 +21,7 @@ import type {
   WorkspaceResolveOptions,
   WorkspaceSession,
 } from '@dongkseo/contracts';
+import { spawnCollect } from './exec-collect.js';
 
 export interface OverlayRootfsOptions {
   /** Volume-backed dir holding per-session rootfs state. MUST NOT be on overlayfs. */
@@ -57,7 +57,6 @@ const DEFAULT_USR_MERGE_LINKS = USR_MERGE_LINKS.filter((l) => {
     return false;
   }
 });
-const SANDBOX_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 // 잽 안 프로세스는 uid 0 으로 돈다(userns 없음 — Colima/overlay userxattr 제약, 위 참조).
 // userns 를 포기해도 capability 는 독립적으로 떨굴 수 있다: 아래는 컨테이너 탈출·호스트
@@ -388,49 +387,6 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
       async cleanup(): Promise<void> {},
     };
   }
-}
-
-async function spawnCollect(bin: string, args: string[], cmd: SandboxCommand): Promise<SandboxCommandResult> {
-  return await new Promise((resolve) => {
-    const child = spawn(bin, args, {
-      env: { PATH: SANDBOX_PATH, HOME: '/root', ...cmd.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    let aborted = false;
-    const timer = cmd.timeoutMs
-      ? setTimeout(() => {
-          timedOut = true;
-          child.kill('SIGKILL');
-        }, cmd.timeoutMs)
-      : undefined;
-    const onAbort = (): void => {
-      aborted = true;
-      child.kill('SIGKILL');
-    };
-    cmd.signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
-    child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
-    child.on('error', (err) => {
-      if (timer) clearTimeout(timer);
-      cmd.signal?.removeEventListener('abort', onAbort);
-      resolve({ exitCode: null, signal: null, stdout, stderr: `${stderr}\n${String(err)}`.trim() });
-    });
-    child.on('close', (code, signal) => {
-      if (timer) clearTimeout(timer);
-      cmd.signal?.removeEventListener('abort', onAbort);
-      resolve({
-        exitCode: code,
-        signal,
-        stdout,
-        stderr,
-        ...(timedOut ? { timedOut: true } : {}),
-        ...(aborted ? { aborted: true } : {}),
-      });
-    });
-  });
 }
 
 /** seedDirs 를 workspace 안으로 best-effort 복사 (심링크 제외 — root-jail 보호). */

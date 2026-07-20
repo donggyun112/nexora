@@ -1,7 +1,8 @@
-// Generated from oci-base.json (captured via `runsc spec` on Linux). Kept as a .ts module
-// rather than a JSON import — tsc's composite/project-reference build rejects a JSON file
-// pulled in only via `import ... with { type: 'json' }` (TS6307: not listed in the project's
-// file list), even with resolveJsonModule enabled. This literal is the same data, verbatim.
+// Captured `runsc spec` default OCI runtime spec (provenance: generated on Linux via
+// `runsc spec`, then hand-copied into this literal). Kept as a .ts module rather than a
+// JSON import — tsc's composite/project-reference build rejects a JSON file pulled in
+// only via `import ... with { type: 'json' }` (TS6307: not listed in the project's file
+// list), even with resolveJsonModule enabled.
 export default {
   ociVersion: '1.0.0',
   process: {

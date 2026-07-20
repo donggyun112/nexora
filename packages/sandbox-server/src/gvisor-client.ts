@@ -26,8 +26,24 @@ export interface GvisorSpecBase {
   capDrops?: readonly string[];
 }
 
-// OciConfig는 우리가 건드리는 필드만 느슨히 타입핑; 전체는 oci-base.json 구조.
+// OciConfig는 우리가 건드리는 필드만 느슨히 타입핑; 전체는 oci-base.ts 구조.
 type OciConfig = Record<string, any>;
+
+/**
+ * Removes every capability in `drops` from each present capability set
+ * (bounding/effective/permitted/inheritable/ambient). Mutates `capabilities` in place;
+ * pure otherwise (no reliance on outside state), so it's unit-testable independent of
+ * whatever the production base spec happens to contain.
+ */
+export function dropCapabilities(
+  capabilities: Record<string, string[] | undefined>,
+  drops: ReadonlySet<string>,
+): void {
+  for (const key of ['bounding', 'effective', 'permitted', 'inheritable', 'ambient']) {
+    const list = capabilities[key];
+    if (Array.isArray(list)) capabilities[key] = list.filter((c: string) => !drops.has(c));
+  }
+}
 
 export function buildOciConfig(base: GvisorSpecBase, cmd: { argv: string[]; cwd: string }): OciConfig {
   const cfg = structuredClone(ociBase) as OciConfig;
@@ -44,11 +60,12 @@ export function buildOciConfig(base: GvisorSpecBase, cmd: { argv: string[]; cwd:
     { destination: AGENT_HOME, source: base.workspaceDir, type: 'bind', options: ['rbind', 'rw'] },
   ];
 
+  // gVisor's `runsc spec` base is already capability-minimal (only CAP_AUDIT_WRITE/
+  // CAP_KILL/CAP_NET_BIND_SERVICE), so this drop is defense-in-depth against a future
+  // base-spec change or an overridden capDrops list, not something the current base
+  // needs — see dropCapabilities' own unit tests for the filter logic itself.
   const drops = new Set(base.capDrops ?? DEFAULT_CAP_DROPS);
-  const caps = cfg.process.capabilities;
-  for (const key of ['bounding', 'effective', 'permitted', 'inheritable', 'ambient']) {
-    if (Array.isArray(caps[key])) caps[key] = caps[key].filter((c: string) => !drops.has(c));
-  }
+  dropCapabilities(cfg.process.capabilities, drops);
   return cfg;
 }
 

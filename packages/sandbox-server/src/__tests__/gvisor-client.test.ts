@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildOciConfig, runscRunArgs } from '../gvisor-client.js';
+import { buildOciConfig, dropCapabilities, runscRunArgs } from '../gvisor-client.js';
 
 const base = { sessionRootfsDir: '/conv/s1/rootfs', workspaceDir: '/conv/s1/workspace', network: 'none' as const };
 
@@ -41,5 +41,28 @@ describe('runscRunArgs', () => {
       '--platform=systrap', '--network=none', '--overlay2=none', '--ignore-cgroups', 'run', '-bundle', '/b', 'id1',
     ]);
     expect(runscRunArgs('/b', 'id1', { hostUds: true })).toContain('--host-uds=open');
+  });
+});
+
+describe('dropCapabilities', () => {
+  it('removes dropped caps from every present set and keeps the rest', () => {
+    const caps = {
+      bounding: ['CAP_SYS_ADMIN', 'CAP_KILL'],
+      effective: ['CAP_SYS_ADMIN', 'CAP_KILL'],
+      permitted: ['CAP_SYS_ADMIN', 'CAP_KILL'],
+      inheritable: ['CAP_SYS_ADMIN', 'CAP_KILL'],
+      // ambient intentionally absent to check the "if present" guard doesn't throw
+    };
+    dropCapabilities(caps, new Set(['CAP_SYS_ADMIN']));
+    expect(caps.bounding).toEqual(['CAP_KILL']);
+    expect(caps.effective).toEqual(['CAP_KILL']);
+    expect(caps.permitted).toEqual(['CAP_KILL']);
+    expect(caps.inheritable).toEqual(['CAP_KILL']);
+  });
+  it('is a no-op when the drop set does not intersect the caps', () => {
+    const caps = { bounding: ['CAP_KILL'], effective: ['CAP_KILL'] };
+    dropCapabilities(caps, new Set(['CAP_SYS_ADMIN']));
+    expect(caps.bounding).toEqual(['CAP_KILL']);
+    expect(caps.effective).toEqual(['CAP_KILL']);
   });
 });

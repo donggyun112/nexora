@@ -23,3 +23,6 @@ data/
 local_cache/
 reference/
 .pnpm-store/
+
+# SDD scratch (subagent-driven-development ledger + briefs)
+.superpowers/

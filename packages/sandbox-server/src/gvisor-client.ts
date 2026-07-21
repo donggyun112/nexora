@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type {
   ResolvedWorkspacePath,
   SandboxClient,
@@ -38,6 +40,29 @@ const DEFAULT_CAP_DROPS: readonly string[] = [
   'CAP_NET_ADMIN',
   'CAP_NET_RAW',
 ];
+
+const execFileP = promisify(execFile);
+
+/** host overlayfs mount: lower(RO base) + 세션 upper/work → merged. privileged + `mount` 필요. */
+async function mountOverlay(lower: string, upper: string, work: string, merged: string): Promise<void> {
+  await execFileP('mount', [
+    '-t',
+    'overlay',
+    'overlay',
+    '-o',
+    `lowerdir=${lower},upperdir=${upper},workdir=${work}`,
+    merged,
+  ]);
+}
+
+/** best-effort umount (실패 시 lazy) — merged 정리 전에 호출. */
+async function umountQuiet(target: string): Promise<void> {
+  try {
+    await execFileP('umount', [target]);
+  } catch {
+    await execFileP('umount', ['-l', target]).catch(() => {});
+  }
+}
 
 export interface GvisorSpecBase {
   sessionRootfsDir: string;
@@ -147,7 +172,10 @@ export function runscRunArgs(bundleDir: string, id: string, opts: { hostUds: boo
 export interface GvisorOptions {
   /** Volume-backed dir holding per-session state (workspace + rootfs copy + scratch bundles). */
   convDir: string;
-  /** Template rootfs directory copied into each session's private rootfs (e.g. a busybox set). */
+  /**
+   * Base rootfs. rootfsMode 'copy': 세션마다 이 디렉토리를 통째 복사. 'overlay': 이 디렉토리를
+   * host overlayfs 의 RO lower 로 공유한다('/' 면 컨테이너 이미지 전체가 공유 lower).
+   */
   baseRootfsDir: string;
   /**
    * 'none' = deny-all (--network=none, 기본). 'proxy' = host-uds bridge egress
@@ -162,6 +190,15 @@ export interface GvisorOptions {
    * {@link DEFAULT_CAP_DROPS} — mirrors the bwrap backend's escape-relevant cap list.
    */
   capDrops?: readonly string[];
+  /**
+   * 세션 rootfs 구성 방식.
+   * - 'copy'(기본): baseRootfsDir 를 세션마다 통째 복사(작은 base·비권한 환경용).
+   * - 'overlay': host overlayfs 로 baseRootfsDir 를 RO lower 로 공유하고 세션별 upper/work 에 쓰기를
+   *   영속시킨다(복사 없음; bwrap --overlay 등가). upper/work 는 convDir(overlayfs 아닌 실 볼륨) 위여야
+   *   하고 privileged + `mount`/`umount` 바이너리가 필요하다. exec 는 세션 내 직렬 가정
+   *   (overlayfs 는 동일 upper 를 동시에 두 번 mount 할 수 없다 — bwrap 백엔드와 동일 제약).
+   */
+  rootfsMode?: 'copy' | 'overlay';
   /** Path to the `runsc` binary. Defaults to 'runsc' (resolved via PATH). */
   runscPath?: string;
 }
@@ -173,6 +210,7 @@ export class GvisorSandboxClient implements SandboxClient {
   private readonly egressSocketPath?: string;
   private readonly capDrops: readonly string[];
   private readonly runscPath: string;
+  private readonly rootfsMode: 'copy' | 'overlay';
 
   constructor(options: GvisorOptions) {
     this.convDir = path.resolve(options.convDir);
@@ -184,37 +222,47 @@ export class GvisorSandboxClient implements SandboxClient {
     }
     this.capDrops = options.capDrops ?? DEFAULT_CAP_DROPS;
     this.runscPath = options.runscPath ?? 'runsc';
+    this.rootfsMode = options.rootfsMode ?? 'copy';
   }
 
   async create(options: WorkspaceAcquireOptions = {}): Promise<WorkspaceSession> {
     const key = typeof options.metadata?.sessionKey === 'string' ? options.metadata.sessionKey : crypto.randomUUID();
     const sessionDir = this.sessionDir(key);
     const workspaceDir = path.join(sessionDir, 'workspace');
-    const rootfsDir = path.join(sessionDir, 'rootfs');
     await fsp.mkdir(workspaceDir, { recursive: true, mode: 0o700 });
-    // 세션 전용 rootfs 를 base 템플릿에서 복사 시딩한다(overlay 백엔드의 upper/work 대응 —
-    // gVisor 는 --overlay2=none 이라 rootfs 자체가 세션 수명 동안 쓰기 가능한 사본이어야 함).
-    // verbatimSymlinks: base 이미지의 상대 심링크(busybox applet, /bin/sh→… 등)를 그대로 보존한다.
-    // 기본값(false)이면 node 가 심링크 타깃을 재작성해 잽 안에서 깨진다(runsc: "failed to load").
-    await fsp.cp(this.baseRootfsDir, rootfsDir, { recursive: true, force: true, verbatimSymlinks: true });
+    if (this.rootfsMode === 'overlay') {
+      // host overlayfs: baseRootfsDir(RO lower) 공유 + 세션별 upper/work 에 쓰기 영속(복사 없음).
+      // run() 이 exec 마다 이 upper/work 로 merged 를 mount 한다 (bwrap --overlay per-exec 등가).
+      await fsp.mkdir(path.join(sessionDir, 'upper'), { recursive: true });
+      await fsp.mkdir(path.join(sessionDir, 'work'), { recursive: true });
+    } else {
+      // copy: baseRootfsDir 를 세션 rootfs 로 통째 복사(gVisor --overlay2=none 이라 쓰기 가능한 사본).
+      // verbatimSymlinks: base 의 상대 심링크(/bin/sh→… 등) 보존 (안 하면 runsc "failed to load").
+      await fsp.cp(this.baseRootfsDir, path.join(sessionDir, 'rootfs'), {
+        recursive: true,
+        force: true,
+        verbatimSymlinks: true,
+      });
+    }
     await this.touchMeta(sessionDir);
     await seedInto(workspaceDir, options.seedDirs);
-    return this.makeSession(key, sessionDir, workspaceDir, rootfsDir);
+    return this.makeSession(key, sessionDir, workspaceDir);
   }
 
   /** 기존 conv 디렉토리로 세션 핸들을 재구성한다 (thaw 용). 없으면 null. */
   async attach(key: string): Promise<WorkspaceSession | null> {
     const sessionDir = this.sessionDir(key);
     const workspaceDir = path.join(sessionDir, 'workspace');
-    const rootfsDir = path.join(sessionDir, 'rootfs');
     try {
       const stat = await fsp.stat(workspaceDir);
       if (!stat.isDirectory()) return null;
+      // overlay 모드: 설치 영속층(upper)이 있어야 유효한 세션이다.
+      if (this.rootfsMode === 'overlay') await fsp.stat(path.join(sessionDir, 'upper'));
     } catch {
       return null;
     }
     await this.touchMeta(sessionDir);
-    return this.makeSession(key, sessionDir, workspaceDir, rootfsDir);
+    return this.makeSession(key, sessionDir, workspaceDir);
   }
 
   /** 디스크가 곧 archive — 삭제는 ArchiveStore.delete 소관이라 여기선 no-op (overlay 미러). */
@@ -251,11 +299,16 @@ export class GvisorSandboxClient implements SandboxClient {
     await fsp.writeFile(path.join(sessionDir, 'meta.json'), meta).catch(() => {});
   }
 
-  private makeSession(key: string, sessionDir: string, workspaceDir: string, rootfsDir: string): WorkspaceSession {
+  private makeSession(key: string, sessionDir: string, workspaceDir: string): WorkspaceSession {
     const network = this.network;
     const egressSocketPath = this.egressSocketPath;
     const capDrops = this.capDrops;
     const runscPath = this.runscPath;
+    const rootfsMode = this.rootfsMode;
+    const baseRootfsDir = this.baseRootfsDir;
+    const upperDir = path.join(sessionDir, 'upper');
+    const workDir = path.join(sessionDir, 'work');
+    const copyRootfsDir = path.join(sessionDir, 'rootfs');
     // 에이전트가 보는 논리 root 는 /home/agent(AGENT_HOME); 호스트 backing 은 workspaceDir.
     // overlay 백엔드와 동일 계약 — fs-wire(서버 host-side fsp)는 backing 을 읽는다.
     const toHostRel = (rel: string): string =>
@@ -282,14 +335,23 @@ export class GvisorSandboxClient implements SandboxClient {
       },
       async run(cmd: SandboxCommand): Promise<SandboxCommandResult> {
         const cwd = cmd.cwd ?? AGENT_HOME;
-        const cfg = buildOciConfig(
-          { sessionRootfsDir: rootfsDir, workspaceDir, network, egressSocketPath, capDrops },
-          { argv: cmd.argv, cwd, env: cmd.env },
-        );
         const bundleDir = await fsp.mkdtemp(path.join(sessionDir, 'bundle-'));
-        // writeFile inside the try so a failure there still hits the finally cleanup —
-        // otherwise a throw between mkdtemp and the try would leak the bundle dir forever.
+        const merged = path.join(bundleDir, 'merged');
         try {
+          // overlay 모드: exec 마다 host overlayfs(lower=base RO, upper=세션 영속층)를 merged 로 mount
+          // (bwrap --overlay per-exec 와 동일 의미론); copy 모드: 세션 복사본 그대로 사용.
+          let sessionRootfsDir: string;
+          if (rootfsMode === 'overlay') {
+            await fsp.mkdir(merged, { recursive: true });
+            await mountOverlay(baseRootfsDir, upperDir, workDir, merged);
+            sessionRootfsDir = merged;
+          } else {
+            sessionRootfsDir = copyRootfsDir;
+          }
+          const cfg = buildOciConfig(
+            { sessionRootfsDir, workspaceDir, network, egressSocketPath, capDrops },
+            { argv: cmd.argv, cwd, env: cmd.env },
+          );
           await fsp.writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(cfg));
           const id = `s-${path.basename(bundleDir)}`;
           return await spawnCollect(
@@ -298,6 +360,7 @@ export class GvisorSandboxClient implements SandboxClient {
             cmd,
           );
         } finally {
+          if (rootfsMode === 'overlay') await umountQuiet(merged);
           await fsp.rm(bundleDir, { recursive: true, force: true }).catch(() => {});
         }
       },

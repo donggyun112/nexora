@@ -175,6 +175,19 @@ describe('GvisorSandboxClient', () => {
     const link = await fsp.readlink(path.join(convDir, 'sym1', 'rootfs', 'bin', 'true'));
     expect(link).toBe('busybox');
   });
+
+  it("create() rootfsMode 'overlay' makes upper/work, not a rootfs copy", async () => {
+    const convDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gv-'));
+    const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'gvbase-'));
+    await fsp.mkdir(path.join(base, 'bin'), { recursive: true });
+    const client = new GvisorSandboxClient({ convDir, baseRootfsDir: base, rootfsMode: 'overlay' });
+    await client.create({ metadata: { sessionKey: 'ov1' } });
+    const sess = path.join(convDir, 'ov1');
+    expect((await fsp.stat(path.join(sess, 'upper'))).isDirectory()).toBe(true);
+    expect((await fsp.stat(path.join(sess, 'work'))).isDirectory()).toBe(true);
+    // no full-rootfs copy in overlay mode (base is shared RO lower, not duplicated)
+    await expect(fsp.stat(path.join(sess, 'rootfs'))).rejects.toThrow();
+  });
 });
 
 function findBin(name: string): string | null {

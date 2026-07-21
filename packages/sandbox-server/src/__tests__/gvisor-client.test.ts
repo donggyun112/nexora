@@ -38,6 +38,26 @@ describe('buildOciConfig (network none)', () => {
     expect(a.process.args).toEqual(['a']);
     expect(b.process.args).toEqual(['b']);
   });
+  it('threads caller cmd.env into the jail, but sandbox PATH/HOME/IS_SANDBOX win', () => {
+    const c = buildOciConfig(base, {
+      argv: ['x'],
+      cwd: '/home/agent',
+      env: { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', SECRET: 'tok', PATH: '/evil', HOME: '/evil' },
+    });
+    expect(c.process.env).toContain('LANG=C.UTF-8');
+    expect(c.process.env).toContain('LC_ALL=C.UTF-8');
+    expect(c.process.env).toContain('SECRET=tok');
+    // sandbox-controlled keys are authoritative — caller cannot override them
+    expect(c.process.env).toContain('HOME=/home/agent');
+    expect(c.process.env).not.toContain('HOME=/evil');
+    expect(c.process.env).not.toContain('PATH=/evil');
+  });
+  it('honors base.capDrops override (drops a cap present in the base, keeps others)', () => {
+    const c = buildOciConfig({ ...base, capDrops: ['CAP_KILL'] }, { argv: ['x'], cwd: '/' });
+    const all = [...c.process.capabilities.bounding, ...c.process.capabilities.effective];
+    expect(all).not.toContain('CAP_KILL');
+    expect(all).toContain('CAP_AUDIT_WRITE');
+  });
 });
 
 describe('buildOciConfig (network proxy)', () => {

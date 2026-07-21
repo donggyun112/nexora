@@ -67,14 +67,21 @@ export function dropCapabilities(
   }
 }
 
-export function buildOciConfig(base: GvisorSpecBase, cmd: { argv: string[]; cwd: string }): OciConfig {
+export function buildOciConfig(
+  base: GvisorSpecBase,
+  cmd: { argv: string[]; cwd: string; env?: Record<string, string> },
+): OciConfig {
   const cfg = structuredClone(ociBase) as OciConfig;
   cfg.process.terminal = false;
   cfg.process.cwd = cmd.cwd;
   cfg.process.args = [...cmd.argv];
   cfg.root = { path: base.sessionRootfsDir, readonly: false };
 
-  const env: Record<string, string> = { PATH: SANDBOX_PATH, HOME: AGENT_HOME, IS_SANDBOX: '1' };
+  // Caller-injected env (LANG/LC_ALL/tenant-allowlisted creds) flows in UNDER the
+  // sandbox-controlled keys — PATH/HOME/IS_SANDBOX (and the proxy vars below) always win, so a
+  // caller cannot override the jail's PATH, home, or egress routing. Mirrors the bwrap backend's
+  // cmd.env passthrough (exec-collect.ts) while keeping those keys authoritative for gVisor.
+  const env: Record<string, string> = { ...cmd.env, PATH: SANDBOX_PATH, HOME: AGENT_HOME, IS_SANDBOX: '1' };
 
   cfg.mounts = [
     ...cfg.mounts,
@@ -275,7 +282,7 @@ export class GvisorSandboxClient implements SandboxClient {
         const cwd = cmd.cwd ?? AGENT_HOME;
         const cfg = buildOciConfig(
           { sessionRootfsDir: rootfsDir, workspaceDir, network, egressSocketPath, capDrops },
-          { argv: cmd.argv, cwd },
+          { argv: cmd.argv, cwd, env: cmd.env },
         );
         const bundleDir = await fsp.mkdtemp(path.join(sessionDir, 'bundle-'));
         // writeFile inside the try so a failure there still hits the finally cleanup —

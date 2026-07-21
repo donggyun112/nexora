@@ -14,12 +14,12 @@
   persist/hydrate·reattach·delete 라우트를 제공. bearer 인증(constant-time), 요청당 경로 재검증,
   persist/hydrate는 하드닝된 `writeTar`/`safeExtractTar`(`@dongkseo/contracts`) 사용. `SessionRegistry`가
   idle-archive/thaw/TTL sweep로 세션 lifecycle을 관리하고, `shutdown()`이 live 세션을 아카이브 후 닫는다.
-- ✅ 담는 것(조립 부품): 주입 가능한 OS-격리 backend(`OverlayRootfsSandboxClient`), 아카이브 매체
+- ✅ 담는 것(조립 부품): 주입 가능한 OS-격리 backend(`OverlayRootfsSandboxClient`, `GvisorSandboxClient`), 아카이브 매체
   (`TarArchiveStore`/`DurableDirStore`), 네트워크 사이드카(`startEgressProxy`/`startAuthInjectingGateway`).
   아래 "함께 제공하는 조각" 참고.
 - ❌ 안 담는 것: 서버 라우트 층은 **격리를 실행하지 않는다** — 주입식 `SandboxClient`에 위임한다(예:
-  `@dongkseo/core`의 `AsrtSandboxClient`, 또는 이 패키지의 `OverlayRootfsSandboxClient`). 격리 backend를
-  주입해도 이 패키지의 런타임 의존성은 여전히 `@dongkseo/contracts` 하나뿐이다(bwrap/커널 기능은
+  `@dongkseo/core`의 `AsrtSandboxClient`, 또는 이 패키지의 `OverlayRootfsSandboxClient`/`GvisorSandboxClient`). 격리 backend를
+  주입해도 이 패키지의 런타임 의존성은 여전히 `@dongkseo/contracts` 하나뿐이다(bwrap/runsc/커널 기능은
   런타임 호스트가 제공).
 
 ## 핵심 개념 — 라우트
@@ -63,6 +63,7 @@ process.on('SIGTERM', () => void shutdown());
 | export | 무엇 | 타입 읽기 |
 |---|---|---|
 | `OverlayRootfsSandboxClient`, `buildBwrapArgs`, `OverlayRootfsOptions` | bwrap overlay-rootfs 기반 OS-격리 `SandboxClient`. cap-drop, network `none\|share\|proxy`, read-only 마운트, 세션-프라이빗 home. `client` 로 주입. | `mode="signatures"` |
+| `GvisorSandboxClient`, `buildOciConfig`, `runscRunArgs`, `dropCapabilities`, `GvisorOptions`, `GvisorSpecBase` | **runsc**(gVisor) 기반 OS-격리 `SandboxClient` — systrap 플랫폼(KVM 불필요), 실제 syscall 인터셉트 경계. 세션마다 `baseRootfsDir`를 복사한 전용 rootfs(`--overlay2=none`이라 설치물이 세션 수명 동안 영속). network `none\|proxy`(egress/auth는 bwrap과 동일하게 `--host-uds` 유닉스소켓 브릿지). `runsc` 바이너리 + privileged 컨테이너 필요; 구동 전 `selfCheck()`로 확인. `client` 로 주입. | `mode="signatures"` |
 | `SessionRegistry`, `SessionLifecycleOptions` | 세션 lifecycle(acquire/release/reattach/sweep/archive). 서버가 내부 사용; 커스텀 조립 시 export. | `mode="signatures"` |
 | `TarArchiveStore`, `DurableDirStore`, `ArchiveStore`, `TarArchiveStoreOptions` | persist된 워크스페이스 아카이브 매체(tar 파일 / durable 디렉토리). `archiveStore` 옵션. | `mode="signatures"` |
 | `startEgressProxy`, `isEgressAllowed`, `matchesDomainPattern`, `EgressProxyOptions`, `EgressProxyHandle` | CONNECT egress 프록시 + 도메인 allow/deny. overlay client `network:'proxy'` 의 `egressSocketPath` 뒤를 받치는 **사이드카**. | `mode="signatures"` |
@@ -76,6 +77,7 @@ process.on('SIGTERM', () => void shutdown());
 ctx_read(path="packages/sandbox-server/src/index.ts",                mode="map")          # 전체 export 목록
 ctx_read(path="packages/sandbox-server/src/server.ts",               mode="signatures")   # 라우트/옵션
 ctx_read(path="packages/sandbox-server/src/overlay-rootfs-client.ts", mode="signatures")  # bwrap backend
+ctx_read(path="packages/sandbox-server/src/gvisor-client.ts",         mode="signatures")  # runsc(gVisor) backend
 ctx_read(path="packages/sandbox-server/src/session-registry.ts",     mode="signatures")   # lifecycle
 ctx_read(path="packages/sandbox-server/src/egress-proxy.ts",         mode="signatures")   # egress 사이드카
 ctx_read(path="packages/sandbox-server/src/auth-gateway.ts",         mode="signatures")   # auth 사이드카
@@ -86,6 +88,7 @@ ctx_read(path="packages/sandbox-server/src/auth-gateway.ts",         mode="signa
 - wire DTO 정본은 `@dongkseo/contracts`의 `sandbox-protocol.ts`. 라우트 변경 시 클라이언트와 동시 갱신.
 - persist/hydrate 안전성은 contracts의 `safe-archive.ts`가 담보 — 서버는 그걸 호출만 한다.
 - `OverlayRootfsSandboxClient`/사이드카는 런타임 호스트에 bwrap·커널 기능·unix 소켓을 요구한다(패키지 의존성 아님). 구동 전 `selfCheck()`로 확인.
+- `GvisorSandboxClient`는 런타임 호스트에 `runsc`(gVisor) 바이너리와 **privileged 컨테이너**(nested systrap 요건)를 요구한다(패키지 의존성 아님). `baseRootfsDir`는 세션마다 통째로 복사되는 템플릿 rootfs — 설치 결과가 세션 수명 동안 영속하길 원하면 `--overlay2=none` 특성상 이 디렉토리 크기/복사 비용을 고려한다. egress/auth 주입은 overlay와 동일하게 `--host-uds` 유닉스소켓 브릿지로 이뤄진다. 구동 전 `selfCheck()`로 확인. (소비 앱에서 `SANDBOX_BACKEND=gvisor` 로 선택하는 배선은 각 앱의 몫 — 이 패키지는 backend를 스스로 선택하지 않는다.)
 
 ## Tests
 

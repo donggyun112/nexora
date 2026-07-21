@@ -10,6 +10,14 @@ export { SessionRegistry, type SessionLifecycleOptions } from './session-registr
 export { TarArchiveStore, type ArchiveStore, type TarArchiveStoreOptions } from './archive-store.js';
 export { OverlayRootfsSandboxClient, buildBwrapArgs, type OverlayRootfsOptions } from './overlay-rootfs-client.js';
 export {
+  GvisorSandboxClient,
+  buildOciConfig,
+  runscRunArgs,
+  dropCapabilities,
+  type GvisorOptions,
+  type GvisorSpecBase,
+} from './gvisor-client.js';
+export {
   startEgressProxy,
   matchesDomainPattern,
   isEgressAllowed,

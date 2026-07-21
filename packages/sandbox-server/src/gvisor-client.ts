@@ -12,6 +12,16 @@ import type {
 } from '@dongkseo/contracts';
 import { SANDBOX_PATH, spawnCollect } from './exec-collect.js';
 import ociBase from './oci-base.js';
+import {
+  EGRESS_SOCK_IN_JAIL,
+  GW_BASE_URL_IN_JAIL,
+  GW_LISTEN_PORT,
+  GW_SOCK_IN_JAIL,
+  loopbackBridgeScript,
+  PROXY_LISTEN_PORT,
+  PROXY_URL_IN_JAIL,
+  type LoopbackBridge,
+} from './socat-bridge.js';
 
 const AGENT_HOME = '/home/agent';
 // bwrap 백엔드와 동일한 탈출-관련 cap 세트 (overlay-rootfs-client.ts DEFAULT_CAP_DROPS 미러)
@@ -65,12 +75,52 @@ export function buildOciConfig(base: GvisorSpecBase, cmd: { argv: string[]; cwd:
   cfg.root = { path: base.sessionRootfsDir, readonly: false };
 
   const env: Record<string, string> = { PATH: SANDBOX_PATH, HOME: AGENT_HOME, IS_SANDBOX: '1' };
-  cfg.process.env = Object.entries(env).map(([k, v]) => `${k}=${v}`);
 
   cfg.mounts = [
     ...cfg.mounts,
     { destination: AGENT_HOME, source: base.workspaceDir, type: 'bind', options: ['rbind', 'rw'] },
   ];
+
+  // bwrap 백엔드(overlay-rootfs-client.ts buildBwrapArgs)의 network:'proxy' 분기와 동일한
+  // socat 루프백 브릿지 계약 — --network=none 인 jail 에서 egress(및 auth-gateway)는
+  // 호스트에서 bind-mount 된 유닉스소켓을 통해서만 나간다. 공유 상수/스크립트는
+  // socat-bridge.ts 에서 가져온다.
+  if (base.network === 'proxy') {
+    if (!base.egressSocketPath) {
+      throw new Error("buildOciConfig: network 'proxy' requires base.egressSocketPath");
+    }
+    cfg.mounts.push({
+      destination: EGRESS_SOCK_IN_JAIL,
+      source: base.egressSocketPath,
+      type: 'bind',
+      options: ['rbind'],
+    });
+    const bridges: LoopbackBridge[] = [{ listenPort: PROXY_LISTEN_PORT, socketInJail: EGRESS_SOCK_IN_JAIL }];
+    env.HTTPS_PROXY = PROXY_URL_IN_JAIL;
+    env.HTTP_PROXY = PROXY_URL_IN_JAIL;
+    env.https_proxy = PROXY_URL_IN_JAIL;
+    env.http_proxy = PROXY_URL_IN_JAIL;
+    env.NO_PROXY = '';
+    env.no_proxy = '';
+    if (base.authGatewaySocketPath) {
+      cfg.mounts.push({
+        destination: GW_SOCK_IN_JAIL,
+        source: base.authGatewaySocketPath,
+        type: 'bind',
+        options: ['rbind'],
+      });
+      env.ANTHROPIC_BASE_URL = GW_BASE_URL_IN_JAIL;
+      // 게이트웨이 자신의 loopback 요청이 egress CONNECT 프록시로 잘못 라우팅되지 않도록
+      // NO_PROXY 를 덮어쓴다 — 이 jail netns 안에서 127.0.0.1 은 항상 jail 자신의 socat
+      // 브릿지다 (bwrap 분기와 동일한 근거).
+      env.NO_PROXY = '127.0.0.1,localhost';
+      env.no_proxy = '127.0.0.1,localhost';
+      bridges.push({ listenPort: GW_LISTEN_PORT, socketInJail: GW_SOCK_IN_JAIL });
+    }
+    cfg.process.args = ['/bin/sh', '-lc', loopbackBridgeScript(bridges), 'nexora-egress', ...cmd.argv];
+  }
+
+  cfg.process.env = Object.entries(env).map(([k, v]) => `${k}=${v}`);
 
   // gVisor's `runsc spec` base is already capability-minimal (only CAP_AUDIT_WRITE/
   // CAP_KILL/CAP_NET_BIND_SERVICE), so this drop is defense-in-depth against a future

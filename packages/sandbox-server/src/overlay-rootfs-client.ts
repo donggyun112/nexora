@@ -22,6 +22,16 @@ import type {
   WorkspaceSession,
 } from '@dongkseo/contracts';
 import { spawnCollect } from './exec-collect.js';
+import {
+  EGRESS_SOCK_IN_JAIL,
+  GW_BASE_URL_IN_JAIL,
+  GW_LISTEN_PORT,
+  GW_SOCK_IN_JAIL,
+  loopbackBridgeScript,
+  PROXY_LISTEN_PORT,
+  PROXY_URL_IN_JAIL,
+  type LoopbackBridge,
+} from './socat-bridge.js';
 
 export interface OverlayRootfsOptions {
   /** Volume-backed dir holding per-session rootfs state. MUST NOT be on overlayfs. */
@@ -86,50 +96,8 @@ const DEFAULT_CAP_DROPS: readonly string[] = [
 // (ADR 2026-07-08-agent-world-per-session-rootfs).
 const AGENT_HOME = '/home/agent';
 
-// proxy egress: 잽은 --unshare-net 이라 외부 경로가 없다. 잽 안 socat 이
-// loopback:PROXY_LISTEN_PORT → bind-mount 된 유닉스소켓(EGRESS_SOCK_IN_JAIL)으로
-// 포워딩하고, 호스트측 allowlist CONNECT 프록시가 그 소켓에 listen 한다. 이 경로가
-// 유일한 egress 라 container-root 여도 allowlist 밖으로 못 나간다 (allowlist 집행은
-// 호스트측 프록시가; 여기선 배관만 깐다). HTTPS_PROXY=http://127.0.0.1:PROXY_LISTEN_PORT
-// 는 호출자(buildClaudeEnv 등)가 cmd.env 로 주입한다.
-const EGRESS_SOCK_IN_JAIL = '/run/nexora/egress.sock';
-const PROXY_LISTEN_PORT = 3128;
-const PROXY_URL_IN_JAIL = `http://127.0.0.1:${PROXY_LISTEN_PORT}`;
-
-// auth-injecting gateway: 위 egress 브리지와 같은 패턴으로, 잽 안 loopback:GW_LISTEN_PORT
-// 를 host-side 대화별 gateway 유닉스소켓(GW_SOCK_IN_JAIL)에 연결한다. ANTHROPIC_BASE_URL
-// 을 이 loopback 으로 --setenv 해 claude 가 자동으로 게이트웨이를 거치게 한다.
-const GW_SOCK_IN_JAIL = '/run/nexora/gateway.sock';
-const GW_LISTEN_PORT = 3129;
-const GW_BASE_URL_IN_JAIL = `http://127.0.0.1:${GW_LISTEN_PORT}`;
-
-type LoopbackBridge = { listenPort: number; socketInJail: string };
-
-/**
- * Wraps argv in an inner launcher that brings up one socat TCP→unix bridge per
- * entry (127.0.0.1:listenPort → socketInJail), waits until each accepts a probe
- * connection, runs the real command ("$@"), then tears every bridge down.
- * Pure string — no I/O (buildBwrapArgs purity contract).
- */
-function loopbackBridgeScript(bridges: LoopbackBridge[]): string {
-  const starts = bridges
-    .map(
-      (b) =>
-        `socat TCP-LISTEN:${b.listenPort},fork,reuseaddr,bind=127.0.0.1 ` +
-        `UNIX-CONNECT:${b.socketInJail} >/dev/null 2>&1 & _p${b.listenPort}=$!;`,
-    )
-    .join(' ');
-  const waits = bridges
-    .map(
-      (b) =>
-        `for _i in 1 2 3 4 5 6 7 8 9 10; do ` +
-        `socat -u OPEN:/dev/null TCP:127.0.0.1:${b.listenPort} >/dev/null 2>&1 && break; ` +
-        `sleep 0.1; done;`,
-    )
-    .join(' ');
-  const kills = bridges.map((b) => `kill $_p${b.listenPort} >/dev/null 2>&1;`).join(' ');
-  return `${starts} ${waits} "$@"; _rc=$?; ${kills} exit $_rc`;
-}
+// proxy egress 상수·loopbackBridgeScript 는 bwrap/gVisor 공유 모듈 socat-bridge.ts 로
+// 이전됨 — 위 import 참조.
 
 export function buildBwrapArgs(
   base: {

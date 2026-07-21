@@ -93,7 +93,7 @@ export function buildOciConfig(base: GvisorSpecBase, cmd: { argv: string[]; cwd:
       destination: EGRESS_SOCK_IN_JAIL,
       source: base.egressSocketPath,
       type: 'bind',
-      options: ['rbind'],
+      options: ['rbind', 'rw'],
     });
     const bridges: LoopbackBridge[] = [{ listenPort: PROXY_LISTEN_PORT, socketInJail: EGRESS_SOCK_IN_JAIL }];
     env.HTTPS_PROXY = PROXY_URL_IN_JAIL;
@@ -107,7 +107,7 @@ export function buildOciConfig(base: GvisorSpecBase, cmd: { argv: string[]; cwd:
         destination: GW_SOCK_IN_JAIL,
         source: base.authGatewaySocketPath,
         type: 'bind',
-        options: ['rbind'],
+        options: ['rbind', 'rw'],
       });
       env.ANTHROPIC_BASE_URL = GW_BASE_URL_IN_JAIL;
       // 게이트웨이 자신의 loopback 요청이 egress CONNECT 프록시로 잘못 라우팅되지 않도록

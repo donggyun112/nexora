@@ -41,16 +41,34 @@ describe('buildOciConfig (network none)', () => {
 });
 
 describe('buildOciConfig (network proxy)', () => {
-  it('proxy: binds egress/gw sockets, wraps args in socat bridge, injects proxy env', () => {
+  it('proxy+gw: binds egress/gw sockets rw, wraps args in socat bridge, injects proxy+gateway env', () => {
     const c = buildOciConfig(
       { sessionRootfsDir: '/r', workspaceDir: '/w', network: 'proxy',
         egressSocketPath: '/run/egress.sock', authGatewaySocketPath: '/run/gw.sock' },
       { argv: ['claude', '-p'], cwd: '/home/agent' });
-    expect(c.mounts.find((m: any) => m.destination === '/run/nexora/egress.sock')).toMatchObject({ source: '/run/egress.sock', type: 'bind' });
-    expect(c.mounts.find((m: any) => m.destination === '/run/nexora/gateway.sock')).toMatchObject({ source: '/run/gw.sock' });
+    expect(c.mounts.find((m: any) => m.destination === '/run/nexora/egress.sock'))
+      .toMatchObject({ source: '/run/egress.sock', type: 'bind', options: ['rbind', 'rw'] });
+    expect(c.mounts.find((m: any) => m.destination === '/run/nexora/gateway.sock'))
+      .toMatchObject({ source: '/run/gw.sock', type: 'bind', options: ['rbind', 'rw'] });
     expect(c.process.args[0]).toBe('/bin/sh'); // socat bridge launcher wraps the real cmd
+    for (const e of [
+      'HTTPS_PROXY=http://127.0.0.1:3128', 'HTTP_PROXY=http://127.0.0.1:3128',
+      'https_proxy=http://127.0.0.1:3128', 'http_proxy=http://127.0.0.1:3128',
+      'ANTHROPIC_BASE_URL=http://127.0.0.1:3129',
+      'NO_PROXY=127.0.0.1,localhost', 'no_proxy=127.0.0.1,localhost',
+    ]) {
+      expect(c.process.env).toContain(e);
+    }
+  });
+
+  it('proxy without gw: egress only, NO_PROXY empty (matches bwrap default)', () => {
+    const c = buildOciConfig(
+      { sessionRootfsDir: '/r', workspaceDir: '/w', network: 'proxy', egressSocketPath: '/run/egress.sock' },
+      { argv: ['x'], cwd: '/home/agent' });
+    expect(c.mounts.find((m: any) => m.destination === '/run/nexora/gateway.sock')).toBeUndefined();
     expect(c.process.env).toContain('HTTPS_PROXY=http://127.0.0.1:3128');
-    expect(c.process.env).toContain('ANTHROPIC_BASE_URL=http://127.0.0.1:3129');
+    expect(c.process.env).toContain('NO_PROXY=');
+    expect(c.process.env.some((e: string) => e.startsWith('ANTHROPIC_BASE_URL='))).toBe(false);
   });
 
   it('proxy: throws when egressSocketPath is missing', () => {

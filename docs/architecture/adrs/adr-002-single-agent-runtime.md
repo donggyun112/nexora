@@ -4,6 +4,11 @@
 **날짜**: 2026-07-13
 **범위**: `@dongkseo/architectures`, `@dongkseo/core`, `@dongkseo/tools`, `@dongkseo/conversation`(강등), `@dongkseo/gateway`
 
+> **정정 (2026-07-21, [ADR-003](adr-003-isolation-is-commodity-not-moat.md)):** 아래 「근거」의
+> *"실행 격리(sandbox)를 제일 깊게 판 게 방어 가능한 해자"* 주장은 ADR-003에서 정정됨 — 격리 커널은
+> commodity(gVisor/runsc)이고, 해자는 그 위의 런타임 -ility·auth-gateway·wire 계약·통합이다.
+> 이 ADR의 나머지(단일 에이전트 정체성, ReAct 강화, 다른 -ility)는 유효하다.
+
 > [ADR-001](adr-001-tenancy-opt-in.md)이 "멀티테넌트를 근본에서 부가로" 강등한 첫 뺄셈이었다면,
 > 이 ADR은 그 뺄셈을 **정체성 수준으로 일반화**한다: "다 되는 프레임워크"에서
 > **"단일 에이전트를 프로덕션에서 굴리는 런타임"**으로 좁힌다.

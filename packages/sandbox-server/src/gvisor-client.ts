@@ -194,7 +194,9 @@ export class GvisorSandboxClient implements SandboxClient {
     await fsp.mkdir(workspaceDir, { recursive: true, mode: 0o700 });
     // 세션 전용 rootfs 를 base 템플릿에서 복사 시딩한다(overlay 백엔드의 upper/work 대응 —
     // gVisor 는 --overlay2=none 이라 rootfs 자체가 세션 수명 동안 쓰기 가능한 사본이어야 함).
-    await fsp.cp(this.baseRootfsDir, rootfsDir, { recursive: true, force: true });
+    // verbatimSymlinks: base 이미지의 상대 심링크(busybox applet, /bin/sh→… 등)를 그대로 보존한다.
+    // 기본값(false)이면 node 가 심링크 타깃을 재작성해 잽 안에서 깨진다(runsc: "failed to load").
+    await fsp.cp(this.baseRootfsDir, rootfsDir, { recursive: true, force: true, verbatimSymlinks: true });
     await this.touchMeta(sessionDir);
     await seedInto(workspaceDir, options.seedDirs);
     return this.makeSession(key, sessionDir, workspaceDir, rootfsDir);

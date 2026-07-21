@@ -161,6 +161,20 @@ describe('GvisorSandboxClient', () => {
       /egressSocketPath/,
     );
   });
+
+  it('create() preserves relative symlinks in the base rootfs verbatim', async () => {
+    // Regression: without verbatimSymlinks, node's fs.cp rewrites relative symlink targets,
+    // breaking rootfs applet links (/bin/true→busybox) so runsc fails with "failed to load".
+    const convDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gv-'));
+    const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'gvbase-'));
+    await fsp.mkdir(path.join(base, 'bin'), { recursive: true });
+    await fsp.writeFile(path.join(base, 'bin', 'busybox'), 'x');
+    await fsp.symlink('busybox', path.join(base, 'bin', 'true'));
+    const client = new GvisorSandboxClient({ convDir, baseRootfsDir: base });
+    await client.create({ metadata: { sessionKey: 'sym1' } });
+    const link = await fsp.readlink(path.join(convDir, 'sym1', 'rootfs', 'bin', 'true'));
+    expect(link).toBe('busybox');
+  });
 });
 
 function findBin(name: string): string | null {

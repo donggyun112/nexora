@@ -101,41 +101,57 @@ describe('GvisorSandboxClient', () => {
   });
 });
 
-const HAS_RUNSC = (() => {
+function findBin(name: string): string | null {
   try {
-    execSync('runsc --version', { stdio: 'ignore' });
-    return true;
+    return execSync(`command -v ${name}`, { encoding: 'utf8' }).trim() || null;
   } catch {
-    return false;
+    return null;
   }
-})();
-const gated = HAS_RUNSC ? it : it.skip;
+}
+const RUNSC = findBin('runsc');
+const BUSYBOX = findBin('busybox');
+// Runs only where BOTH runsc and busybox exist (Linux CI / dev box); skips cleanly elsewhere
+// (e.g. this macOS host). A missing rootfs binary is the failure mode we must NOT ship, so the
+// rootfs is built from a real busybox below rather than an empty dir.
+const gated = RUNSC && BUSYBOX ? it : it.skip;
+
+async function buildBusyboxRootfs(dir: string): Promise<void> {
+  for (const d of ['bin', 'proc', 'dev', 'sys', 'tmp', 'opt']) {
+    await fsp.mkdir(path.join(dir, d), { recursive: true });
+  }
+  await fsp.copyFile(BUSYBOX!, path.join(dir, 'bin', 'busybox'));
+  await fsp.chmod(path.join(dir, 'bin', 'busybox'), 0o755);
+  for (const applet of ['sh', 'true', 'cat', 'echo', 'ls', 'head']) {
+    await fsp.symlink('busybox', path.join(dir, 'bin', applet));
+  }
+}
 
 describe('GvisorSandboxClient (runsc integration)', () => {
   gated(
     'selfCheck passes and installs persist across two runs',
     async () => {
       const convDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'gv-int-'));
-      // NOTE: a real busybox-based rootfs is expected to be provided out-of-band in CI/dev
-      // environments that have runsc installed; this test is skipped entirely elsewhere.
       const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'gvbase-int-'));
+      await buildBusyboxRootfs(base);
       const client = new GvisorSandboxClient({ convDir, baseRootfsDir: base });
       await client.selfCheck();
 
       const session = await client.create({ metadata: { sessionKey: 'int-1' } });
       const write = await session.run!({
         argv: ['/bin/sh', '-c', 'echo installed > /opt/marker'],
-        timeoutMs: 30_000,
+        timeoutMs: 60_000,
       });
       expect(write.exitCode).toBe(0);
 
+      // A second, independent `runsc run` reads what the first wrote — proves --overlay2=none
+      // persists rootfs writes across execs for the session lifetime.
       const read = await session.run!({
         argv: ['/bin/sh', '-c', 'cat /opt/marker'],
-        timeoutMs: 30_000,
+        timeoutMs: 60_000,
       });
       expect(read.exitCode).toBe(0);
       expect(read.stdout).toContain('installed');
     },
-    60_000,
+    120_000,
   );
 });

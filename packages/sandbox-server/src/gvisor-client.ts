@@ -164,14 +164,17 @@ export class GvisorSandboxClient implements SandboxClient {
   /** 부팅 검증: 실제 runsc exec 1회. 실패 시 throw (fail-fast 게이트용). */
   async selfCheck(): Promise<void> {
     const key = `selfcheck-${crypto.randomUUID()}`;
-    const session = await this.create({ metadata: { sessionKey: key } });
     try {
+      // create() inside the try so a partially-created session dir (workspace/rootfs copy)
+      // is still cleaned up if create() itself throws.
+      const session = await this.create({ metadata: { sessionKey: key } });
       const result = await session.run!({ argv: ['/bin/true'], timeoutMs: 30_000 });
       if (result.exitCode !== 0) {
         throw new Error(`gVisor self-check failed (exit=${result.exitCode}): ${result.stderr}`);
       }
     } finally {
-      await fsp.rm(this.sessionDir(key), { recursive: true, force: true });
+      // .catch so a cleanup failure can't mask the real self-check error (finally-throw overrides).
+      await fsp.rm(this.sessionDir(key), { recursive: true, force: true }).catch(() => {});
     }
   }
 
@@ -225,9 +228,11 @@ export class GvisorSandboxClient implements SandboxClient {
           { argv: cmd.argv, cwd },
         );
         const bundleDir = await fsp.mkdtemp(path.join(sessionDir, 'bundle-'));
-        await fsp.writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(cfg));
-        const id = `s-${path.basename(bundleDir)}`;
+        // writeFile inside the try so a failure there still hits the finally cleanup —
+        // otherwise a throw between mkdtemp and the try would leak the bundle dir forever.
         try {
+          await fsp.writeFile(path.join(bundleDir, 'config.json'), JSON.stringify(cfg));
+          const id = `s-${path.basename(bundleDir)}`;
           return await spawnCollect(
             runscPath,
             runscRunArgs(bundleDir, id, { hostUds: network === 'proxy' }),

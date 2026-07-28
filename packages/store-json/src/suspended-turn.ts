@@ -35,6 +35,33 @@ export class SuspendedTurnStoreJson implements SuspendedTurnStore, DescribableSt
     fs.writeFileSync(this.filePath(state.pendingId), JSON.stringify(state, null, 2), 'utf-8');
   }
 
+  async claim(pendingId: string): Promise<SuspendedTurnState | null> {
+    const file = this.filePath(pendingId);
+    if (!fs.existsSync(file)) return null;
+    try {
+      const state = JSON.parse(fs.readFileSync(file, 'utf-8')) as SuspendedTurnState;
+      if (state.status !== 'awaiting') return null;
+      const claimed: SuspendedTurnState = { ...state, status: 'resumed' };
+      fs.writeFileSync(file, JSON.stringify(claimed, null, 2), 'utf-8');
+      return claimed;
+    } catch {
+      return null;
+    }
+  }
+
+  async release(pendingId: string): Promise<boolean> {
+    const file = this.filePath(pendingId);
+    if (!fs.existsSync(file)) return false;
+    try {
+      const state = JSON.parse(fs.readFileSync(file, 'utf-8')) as SuspendedTurnState;
+      if (state.status !== 'resumed') return false;
+      fs.writeFileSync(file, JSON.stringify({ ...state, status: 'awaiting' }, null, 2), 'utf-8');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async load(pendingId: string): Promise<SuspendedTurnState | null> {
     const file = this.filePath(pendingId);
     if (!fs.existsSync(file)) return null;

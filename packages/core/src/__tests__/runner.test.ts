@@ -590,6 +590,7 @@ describe('AgentRunner', () => {
             pendingId,
             toolCallId: callId,
             architectureHistory: [{ role: 'user', content: input.prompt }],
+            completedResults: [],
           });
           yield { type: 'suspended', pendingId, toolCallId: callId };
         } else {

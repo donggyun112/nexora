@@ -19,6 +19,21 @@ export class InMemorySuspendedTurnStore implements SuspendedTurnStore {
     this.turns.set(state.pendingId, structuredClone(state));
   }
 
+  async claim(pendingId: string): Promise<SuspendedTurnState | null> {
+    const state = this.turns.get(pendingId);
+    if (!state || state.status !== 'awaiting') return null;
+    const claimed: SuspendedTurnState = { ...structuredClone(state), status: 'resumed' };
+    this.turns.set(pendingId, claimed);
+    return structuredClone(claimed);
+  }
+
+  async release(pendingId: string): Promise<boolean> {
+    const state = this.turns.get(pendingId);
+    if (!state || state.status !== 'resumed') return false;
+    this.turns.set(pendingId, { ...state, status: 'awaiting' });
+    return true;
+  }
+
   async load(pendingId: string): Promise<SuspendedTurnState | null> {
     const s = this.turns.get(pendingId);
     return s ? structuredClone(s) : null;

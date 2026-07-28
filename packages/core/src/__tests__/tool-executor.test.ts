@@ -180,6 +180,47 @@ describe('CoreToolExecutor', () => {
 
     expect(peak).toBe(2);
   });
+
+  it('executeBatch runs an exclusive suspending call first and skips the rest', async () => {
+    const order: string[] = [];
+    const write: ToolDefinition = {
+      name: 'write',
+      description: 'write',
+      parameters: {},
+      isConcurrencySafe: true,
+      execute: async () => {
+        order.push('write');
+        return { type: 'text', text: 'written' };
+      },
+    };
+    const approval: ToolDefinition = {
+      name: 'approval',
+      description: 'approval',
+      parameters: {},
+      isExclusive: true,
+      execute: async () => {
+        order.push('approval');
+        return { type: 'suspend', pendingId: 'pending-1' };
+      },
+    };
+    const exec = new CoreToolExecutor({
+      tools: [write, approval],
+      context: mockContext,
+    });
+
+    const results = await exec.executeBatch([
+      { callId: 'write-1', name: 'write', input: {} },
+      { callId: 'approval-1', name: 'approval', input: {} },
+    ]);
+
+    expect(order).toEqual(['approval']);
+    expect(results).toEqual([{
+      callId: 'approval-1',
+      name: 'approval',
+      result: { type: 'suspend', pendingId: 'pending-1' },
+      isError: false,
+    }]);
+  });
 });
 
 describe('formatToolResult', () => {

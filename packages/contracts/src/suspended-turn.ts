@@ -13,7 +13,7 @@
  * Postgres in @dongkseo/store-pg).
  */
 
-import type { LLMMessage } from './agent.js';
+import type { LLMContentBlock, LLMMessage } from './agent.js';
 import type { MessageEnvelope } from './message.js';
 
 export interface SuspendedTurnState {
@@ -27,6 +27,8 @@ export interface SuspendedTurnState {
    * Opaque to the store.
    */
   architectureHistory: LLMMessage[];
+  /** Tool results that completed in the suspending batch, excluding the suspended call. */
+  completedResults?: Array<Extract<LLMContentBlock, { type: 'tool_result' }>>;
   /**
    * The original incoming envelope. Re-run rebuilds the AgentInput from this
    * via the agent's own `toAgentInput`, so no agent-specific input shape leaks
@@ -43,16 +45,30 @@ export interface SuspendedTurnState {
   tenantId: string;
   /** Timestamp (ms) for debugging / cleanup. */
   createdAt: number;
-  /** 'awaiting' is the normal state; 'resumed' guards against double-resume. */
+  /** 'awaiting' can be claimed; 'resumed' marks a resume currently in progress. */
   status: 'awaiting' | 'resumed';
 }
 
 export interface SuspendedTurnStore {
   /** Persist a suspended turn (insert or update by pendingId). */
   save(state: SuspendedTurnState): Promise<void>;
+  /**
+   * Atomically claim an awaiting turn for resume.
+   *
+   * The winning caller receives the state with `status: 'resumed'`; concurrent
+   * or duplicate callers receive null. Implementations advertised as
+   * multi-process must perform the check-and-transition in one backend
+   * operation.
+   */
+  claim(pendingId: string): Promise<SuspendedTurnState | null>;
+  /**
+   * Return an in-progress claim to the awaiting state for retry or operator
+   * recovery. Returns false when the turn is absent or not currently claimed.
+   */
+  release(pendingId: string): Promise<boolean>;
   /** Load a suspended turn by pendingId, or null if absent. */
   load(pendingId: string): Promise<SuspendedTurnState | null>;
-  /** Delete a suspended turn once it has been resumed (or abandoned). */
+  /** Delete a suspended turn once resume has completed (or it is abandoned). */
   delete(pendingId: string): Promise<void>;
   /** All turns still awaiting an answer — for operator inspection / recovery. */
   listAwaiting(): Promise<SuspendedTurnState[]>;

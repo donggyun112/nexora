@@ -67,6 +67,19 @@ class InlineTransport implements EventTransport {
 class MapSuspendedTurnStore implements SuspendedTurnStore {
   public readonly turns = new Map<string, SuspendedTurnState>();
   async save(s: SuspendedTurnState): Promise<void> { this.turns.set(s.pendingId, s); }
+  async claim(id: string): Promise<SuspendedTurnState | null> {
+    const state = this.turns.get(id);
+    if (!state || state.status !== 'awaiting') return null;
+    const claimed: SuspendedTurnState = { ...state, status: 'resumed' };
+    this.turns.set(id, claimed);
+    return claimed;
+  }
+  async release(id: string): Promise<boolean> {
+    const state = this.turns.get(id);
+    if (!state || state.status !== 'resumed') return false;
+    this.turns.set(id, { ...state, status: 'awaiting' });
+    return true;
+  }
   async load(id: string): Promise<SuspendedTurnState | null> { return this.turns.get(id) ?? null; }
   async delete(id: string): Promise<void> { this.turns.delete(id); }
   async listAwaiting(): Promise<SuspendedTurnState[]> {
@@ -99,7 +112,7 @@ function makeRequest(): MessageEnvelope {
 
 // Stub runtime: suspends on the initial turn (mimicking handraise(human)),
 // completes on resume by echoing the injected answer.
-function makeCreateRuntime() {
+function makeCreateRuntime(onResume?: () => void) {
   return ({ onSuspend }: {
     context: AgentContext;
     envelope: MessageEnvelope;
@@ -107,6 +120,7 @@ function makeCreateRuntime() {
   }): AgentRuntime => ({
     async *execute(input: AgentInput) {
       if (input.resumeContext) {
+        onResume?.();
         const tr = input.resumeContext.toolResult;
         const text = tr.type === 'text' ? tr.text : JSON.stringify(tr);
         yield { type: 'done', content: `resumed-with: ${text}`, toolCalls: [] };
@@ -115,6 +129,7 @@ function makeCreateRuntime() {
           pendingId: 'p1',
           toolCallId: 'tc1',
           architectureHistory: [{ role: 'assistant', content: 'asked the human' }],
+          completedResults: [],
         });
         yield { type: 'suspended', pendingId: 'p1', toolCallId: 'tc1' };
       }
@@ -196,6 +211,70 @@ describe('bootstrap — handraise suspend/resume', () => {
     });
 
     expect(transport.published.find(e => e.topic === 'task.completed')).toBeUndefined();
+    await agent.shutdown();
+  });
+
+  it('atomically claims a parked turn so concurrent duplicate answers resume it once', async () => {
+    const transport = new InlineTransport();
+    const store = new MapSuspendedTurnStore();
+    let resumeCount = 0;
+    const agent = await bootstrapAgent({
+      card,
+      contextLoader: loader,
+      transport,
+      suspendedTurnStore: store,
+      createRuntime: makeCreateRuntime(() => { resumeCount += 1; }),
+      toAgentInput,
+    });
+
+    await transport.publish(makeRequest());
+    const answer = (id: string): MessageEnvelope => ({
+      id,
+      topic: 'handraise.human.default.answered',
+      type: 'result',
+      payload: { answer: 'ship to prod' },
+      metadata: { traceId: 't', spanId: id, conversationId: 'c', replyTo: 'p1', tenantId: 'default', timestamp: 2 },
+    });
+
+    await Promise.all([
+      transport.publish(answer('ans-1')),
+      transport.publish(answer('ans-2')),
+    ]);
+
+    expect(resumeCount).toBe(1);
+    expect(transport.published.filter(e => e.topic === 'task.completed')).toHaveLength(1);
+    expect(store.turns.size).toBe(0);
+    await agent.shutdown();
+  });
+
+  it('returns a failed resume to awaiting so a later delivery can retry it', async () => {
+    const transport = new InlineTransport();
+    const store = new MapSuspendedTurnStore();
+    const agent = await bootstrapAgent({
+      card,
+      contextLoader: loader,
+      transport,
+      suspendedTurnStore: store,
+      createRuntime: makeCreateRuntime(() => { throw new Error('resume boom'); }),
+      toAgentInput,
+    });
+
+    const request = makeRequest();
+    request.metadata._replyStream = 'reply:request-1';
+    await transport.publish(request);
+    await transport.publish({
+      id: 'ans-1',
+      topic: 'handraise.human.default.answered',
+      type: 'result',
+      payload: { answer: 'ship to prod' },
+      metadata: { traceId: 't', spanId: 's2', conversationId: 'c', replyTo: 'p1', tenantId: 'default', timestamp: 2 },
+    });
+
+    expect(transport.published.find(e => e.topic === 'task.completed.failed')).toBeDefined();
+    expect(transport.published.find(e => e.topic === 'reply:request-1')).toMatchObject({
+      payload: { error: 'resume boom' },
+    });
+    expect(store.turns.get('p1')?.status).toBe('awaiting');
     await agent.shutdown();
   });
 });

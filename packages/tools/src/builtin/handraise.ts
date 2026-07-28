@@ -142,6 +142,7 @@ export function createHandraiseTool(options: HandraiseToolOptions): ToolDefiniti
       },
       required: ['question', 'recipient'],
     },
+    isExclusive: true,
     execute: async (callId, input, ctx): Promise<ToolResult> => {
       const params = input as HandraiseParams;
 

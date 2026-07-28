@@ -27,13 +27,19 @@ export interface ToolDefinition {
 
   // ─── Tool metadata (claude-code buildTool defaults pattern) ────────
   // All optional — omitted means fail-closed defaults:
-  //   isReadOnly=false, isConcurrencySafe=false, isDestructive=false
+  //   isReadOnly=false, isConcurrencySafe=false, isExclusive=false, isDestructive=false
 
   /** True if this tool only reads state (no side effects). */
   isReadOnly?: boolean | ((input?: unknown) => boolean);
 
   /** True if safe to run concurrently with other tools. Default: false (sequential). */
   isConcurrencySafe?: boolean | ((input?: unknown) => boolean);
+
+  /**
+   * True if this call must run before and apart from every other call in the
+   * model-issued batch. If it suspends, the remaining calls must not start.
+   */
+  isExclusive?: boolean | ((input?: unknown) => boolean);
 
   /** True if this tool can cause irreversible changes. */
   isDestructive?: boolean | ((input?: unknown) => boolean);

@@ -29,7 +29,10 @@ import {
   imageBlocksFromResult,
   isErrorResult,
   sanitizeToolPairsInPlace,
+  selectToolCallsForExecution,
+  suspendHistorySnapshot,
   userContentForInput,
+  type ToolResultBlock,
 } from './loop-helpers.js';
 import { streamLlm } from './stream-llm.js';
 
@@ -85,12 +88,15 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         history.push(...input.resumeContext.architectureHistory);
         history.push({
           role: 'tool_result',
-          content: [{
-            type: 'tool_result',
-            id: input.resumeContext.resumedCallId,
-            content: formatResultForLLM(input.resumeContext.toolResult),
-            isError: isErrorResult(input.resumeContext.toolResult),
-          }],
+          content: [
+            ...(input.resumeContext.completedResults ?? []),
+            {
+              type: 'tool_result',
+              id: input.resumeContext.resumedCallId,
+              content: formatResultForLLM(input.resumeContext.toolResult),
+              isError: isErrorResult(input.resumeContext.toolResult),
+            },
+          ],
         });
       } else {
         history.push(...await services.memory.getHistory());
@@ -163,23 +169,25 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
           return;
         }
 
+        const toolCalls = selectToolCallsForExecution(services, response.toolCalls);
+
         history.push({
           role: 'assistant',
           content: [
             ...(response.content ? [{ type: 'text' as const, text: response.content }] : []),
-            ...response.toolCalls.map(tc => ({ type: 'tool_call' as const, id: tc.id, name: tc.name, arguments: tc.arguments })),
+            ...toolCalls.map(tc => ({ type: 'tool_call' as const, id: tc.id, name: tc.name, arguments: tc.arguments })),
           ],
         });
 
-        for (const tc of response.toolCalls) {
+        for (const tc of toolCalls) {
           allToolCalls.push({ name: tc.name, input: tc.arguments });
           yield { type: 'tool_call', id: tc.id, name: tc.name, input: tc.arguments };
         }
 
-        const toolResults = await executeToolCalls(services, response.toolCalls);
+        const toolResults = await executeToolCalls(services, toolCalls);
         if (services.signal.aborted) return;
 
-        const toolResultBlocks: { type: 'tool_result'; id: string; content: string; isError: boolean }[] = [];
+        const toolResultBlocks: ToolResultBlock[] = [];
         const toolImageMessages: LLMMessage[] = [];
         let suspended: { pendingId: string; toolCallId: string } | null = null;
         let planSubmitted = false;
@@ -188,8 +196,8 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
           yield { type: 'tool_result', id: tc.id, name: tc.name, result, isError };
 
           if (result && typeof result === 'object' && (result as { type?: string }).type === 'suspend') {
-            suspended = { pendingId: (result as { pendingId: string }).pendingId, toolCallId: tc.id };
-            break;
+            suspended ??= { pendingId: (result as { pendingId: string }).pendingId, toolCallId: tc.id };
+            continue;
           }
 
           if (phase === 'plan' && tc.name === exitPlanTool && !isError) planSubmitted = true;
@@ -209,7 +217,16 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         if (suspended) {
           yield { type: 'suspended', pendingId: suspended.pendingId, toolCallId: suspended.toolCallId };
-          await services.onSuspend?.({ pendingId: suspended.pendingId, toolCallId: suspended.toolCallId, architectureHistory: [...history] });
+          await services.onSuspend?.({
+            pendingId: suspended.pendingId,
+            toolCallId: suspended.toolCallId,
+            architectureHistory: suspendHistorySnapshot(
+              history,
+              toolResultBlocks,
+              suspended.toolCallId,
+            ),
+            completedResults: toolResultBlocks,
+          });
           return;
         }
 

@@ -21,6 +21,28 @@ export class SuspendedTurnStorePg implements SuspendedTurnStore, DescribableStor
     `;
   }
 
+  async claim(pendingId: string): Promise<SuspendedTurnState | null> {
+    const rows = await this.sql`
+      UPDATE nexora_suspended_turns
+      SET data = jsonb_set(data, '{status}', '"resumed"'::jsonb)
+      WHERE pending_id = ${pendingId}
+        AND data->>'status' = 'awaiting'
+      RETURNING data
+    `;
+    return rows.length > 0 ? (rows[0].data as SuspendedTurnState) : null;
+  }
+
+  async release(pendingId: string): Promise<boolean> {
+    const rows = await this.sql`
+      UPDATE nexora_suspended_turns
+      SET data = jsonb_set(data, '{status}', '"awaiting"'::jsonb)
+      WHERE pending_id = ${pendingId}
+        AND data->>'status' = 'resumed'
+      RETURNING pending_id
+    `;
+    return rows.length > 0;
+  }
+
   async load(pendingId: string): Promise<SuspendedTurnState | null> {
     const rows = await this.sql`
       SELECT data FROM nexora_suspended_turns WHERE pending_id = ${pendingId}

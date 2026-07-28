@@ -27,8 +27,11 @@ import {
   isErrorResult,
   pruneLoopHistory,
   sanitizeToolPairsInPlace,
+  selectToolCallsForExecution,
+  suspendHistorySnapshot,
   userContentForInput,
   type LoopCompactionOptions,
+  type ToolResultBlock,
 } from './loop-helpers.js';
 import { streamLlm } from './stream-llm.js';
 
@@ -65,12 +68,15 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         history.push(...input.resumeContext.architectureHistory);
         history.push({
           role: 'tool_result',
-          content: [{
-            type: 'tool_result',
-            id: input.resumeContext.resumedCallId,
-            content: formatResultForLLM(input.resumeContext.toolResult),
-            isError: isErrorResult(input.resumeContext.toolResult),
-          }],
+          content: [
+            ...(input.resumeContext.completedResults ?? []),
+            {
+              type: 'tool_result',
+              id: input.resumeContext.resumedCallId,
+              content: formatResultForLLM(input.resumeContext.toolResult),
+              isError: isErrorResult(input.resumeContext.toolResult),
+            },
+          ],
         });
         // memory.append for resume is intentionally skipped — the user-facing turn was
         // already recorded in ConversationStore (memory) during the original execution.
@@ -155,12 +161,14 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
           return;
         }
 
-        // assistant 메시지 (텍스트 + tool_call) history에 추가
+        const toolCalls = selectToolCallsForExecution(services, response.toolCalls);
+
+        // assistant 메시지 (텍스트 + 실제 실행할 tool_call) history에 추가
         history.push({
           role: 'assistant',
           content: [
             ...(response.content ? [{ type: 'text' as const, text: response.content }] : []),
-            ...response.toolCalls.map(tc => ({
+            ...toolCalls.map(tc => ({
               type: 'tool_call' as const,
               id: tc.id,
               name: tc.name,
@@ -170,18 +178,18 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         });
 
         // tool_call 이벤트는 실행 시작 전에 emit
-        for (const tc of response.toolCalls) {
+        for (const tc of toolCalls) {
           allToolCalls.push({ name: tc.name, input: tc.arguments });
           yield { type: 'tool_call', id: tc.id, name: tc.name, input: tc.arguments };
         }
 
         // 도구 병렬 실행 (Promise.all 안에서 yield 불가하므로 결과 모은 후 일괄 emit)
-        const toolResults = await executeToolCalls(services, response.toolCalls);
+        const toolResults = await executeToolCalls(services, toolCalls);
 
         if (services.signal.aborted) return;
 
         // tool_result emit + history에 추가할 블록 생성
-        const toolResultBlocks: { type: 'tool_result'; id: string; content: string; isError: boolean }[] = [];
+        const toolResultBlocks: ToolResultBlock[] = [];
         const toolImageMessages: LLMMessage[] = [];
         let suspended: { pendingId: string; toolCallId: string } | null = null;
         for (const { tc, result, isError } of toolResults) {
@@ -192,11 +200,11 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
             typeof result === 'object' &&
             (result as { type?: string }).type === 'suspend'
           ) {
-            suspended = {
+            suspended ??= {
               pendingId: (result as { pendingId: string }).pendingId,
               toolCallId: tc.id,
             };
-            break;
+            continue;
           }
 
           toolResultBlocks.push({
@@ -225,7 +233,12 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
           await services.onSuspend?.({
             pendingId: suspended.pendingId,
             toolCallId: suspended.toolCallId,
-            architectureHistory: [...history],
+            architectureHistory: suspendHistorySnapshot(
+              history,
+              toolResultBlocks,
+              suspended.toolCallId,
+            ),
+            completedResults: toolResultBlocks,
           });
           return;
         }

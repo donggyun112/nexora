@@ -18,6 +18,25 @@ import type {
 export { imageResultForLLM, imageBlocksFromResult, sanitizeToolPairsInPlace } from '@dongkseo/contracts';
 
 export type ToolCall = NonNullable<LLMResponse['toolCalls']>[number];
+export type ToolResultBlock = Extract<LLMContentBlock, { type: 'tool_result' }>;
+
+/**
+ * Exclusive calls are presented to the executor alone. The model can re-issue
+ * the other calls after the exclusive result has been incorporated.
+ */
+export function selectToolCallsForExecution(
+  services: RuntimeServices,
+  toolCalls: ToolCall[],
+): ToolCall[] {
+  const exclusive = toolCalls.find((tc) => {
+    const tool = services.tools.get?.(tc.name);
+    if (!tool?.isExclusive) return false;
+    return typeof tool.isExclusive === 'function'
+      ? tool.isExclusive(tc.arguments)
+      : tool.isExclusive;
+  });
+  return exclusive ? [exclusive] : toolCalls;
+}
 
 export async function executeToolCalls(
   services: RuntimeServices,
@@ -36,6 +55,7 @@ export async function executeToolCalls(
     if (services.signal.aborted) break;
     const result = await services.tools.execute(tc.name, tc.id, tc.arguments, services.signal);
     results.push({ tc, result, isError: isErrorResult(result) });
+    if (isSuspendResult(result)) break;
   }
   return results;
 }
@@ -45,7 +65,10 @@ function mergeBatchResults(
   batchResults: ToolBatchResult[],
 ): { tc: ToolCall; result: unknown; isError: boolean }[] {
   const byId = new Map(batchResults.map(result => [result.callId, result]));
-  return toolCalls.map((tc) => {
+  const completedCalls = batchResults.some(result => result.result.type === 'suspend')
+    ? toolCalls.filter(tc => byId.has(tc.id))
+    : toolCalls;
+  return completedCalls.map((tc) => {
     const result = byId.get(tc.id);
     if (!result) {
       return {
@@ -56,6 +79,45 @@ function mergeBatchResults(
     }
     return { tc, result: result.result, isError: result.isError };
   });
+}
+
+export function suspendHistorySnapshot(
+  history: LLMMessage[],
+  completedResults: ToolResultBlock[],
+  suspendedCallId: string,
+): LLMMessage[] {
+  const retainedCallIds = new Set([
+    suspendedCallId,
+    ...completedResults.map(result => result.id),
+  ]);
+  let suspendingMessageIndex = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (
+      message.role === 'assistant' &&
+      Array.isArray(message.content) &&
+      message.content.some(block => block.type === 'tool_call' && block.id === suspendedCallId)
+    ) {
+      suspendingMessageIndex = i;
+      break;
+    }
+  }
+
+  return history.map((message, index) => {
+    if (!Array.isArray(message.content)) return { ...message };
+    const content = index === suspendingMessageIndex
+      ? message.content.filter(block => block.type !== 'tool_call' || retainedCallIds.has(block.id))
+      : [...message.content];
+    return { ...message, content };
+  });
+}
+
+function isSuspendResult(result: unknown): boolean {
+  return Boolean(
+    result &&
+    typeof result === 'object' &&
+    (result as { type?: string }).type === 'suspend',
+  );
 }
 
 /**

@@ -378,11 +378,12 @@ async function handleMessage(args: {
     // it can be resumed once the human answers. architectureHistory flows ONLY
     // through onSuspend (not the event stream), so capture it here.
     const onSuspend: RuntimeServices['onSuspend'] | undefined = args.suspendedTurnStore
-      ? async ({ pendingId, toolCallId, architectureHistory }) => {
+      ? async ({ pendingId, toolCallId, architectureHistory, completedResults }) => {
           await args.suspendedTurnStore!.save({
             pendingId,
             toolCallId,
             architectureHistory,
+            completedResults,
             envelope,
             resultTopic,
             tenantId,
@@ -541,11 +542,30 @@ async function resumeHandraiseTurn(args: {
   const pendingId = replyEnv.metadata.replyTo;
   if (!pendingId) return; // not a correlated reply
 
-  const state = await store.load(pendingId);
+  const state = await store.claim(pendingId);
   if (!state) return; // unknown / already resumed (claimed by another delivery)
 
-  // Claim the turn up-front so a duplicate delivery can't double-resume it.
-  await store.delete(pendingId);
+  const deleteClaim = async (): Promise<void> => {
+    try {
+      await store.delete(pendingId);
+    } catch (err) {
+      logger.error(`Agent ${card.name} failed deleting resumed handraise state`, {
+        pendingId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+  const releaseClaim = async (): Promise<void> => {
+    try {
+      await store.release(pendingId);
+    } catch (err) {
+      logger.error(`Agent ${card.name} failed releasing handraise claim`, {
+        pendingId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+  let nextPendingId: string | undefined;
 
   try {
     const replyPayload = (replyEnv.payload ?? {}) as { answer?: unknown; rationale?: string };
@@ -558,6 +578,7 @@ async function resumeHandraiseTurn(args: {
     const input = await toAgentInput(state.envelope);
     input.resumeContext = {
       architectureHistory: state.architectureHistory,
+      completedResults: state.completedResults ?? [],
       resumedCallId: state.toolCallId,
       toolResult,
     };
@@ -566,17 +587,24 @@ async function resumeHandraiseTurn(args: {
 
     // Re-persist if the resumed turn suspends AGAIN (a second handraise) — a new
     // pendingId/state is written under the fresh suspend.
-    const onSuspend: RuntimeServices['onSuspend'] = async ({ pendingId: nextId, toolCallId, architectureHistory }) => {
+    const onSuspend: RuntimeServices['onSuspend'] = async ({
+      pendingId: nextId,
+      toolCallId,
+      architectureHistory,
+      completedResults,
+    }) => {
       await store.save({
         pendingId: nextId,
         toolCallId,
         architectureHistory,
+        completedResults,
         envelope: state.envelope,
         resultTopic: state.resultTopic,
         tenantId: state.tenantId,
         createdAt: Date.now(),
         status: 'awaiting',
       });
+      nextPendingId = nextId;
     };
 
     const runtime = await createRuntime({ context, envelope: state.envelope, onSuspend });
@@ -594,6 +622,7 @@ async function resumeHandraiseTurn(args: {
         prevPendingId: pendingId,
         pendingId: reSuspended.pendingId,
       });
+      if (reSuspended.pendingId !== pendingId) await deleteClaim();
       return; // new state persisted by onSuspend; awaits the next answer
     }
 
@@ -610,11 +639,17 @@ async function resumeHandraiseTurn(args: {
       payload,
       tenantId: state.tenantId,
     });
+    await deleteClaim();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`Agent ${card.name} failed resuming handraise`, { pendingId, message });
+    if (nextPendingId && nextPendingId !== pendingId) {
+      await deleteClaim();
+    } else {
+      await releaseClaim();
+    }
     const errorTopic = `${state.resultTopic}.failed`;
-    await transport.publish({
+    const errorEnvelope: MessageEnvelope = {
       id: messageId(),
       topic: errorTopic,
       type: 'result',
@@ -629,7 +664,9 @@ async function resumeHandraiseTurn(args: {
         sourceInstanceId: card.name,
         timestamp: Date.now(),
       },
-    });
+    };
+    await transport.publish(errorEnvelope);
+    await mirrorToReplyStream(transport, state.envelope, errorEnvelope);
   }
 }
 

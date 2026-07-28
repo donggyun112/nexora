@@ -116,7 +116,9 @@ export class CoreToolExecutor implements ToolExecutor {
   }
 
   /**
-   * 여러 도구 호출을 실행. isConcurrencySafe인 도구는 병렬, 나머지는 순차.
+   * 여러 도구 호출을 실행. isExclusive 도구는 나머지 호출보다 먼저 단독 실행하고,
+   * suspend를 반환하면 아직 시작하지 않은 호출은 실행하지 않는다.
+   * isConcurrencySafe인 도구는 병렬, 나머지는 순차.
    * 원래 호출 순서를 보존하기 위해 chunked 방식 사용:
    * 연속된 concurrent 도구를 하나의 배치로 묶어 병렬 실행하고,
    * sequential 도구를 만나면 이전 배치를 flush 후 순차 실행.
@@ -129,6 +131,27 @@ export class CoreToolExecutor implements ToolExecutor {
       const result = raw as ToolResult;
       return { callId: call.callId, name: call.name, result, isError: result.type === 'error' };
     };
+
+    const exclusiveIndex = calls.findIndex((call) => {
+      const tool = this.get(call.name);
+      return Boolean(tool && resolveBool(tool.isExclusive, call.input));
+    });
+    if (exclusiveIndex >= 0) {
+      const exclusiveResult = await exec(calls[exclusiveIndex]);
+      if (exclusiveResult.result.type === 'suspend' || signal?.aborted) {
+        return [exclusiveResult];
+      }
+
+      const remainingCalls = calls.filter((_, index) => index !== exclusiveIndex);
+      const remainingResults = await this.executeBatch(remainingCalls, signal);
+      const completed = new Map(
+        [exclusiveResult, ...remainingResults].map(result => [result.callId, result]),
+      );
+      return calls.flatMap((call) => {
+        const result = completed.get(call.callId);
+        return result ? [result] : [];
+      });
+    }
 
     // Build chunks: consecutive concurrent calls are grouped together
     let i = 0;

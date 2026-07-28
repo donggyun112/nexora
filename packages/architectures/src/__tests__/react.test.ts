@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createReactArchitecture } from '../react.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, RuntimeServices, LLMMessage } from '@dongkseo/contracts';
+import type { AgentEvent, RuntimeServices, LLMMessage, ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { suspendResult } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
@@ -301,22 +301,123 @@ describe('ReAct suspend', () => {
     expect(onSuspendCalls[0].historyLen).toBeGreaterThan(0);
   });
 
-  it('first suspend in a parallel batch terminates the turn', async () => {
+  it('runs an exclusive suspending tool before the rest of a mixed batch', async () => {
     const llm = new MockLLMProvider([
       { text: '', toolCalls: [
-        { id: 'call-1', name: 'ask', arguments: {} },
-        { id: 'call-2', name: 'echo', arguments: { msg: 'hi' } },
+        { id: 'call-1', name: 'write_file', arguments: { path: 'out.txt' } },
+        { id: 'call-2', name: 'ask', arguments: {} },
+      ]},
+    ]);
+    let writeRan = false;
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>([
+      ['write_file', async () => {
+        writeRan = true;
+        return { type: 'text' as const, text: 'written' };
+      }],
+      ['ask', async () => suspendResult('p1')],
+    ]);
+    let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+    const services = makeServices(llm, tools, {
+      onSuspend: async (info) => {
+        checkpoint = info;
+      },
+    }) as unknown as RuntimeServices;
+    const executedBatches: string[][] = [];
+    services.tools.executeBatch = async (calls) => {
+      executedBatches.push(calls.map(call => call.callId));
+      return [{
+        callId: calls[0].callId,
+        name: calls[0].name,
+        result: suspendResult('p1'),
+        isError: false,
+      }];
+    };
+    const askDefinition: ToolDefinition = {
+      name: 'ask',
+      description: 'ask',
+      parameters: {},
+      isExclusive: true,
+      execute: async () => suspendResult('p1'),
+    };
+    services.tools.get = name => name === 'ask' ? askDefinition : undefined;
+
+    const arch = createReactArchitecture();
+    const events = await collect(arch.loop(services, { prompt: 'q' }));
+
+    expect(writeRan).toBe(false);
+    expect(executedBatches).toEqual([['call-2']]);
+    expect(events.filter(e => e.type === 'tool_call')).toEqual([
+      { type: 'tool_call', id: 'call-2', name: 'ask', input: {} },
+    ]);
+    expect(events.some(e => e.type === 'suspended' && (e as { type: 'suspended'; pendingId: string }).pendingId === 'p1')).toBe(true);
+    expect(events.some(e => e.type === 'done')).toBe(false);
+    expect(checkpoint?.completedResults).toEqual([]);
+    const assistant = checkpoint?.architectureHistory.find(message => message.role === 'assistant');
+    expect(assistant?.content).toEqual([
+      { type: 'tool_call', id: 'call-2', name: 'ask', arguments: {} },
+    ]);
+  });
+
+  it('checkpoints completed results and restores them beside the resumed result', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [
+        { id: 'call-1', name: 'echo', arguments: {} },
+        { id: 'call-2', name: 'ask', arguments: {} },
       ]},
     ]);
     const tools = new Map<string, (input: unknown) => Promise<unknown>>([
-      ['ask', async () => suspendResult('p1')],
       ['echo', async () => ({ type: 'text' as const, text: 'echoed' })],
+      ['ask', async () => suspendResult('p1')],
     ]);
-    const services = makeServices(llm, tools);
+    let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+    const services = makeServices(llm, tools, {
+      onSuspend: async (info) => {
+        checkpoint = info;
+      },
+    }) as unknown as RuntimeServices;
+    services.tools.executeBatch = async (calls) => Promise.all(calls.map(async (call) => {
+      const result = await tools.get(call.name)!(call.input) as ToolResult;
+      return {
+        callId: call.callId,
+        name: call.name,
+        result,
+        isError: result.type === 'error',
+      };
+    }));
+
     const arch = createReactArchitecture();
-    const events = await collect(arch.loop(services as unknown as RuntimeServices, { prompt: 'q' }));
-    expect(events.some(e => e.type === 'suspended' && (e as { type: 'suspended'; pendingId: string }).pendingId === 'p1')).toBe(true);
-    expect(events.some(e => e.type === 'done')).toBe(false);
+    const events = await collect(arch.loop(services, { prompt: 'q' }));
+
+    expect(events.filter(e => e.type === 'tool_result').map(e => e.id)).toEqual([
+      'call-1',
+      'call-2',
+    ]);
+    expect(checkpoint?.completedResults).toEqual([
+      { type: 'tool_result', id: 'call-1', content: 'echoed', isError: false },
+    ]);
+    const assistant = checkpoint?.architectureHistory.find(message => message.role === 'assistant');
+    expect(assistant?.content).toEqual([
+      { type: 'tool_call', id: 'call-1', name: 'echo', arguments: {} },
+      { type: 'tool_call', id: 'call-2', name: 'ask', arguments: {} },
+    ]);
+
+    const resumedLlm = new MockLLMProvider([{ text: 'done', toolCalls: [] }]);
+    const resumedServices = makeServices(resumedLlm, new Map());
+    await collect(arch.loop(resumedServices as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: {
+        architectureHistory: checkpoint!.architectureHistory,
+        completedResults: checkpoint!.completedResults,
+        resumedCallId: checkpoint!.toolCallId,
+        toolResult: { type: 'text', text: 'approved' },
+      },
+    }));
+
+    const restored = resumedLlm.callLog[0].messages.find(message => message.role === 'tool_result');
+    expect(restored?.content).toEqual([
+      { type: 'tool_result', id: 'call-1', content: 'echoed', isError: false },
+      { type: 'tool_result', id: 'call-2', content: 'approved', isError: false },
+    ]);
   });
 });
 

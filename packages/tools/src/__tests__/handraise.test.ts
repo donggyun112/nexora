@@ -129,6 +129,7 @@ describe('handraise tool — human suspend + agent-to-agent round-trip', () => {
     inbox.start();
 
     const tool = createHandraiseTool({ transport });
+    expect(tool.isExclusive).toBe(true);
 
     const result = await tool.execute('call-1', {
       question: 'Which account to charge?',

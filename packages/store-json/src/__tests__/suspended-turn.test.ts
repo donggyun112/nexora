@@ -55,6 +55,19 @@ describe('SuspendedTurnStoreJson', () => {
     expect(await store.load('nope')).toBeNull();
   });
 
+  it('claims an awaiting turn once and can release it for recovery', async () => {
+    await store.save(makeState('p1'));
+
+    const claimed = await store.claim('p1');
+
+    expect(claimed?.status).toBe('resumed');
+    expect(await store.claim('p1')).toBeNull();
+    expect((await store.load('p1'))?.status).toBe('resumed');
+    expect(await store.release('p1')).toBe(true);
+    expect((await store.load('p1'))?.status).toBe('awaiting');
+    expect(await store.release('p1')).toBe(false);
+  });
+
   it('delete removes the turn', async () => {
     await store.save(makeState('p1'));
     await store.delete('p1');

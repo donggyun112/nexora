@@ -31,6 +31,8 @@ export interface AgentInput {
    */
   resumeContext?: {
     architectureHistory: LLMMessage[];
+    /** Results that completed in the same batch before the turn suspended. */
+    completedResults?: Array<Extract<LLMContentBlock, { type: 'tool_result' }>>;
     resumedCallId: string;
     toolResult: ToolResult;
   };
@@ -160,6 +162,7 @@ export interface RuntimeServices {
     pendingId: string;
     toolCallId: string;
     architectureHistory: LLMMessage[];
+    completedResults: Array<Extract<LLMContentBlock, { type: 'tool_result' }>>;
   }) => Promise<void>;
 }
 

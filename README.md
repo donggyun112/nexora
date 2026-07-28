@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  Multi-tenant agent framework for TypeScript.<br/>
-  Multiple AI agents, one team, every tenant isolated.
+  Multi-agent runtime for TypeScript.<br/>
+  Coordinated agents, contained authority, OS-level isolation.
 </p>
 
 <p align="center">
@@ -19,13 +19,13 @@
   <sub>🤖 Coding agent? Start at <a href="AGENTS.md"><strong>AGENTS.md</strong></a> → <a href="docs/architecture/packages-map.md">packages-map.md</a> for capability → package routing.</sub>
 </p>
 
-> **v0.1** — The core works and is tested (344 tests). APIs may still change before 1.0. Feedback welcome.
+> **v0.1** — The core works and is tested (1,200+ tests). APIs may still change before 1.0. Feedback welcome.
 
 ---
 
 ## What is Nexora?
 
-Nexora is a TypeScript framework for running **multiple AI agents as a coordinated team**.
+Nexora is a TypeScript framework for running **multiple AI agents as a coordinated team** — where agents delegate by capability, ask a human when stuck, and every delegated agent runs with **contained authority** (its grants can only ever be a subset of its caller's) on top of **OS-level sandbox isolation**.
 
 ```
 pnpm exec nexora create agent my-agent
@@ -71,7 +71,9 @@ See the [full getting started guide](docs/getting-started.md) — zero to runnin
 | Agents all respond at once in group chat | **Conversation protocol** — agents evaluate relevance, best one speaks |
 | Agent doesn't know → hallucinates | **Handraise** — pause and ask a human instead of guessing |
 | One agent can't do it alone | **Delegate** — find another by capability, not by name |
-| Same agent, different customers | **Multi-tenant context** — same binary, different persona/tools/limits |
+| A delegated agent could gain powers its caller never had | **Authority attenuation** — a child's grants are always a subset of the parent's; no escalation path, enforced at the approval gate |
+| A tool call needs a human's OK — or must never run | **Approval gate** — composable `<domain>.<action>` policy (skip/ask/block/deny), layered per channel |
+| Same agent, different customers | **Multi-tenant context** (opt-in) — same binary, different persona/tools/limits |
 | "What did the agent do?" | **OTel tracing** — every call, one trace in Jaeger |
 | Workflow crashes mid-flight | **Checkpoint/resume** — pick up from the last step |
 | LLM costs spiral | **Budget tracking** — per-agent/tenant limits with block/warn |
@@ -127,7 +129,9 @@ Adapter (HTTP / Discord / Slack)
 
 </details>
 
-## Multi-tenant
+## Multi-tenant (opt-in)
+
+Multi-tenancy is an **opt-in capability, not the core identity** — see [ADR-001](docs/architecture/adrs/adr-001-tenancy-opt-in.md) and [ADR-004](docs/architecture/adrs/adr-004-authority-is-the-moat.md). When you want it:
 
 ```bash
 curl -H "X-Tenant-Id: startup" -d '{"content": "help"}' ...
@@ -152,7 +156,7 @@ cd nexora && pnpm install && pnpm build && pnpm test
 
 ## Security
 
-Exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), AbortSignal cancellation, typed transport guarantees, budget enforcement, import path validation, delegation cycle detection, tool pair sanitization, gateway API key auth + rate limiting (429), LLM error classification + smart fallback, skill content threat scanning.
+Exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), AbortSignal cancellation, typed transport guarantees, budget enforcement, import path validation, **delegation authority attenuation (no-escalation)** + composable approval gate, delegation cycle detection, tool pair sanitization, gateway API key auth + rate limiting (429), LLM error classification + smart fallback, skill content threat scanning.
 
 ## Status
 

@@ -68,6 +68,15 @@ export interface MessageMetadata {
    */
   callerAgent?: string;
 
+  /**
+   * Delegation authority the child inherits — the set of policy groups it is
+   * permitted to act under downstream. Computed by the `delegate` tool as a
+   * subset of the delegating agent's own authority (no escalation). Undefined =
+   * root / unrestricted. The receiving runtime enforces it (e.g. by composing an
+   * approval-gate escalation guard from this set).
+   */
+  inheritedAuthority?: readonly string[];
+
   /** 생성 시각 (epoch ms) */
   timestamp: number;
 }

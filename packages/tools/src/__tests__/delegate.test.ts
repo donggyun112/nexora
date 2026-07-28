@@ -575,3 +575,43 @@ describe('delegate runtime drain (sync + background)', () => {
     expect(steered.some((m) => m.includes('exceeded 20ms'))).toBe(true);
   });
 });
+
+describe('delegation authority attenuation', () => {
+  function setup(opts: Partial<Parameters<typeof createDelegateTool>[0]>) {
+    const transport = new FakeTransport();
+    const registry = makeRegistry([makeCard('writer', 'write', ['write.requested'])]);
+    const tool = createDelegateTool({
+      transport,
+      registry,
+      callerAgentName: 'caller-A',
+      ...opts,
+    });
+    const captured: { env?: MessageEnvelope } = {};
+    transport.subscribe('write.requested', async (env) => {
+      captured.env = env;
+    });
+    return { tool, captured };
+  }
+
+  async function delegate(tool: ReturnType<typeof createDelegateTool>) {
+    await tool.execute('d', { capability: 'write', input: {}, waitForResult: false }, makeCtx());
+  }
+
+  it('propagates the full parent authority to the child when no narrowing is requested', async () => {
+    const { tool, captured } = setup({ currentAuthority: ['A', 'B'] });
+    await delegate(tool);
+    expect(captured.env?.metadata.inheritedAuthority).toEqual(['A', 'B']);
+  });
+
+  it('narrows the child to the requested authority-for-child (subset of parent)', async () => {
+    const { tool, captured } = setup({ currentAuthority: ['A', 'B'], authorityForChild: ['A'] });
+    await delegate(tool);
+    expect(captured.env?.metadata.inheritedAuthority).toEqual(['A']);
+  });
+
+  it('never lets the child gain a group the parent lacks (no escalation)', async () => {
+    const { tool, captured } = setup({ currentAuthority: ['A'], authorityForChild: ['A', 'B'] });
+    await delegate(tool);
+    expect(captured.env?.metadata.inheritedAuthority).toEqual(['A']);
+  });
+});

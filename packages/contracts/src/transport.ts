@@ -225,6 +225,12 @@ export interface RequestOptions {
    * read by bootstrap to filter the child's toolset.
    */
   blockedTools?: string[];
+
+  /**
+   * Delegation authority the child inherits (a subset of the delegator's own).
+   * Propagated by the delegate tool into `envelope.metadata.inheritedAuthority`.
+   */
+  inheritedAuthority?: readonly string[];
 }
 
 /**

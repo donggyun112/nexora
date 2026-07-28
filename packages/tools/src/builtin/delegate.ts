@@ -36,6 +36,7 @@ import {
 } from '@dongkseo/contracts';
 import { createApprovalGateMiddleware } from '../handraise/approval-middleware.js';
 import type { ApprovalGateOptions } from '../handraise/approval-middleware.js';
+import { attenuate } from '../handraise/authority.js';
 import { InMemoryBackgroundTaskRegistry } from '@dongkseo/contracts';
 import type { BackgroundTaskRegistry, BackgroundTaskResult } from '@dongkseo/contracts';
 
@@ -115,6 +116,19 @@ export interface DelegateToolOptions {
    * delegation, unauthorized user interaction, or shared state corruption.
    */
   blockedToolsForChild?: string[];
+  /**
+   * This agent's own delegation authority — the set of policy groups it is
+   * allowed to grant downstream. Set by bootstrap from
+   * `envelope.metadata.inheritedAuthority`. Undefined = root / unrestricted.
+   */
+  currentAuthority?: readonly string[];
+  /**
+   * Optional ceiling to impose on children. The child's inherited authority is
+   * `attenuate(currentAuthority, authorityForChild)` — always a subset of this
+   * agent's own (no escalation). Undefined = pass the full current authority
+   * down unchanged.
+   */
+  authorityForChild?: readonly string[];
   /**
    * Inline subagents — resolved by name before checking the registry.
    * Supports declarative (built at call time), compiled (pre-built runtime),
@@ -233,6 +247,8 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
     defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
     currentDepth = 0,
     blockedToolsForChild = DEFAULT_BLOCKED_TOOLS_FOR_CHILD,
+    currentAuthority,
+    authorityForChild,
     subagents = [],
     runtimeFactory,
     onSubagentEvent,
@@ -248,6 +264,10 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
   for (const sa of subagents) {
     subagentsByName.set(sa.name, sa);
   }
+
+  // Authority a delegated child inherits — always a subset of this agent's own
+  // (no escalation). Constant per tool instance; propagated on every hop.
+  const childAuthority = attenuate(currentAuthority, authorityForChild);
 
   // Launch a caller-owned background subagent: resolve a child runtime (inline
   // subagent, else a capability-resolved peer via peerRuntimeFactory), pump it on
@@ -525,6 +545,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
               sourceInstanceId: callerAgentName,
               callerAgent: callerAgentName,
               delegationDepth: nextDepth,
+              inheritedAuthority: childAuthority,
               timestamp: Date.now(),
             },
           };
@@ -556,6 +577,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
               sourceInstanceId: callerAgentName,
               callerAgent: callerAgentName,
               delegationDepth: nextDepth,
+              inheritedAuthority: childAuthority,
               timestamp: Date.now(),
             },
           };
@@ -580,6 +602,7 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
             delegationDepth: nextDepth,
             callerAgent: callerAgentName,
             blockedTools: blockedToolsForChild,
+            inheritedAuthority: childAuthority,
           },
         );
 

@@ -41,6 +41,11 @@ export type {
   ApprovalMode,
 } from './approval-middleware.js';
 
+export { decide, mergeRules, createGroupPolicyResolver } from './approval-policy.js';
+export type { PolicyRules } from './approval-policy.js';
+
+export { attenuate, createEscalationGuard } from './authority.js';
+
 export {
   defaultShellHardlineRule,
   composeHardlineRules,

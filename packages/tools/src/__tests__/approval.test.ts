@@ -3,6 +3,7 @@ import {
   HandraiseInbox,
   InMemoryApprovalPolicyStore,
   createApprovalGateMiddleware,
+  createEscalationGuard,
   isApprovalRequest,
   defaultShellHardlineRule,
 } from '../index.js';
@@ -356,6 +357,41 @@ describe('approvalGateMiddleware', () => {
     if (result.type === 'error') expect(result.message).toContain('DENIED');
     expect(calls).toHaveLength(0);
     expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+  });
+
+  it('denies a delegated tool whose group escalates beyond inherited authority', async () => {
+    const calls: { input: unknown }[] = [];
+    // Parent was granted only {A}; a delegatee tool declaring group B is escalation.
+    const escalating: ToolDefinition = {
+      ...makeTool('privileged_op', calls),
+      permissionGroups: ['B'],
+    };
+    const { wrapped, transport } = wrapPolicyGroupTool({
+      resolveGroupAction: createEscalationGuard(['A']),
+    }, escalating);
+
+    const result = await wrapped.execute('c1', {}, makeCtx());
+
+    expect(result.type).toBe('error');
+    if (result.type === 'error') expect(result.message).toContain('DENIED');
+    expect(calls).toHaveLength(0);
+    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+  });
+
+  it('allows a delegated tool whose group is within inherited authority', async () => {
+    const calls: { input: unknown }[] = [];
+    const inScope: ToolDefinition = {
+      ...makeTool('granted_op', calls),
+      permissionGroups: ['A'],
+    };
+    const { wrapped } = wrapPolicyGroupTool({
+      resolveGroupAction: createEscalationGuard(['A']),
+    }, inScope);
+
+    const result = await wrapped.execute('c1', {}, makeCtx());
+
+    expect(result.type).toBe('text');
+    expect(calls).toHaveLength(1);
   });
 
   it('grants once: runs tool, does not cache', async () => {

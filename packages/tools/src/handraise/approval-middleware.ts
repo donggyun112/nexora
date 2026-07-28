@@ -31,7 +31,7 @@ import type {
   MessageEnvelope,
   WorkspaceSession,
 } from '@dongkseo/contracts';
-import { textResult, errorResult } from '@dongkseo/contracts';
+import { textResult, errorResult, getToolPolicyGroups } from '@dongkseo/contracts';
 import type { ApprovalChoice, ApprovalRequest, ApprovalReply } from './approval.js';
 import type { ApprovalPolicyStore } from './approval-store.js';
 import type {
@@ -417,7 +417,7 @@ export function createApprovalGateMiddleware(
     | null
   > {
     if (!resolveGroupAction) return null;
-    const policyGroups = getPolicyGroups(tool);
+    const policyGroups = getToolPolicyGroups(tool);
     let ask: { kind: 'ask'; policyGroup: string; spec: ApprovalGateSpec } | null = null;
 
     for (const policyGroup of policyGroups) {
@@ -473,12 +473,4 @@ function normalizePolicyDecision(
   if (!decision) return null;
   if (typeof decision === 'string') return { action: decision };
   return decision;
-}
-
-function getPolicyGroups(tool: ToolDefinition): string[] {
-  const tagged = tool as ToolDefinition & {
-    policyGroups?: readonly string[];
-    permissionGroups?: readonly string[];
-  };
-  return [...new Set([...(tagged.policyGroups ?? []), ...(tagged.permissionGroups ?? [])])];
 }

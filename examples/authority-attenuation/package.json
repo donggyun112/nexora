@@ -1,0 +1,24 @@
+{
+  "name": "@nexora-examples/authority-attenuation",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@dongkseo/contracts": "workspace:*",
+    "@dongkseo/registry": "workspace:*",
+    "@dongkseo/tools": "workspace:*",
+    "@dongkseo/transport": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}

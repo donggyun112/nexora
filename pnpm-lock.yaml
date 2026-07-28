@@ -18,6 +18,31 @@ importers:
         specifier: ^4.1.9
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(yaml@2.9.0))
 
+  examples/authority-attenuation:
+    dependencies:
+      '@dongkseo/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@dongkseo/registry':
+        specifier: workspace:*
+        version: link:../../platform/registry
+      '@dongkseo/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+      '@dongkseo/transport':
+        specifier: workspace:*
+        version: link:../../packages/transport
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.1
+        version: 26.0.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@26.0.1)(vite@8.1.0(@types/node@26.0.1)(yaml@2.9.0))
+
   examples/auto-work-flow:
     dependencies:
       '@dongkseo/adapters':

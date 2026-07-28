@@ -381,6 +381,17 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
         if (!registry) {
           return errorResult('run_in_background needs a background-task registry (not supported in this runtime).');
         }
+        // A session that implements run() is isolated. If such a session cannot also hand us a
+        // jailed argv (wrapCommand), there is no safe way to launch detached — the fallback below
+        // would spawn on the host, outside the jail. Refuse instead of silently escaping. Backends
+        // in this bucket today: gVisor (its run() sets up a per-exec bundle + overlay mount that
+        // needs teardown, which {argv, env} cannot express) and remote (the server owns isolation).
+        if (ctx.workspace?.run && !ctx.workspace.wrapCommand) {
+          return errorResult(
+            'run_in_background is not supported on this sandbox backend (it cannot produce a jailed command). ' +
+              'Run the command in the foreground instead.',
+          );
+        }
         const taskId = messageId();
         // Sandbox the detached process too. run() (foreground) jails via ctx.workspace.run;
         // a detached background spawn skips that path, so under an active sandbox an
@@ -395,8 +406,14 @@ export function createExecTool(options: ExecToolOptions = {}): ToolDefinition {
           bgArgs = wrapped.argv.slice(1);
           bgEnv = wrapped.env;
         }
+        // Host-side cwd for the spawn. `workdir` is the workspace root as the AGENT sees it, which
+        // for a whole-jail backend is an in-jail path (/home/agent) that does not exist on this
+        // host — spawning there is an ENOENT. `hostRoot` is the contract's host-side backing for
+        // exactly this case; backends whose root IS a host path (ASRT, host) leave it unset.
+        // The jailed process's own cwd is unaffected either way: it is baked into the wrapped argv.
+        const hostCwd = ctx.workspace?.hostRoot ?? workdir;
         // Detached: not bound to ctx.signal — survives the turn; stopped via cancel_task.
-        const child = spawn(bgProgram, bgArgs, { cwd: workdir, env: bgEnv, shell: false });
+        const child = spawn(bgProgram, bgArgs, { cwd: hostCwd, env: bgEnv, shell: false });
         let out = '';
         const onData = (chunk: Buffer): void => {
           out += chunk.toString('utf8');

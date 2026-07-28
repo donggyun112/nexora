@@ -21,7 +21,7 @@ import type {
   WorkspaceResolveOptions,
   WorkspaceSession,
 } from '@dongkseo/contracts';
-import { spawnCollect } from './exec-collect.js';
+import { sandboxEnv, spawnCollect } from './exec-collect.js';
 import {
   EGRESS_SOCK_IN_JAIL,
   GW_BASE_URL_IN_JAIL,
@@ -327,6 +327,12 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
     // root vs host-backing 을 분리해 처리한다.)
     const toHostRel = (rel: string): string =>
       rel === AGENT_HOME ? '.' : rel.startsWith(AGENT_HOME + '/') ? rel.slice(AGENT_HOME.length + 1) : rel;
+    // 잽 argv/env 조립. `this` 를 안 쓰는 지역 클로저로 둬서 세션 메서드를 구조분해해도
+    // 안 깨진다(resolve/run 과 동일 스타일).
+    const wrap = (cmd: SandboxCommand): { argv: string[]; env: Record<string, string | undefined> } => {
+      const cwd = cmd.cwd ?? AGENT_HOME;
+      return { argv: [bwrapPath, ...buildBwrapArgs(base, { argv: cmd.argv, cwd })], env: sandboxEnv(cmd) };
+    };
     return {
       id: key,
       root: AGENT_HOME,
@@ -347,10 +353,18 @@ export class OverlayRootfsSandboxClient implements SandboxClient {
           access: write ? 'rw' : 'ro',
         };
       },
+      /**
+       * 잽을 적용한 argv/env 를 반환한다(실행 안 함). `buildBwrapArgs` 가 순수 함수라
+       * 이 백엔드는 호스트측 준비물(마운트·임시 번들) 없이 wrap 이 성립한다 — 그래서
+       * detached 실행이 안전하다. 잽 안 cwd 는 argv 의 `--chdir` 이 들고 있으므로
+       * 호출자가 spawn 에 넘기는 호스트 cwd 와는 무관하다.
+       */
+      async wrapCommand(cmd: SandboxCommand): Promise<{ argv: string[]; env: Record<string, string | undefined> }> {
+        return wrap(cmd);
+      },
       async run(cmd: SandboxCommand): Promise<SandboxCommandResult> {
-        const cwd = cmd.cwd ?? AGENT_HOME;
-        const args = buildBwrapArgs(base, { argv: cmd.argv, cwd });
-        return await spawnCollect(bwrapPath, args, cmd);
+        const { argv } = wrap(cmd);
+        return await spawnCollect(argv[0]!, argv.slice(1), cmd);
       },
       async cleanup(): Promise<void> {},
     };

@@ -131,12 +131,17 @@ export interface WorkspaceSession {
   id: string;
   root: string;
   /**
-   * Host-side backing directory for host-process byte operations (persist/hydrate
-   * tar) when the logical `root` the agent sees is an in-jail path that does not
-   * exist on the server host — e.g. an overlay backend that binds a host dir at
-   * `/home/agent`. Absent means `root` IS the host path (asrt/host backends).
-   * fs reads/writes always go through `resolve()`, which maps to the host backing;
-   * this field only covers whole-root tar ops that bypass `resolve()`.
+   * Host-side backing directory for host-process operations when the logical `root` the agent
+   * sees is an in-jail path that does not exist on the server host — e.g. an overlay backend
+   * that binds a host dir at `/home/agent`. Absent means `root` IS the host path (asrt/host
+   * backends). Two uses, both of which bypass `resolve()`:
+   *
+   *  1. whole-root byte ops (persist/hydrate tar);
+   *  2. the host-side `cwd` for spawning a {@link wrapCommand} result — the jailer process runs
+   *     on the host, so it needs a host directory; `root` would be ENOENT. (The *jailed*
+   *     process's cwd is unaffected: backends that own it bake it into the wrapped argv.)
+   *
+   * Per-file reads/writes always go through `resolve()`, which maps to the host backing itself.
    */
   hostRoot?: string;
   mode: WorkspaceAccessMode;
@@ -154,7 +159,20 @@ export interface WorkspaceSession {
    * 샌드박스 격리를 적용한 argv/env 를 반환한다(실행은 하지 않음). run() 은 결과를 await 하는
    * foreground 모델이라 detached(background) 실행에는 맞지 않으므로, 호출자가 직접 detached
    * spawn 하되 run() 과 동일한 jail(네트워크 차단·비밀 denylist·워크스페이스 격리)을 적용할 수
-   * 있게 래핑만 제공한다. 미구현(비샌드박스 세션)이면 호출자가 비격리로 폴백한다.
+   * 있게 래핑만 제공한다.
+   *
+   * Convention — `run()` 을 구현한 세션은 **격리된 것으로 간주한다**. 그런 세션이 `wrapCommand`
+   * 를 구현하지 않으면 호출자는 detached spawn 을 **거부해야 한다**: 비격리 폴백은 잽 탈출이다.
+   * `run()` 도 `wrapCommand` 도 없는 세션(호스트 워크스페이스)만 날 spawn 이 허용된다.
+   *
+   * 구현할 수 없는 백엔드가 있다. 이 계약은 잽이 순수한 argv/env 로 표현될 때만 성립하므로,
+   * 실행마다 호스트측 준비물(임시 번들·마운트)을 만들고 되돌려야 하는 백엔드(gVisor)나 격리
+   * 주체가 원격 서버인 백엔드(remote)는 의도적으로 미구현으로 남긴다 — 반환값에 teardown 훅이
+   * 없어 호출자가 정리할 방법이 없기 때문이다.
+   *
+   * 반환된 argv 는 잽 안 cwd 를 스스로 들고 있다(예: bwrap `--chdir`). 호출자가 spawn 에 넘기는
+   * 호스트 cwd 는 그와 무관하며, 논리 root 가 in-jail 경로인 백엔드에서는 {@link hostRoot} 를
+   * 써야 한다 — `root` 는 호스트에 존재하지 않을 수 있다.
    */
   wrapCommand?(command: SandboxCommand): Promise<{ argv: string[]; env: Record<string, string | undefined> }>;
   snapshot?(): Promise<WorkspaceSnapshot>;

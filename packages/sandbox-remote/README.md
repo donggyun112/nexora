@@ -13,7 +13,8 @@
 - ❌ 안 담는 것: OS 격리 그 자체(서버가 자기 backend로 강제한다). 상용 provider 어댑터(Cloudflare/Modal 등 — 후속).
 
 원격 세션은 서버가 격리하므로 **`wrapCommand`를 의도적으로 구현하지 않는다**(로컬에서 감쌀 jail이 없음). detached/background
-실행이 필요하면 호스트에서 비격리 spawn으로 폴백하지 말고 서버측 task로 라우팅해야 한다.
+실행이 필요하면 호스트에서 비격리 spawn으로 폴백하지 말고 서버측 task로 라우팅해야 한다. 이 규칙은 이제 문서가 아니라
+`@dongkseo/tools`의 exec 툴이 강제한다 — `run`은 있는데 `wrapCommand`가 없는 세션에서 `run_in_background`는 거부된다.
 
 ## 핵심 개념
 

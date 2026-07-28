@@ -1,9 +1,11 @@
 import { getEventListeners } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SANDBOX_PATH } from '../exec-collect.js';
 import { OverlayRootfsSandboxClient, buildBwrapArgs } from '../overlay-rootfs-client.js';
 
 const tmpDirs: string[] = [];
@@ -339,6 +341,60 @@ describe('OverlayRootfsSandboxClient (레이아웃 — bwrap 불필요)', () => 
 
 const HAVE_BWRAP =
   process.platform === 'linux' && ['/usr/bin/bwrap', '/usr/local/bin/bwrap'].some((p) => existsSync(p));
+
+describe('OverlayRootfsSandboxClient.wrapCommand', () => {
+  async function session(key: string, convDir: string) {
+    const client = new OverlayRootfsSandboxClient({ convDir, systemDirs: ['usr'], bwrapPath: '/usr/bin/bwrap' });
+    return await client.create({ metadata: { sessionKey: key } });
+  }
+
+  it('bwrap 을 argv[0] 로 두고 원본 명령을 `--` 뒤에 붙인다', async () => {
+    const s = await session('w1', await tmpConvDir());
+    const { argv } = await s.wrapCommand!({ argv: ['python3', '-V'] });
+    expect(argv[0]).toBe('/usr/bin/bwrap');
+    expect(argv.slice(-3)).toEqual(['--', 'python3', '-V']);
+  });
+
+  it('잽 안 cwd 를 argv 의 --chdir 에 굽는다 (호출자의 호스트 cwd 와 무관)', async () => {
+    const s = await session('w2', await tmpConvDir());
+    const dflt = await s.wrapCommand!({ argv: ['true'] });
+    expect(dflt.argv[dflt.argv.indexOf('--chdir') + 1]).toBe('/home/agent');
+    const sub = await s.wrapCommand!({ argv: ['true'], cwd: '/home/agent/sub' });
+    expect(sub.argv[sub.argv.indexOf('--chdir') + 1]).toBe('/home/agent/sub');
+  });
+
+  // foreground(run→spawnCollect)와 detached(wrapCommand→호출자 spawn)가 다른 환경에서 돌면
+  // 같은 명령이 background 여부만으로 다르게 동작한다. sandboxEnv 단일 소스를 고정한다.
+  it('env 가 spawnCollect 이 쓰는 것과 동일하다', async () => {
+    const s = await session('w3', await tmpConvDir());
+    const { env } = await s.wrapCommand!({ argv: ['true'], env: { FOO: 'bar' } });
+    expect(env).toEqual({ PATH: SANDBOX_PATH, HOME: '/root', FOO: 'bar' });
+  });
+
+  // exec 툴의 detached 경로가 의존하는 세션 모양. root 는 잽 안 경로라 호스트 spawn 의 cwd 로
+  // 쓰면 ENOENT 이고, hostRoot 가 그 자리를 대신한다. 페이크가 아니라 실제 세션으로 고정한다.
+  it('실제 세션은 in-jail root 와 호스트에 존재하는 hostRoot 를 함께 노출한다', async () => {
+    const convDir = await tmpConvDir();
+    const s = await session('w4', convDir);
+    expect(s.root).toBe('/home/agent');
+    expect(existsSync(s.root)).toBe(false); // 호스트엔 없다 — 이게 hostRoot 가 필요한 이유
+    expect(s.hostRoot).toBe(path.join(convDir, 'w4', 'workspace'));
+    expect(existsSync(s.hostRoot!)).toBe(true);
+  });
+
+  it.skipIf(!HAVE_BWRAP)('반환된 argv 를 그대로 spawn 하면 실제로 잽 안에서 돈다', async () => {
+    const convDir = await tmpConvDir();
+    const s = await session('wlive', convDir);
+    const { argv, env } = await s.wrapCommand!({
+      argv: ['/bin/sh', '-c', 'pwd; /usr/bin/touch /usr/WRAPPED_PROOF'],
+    });
+    const r = spawnSync(argv[0]!, argv.slice(1), { env, encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    // cwd 는 잽 안 /home/agent, 쓰기는 이 세션의 upper 로 — detached 경로도 격리를 통과했다.
+    expect(r.stdout.trim()).toBe('/home/agent');
+    await expect(fsp.stat(path.join(convDir, 'wlive', 'upper', 'usr', 'WRAPPED_PROOF'))).resolves.toBeTruthy();
+  });
+});
 
 describe.skipIf(!HAVE_BWRAP)('OverlayRootfsSandboxClient (실 bwrap — Linux 전용)', () => {
   it('overlay 에 쓴 파일이 upper 에 남고 재-exec 에서 보인다', async () => {

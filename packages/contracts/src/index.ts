@@ -196,7 +196,7 @@ export {
   safeExtractTar,
   writeTar,
 } from './safe-archive.js';
-export type { ArchiveLimits } from './safe-archive.js';
+export type { ArchiveLimits, ExtractOptions } from './safe-archive.js';
 export type {
   WorkspaceFs,
   WorkspaceFileStat,

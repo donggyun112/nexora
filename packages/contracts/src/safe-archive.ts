@@ -10,6 +10,11 @@
  * extracts members itself with `O_NOFOLLOW` (creating symlinks last) so a
  * malicious archive cannot pivot through a symlink it just created.
  *
+ * One rule is opt-out for self-produced archives: `ExtractOptions.allowAbsoluteSymlinks`
+ * permits *creating* absolute symlink targets (an overlay upper dir cannot round-trip
+ * otherwise). It does not relax writing *through* symlinks — that stays blocked by the
+ * symlinks-last ordering, `O_NOFOLLOW`, and the parent-chain re-check.
+ *
  * Faithful port of the reference SDK's `util/tar_utils.py` +
  * `session/archive_extraction.py` (see
  * `.agents/references/sandbox-runtime-boundary.md` — "Filesystem Trust Boundary").
@@ -58,6 +63,28 @@ export interface ArchiveLimits {
   maxExtractedBytes?: number;
 }
 
+/**
+ * Options accepted by {@link safeExtractTar}. Extends {@link ArchiveLimits} so every existing
+ * caller keeps compiling, while permission flags stay out of `ArchiveLimits` itself: that type is
+ * embedded in operator-facing option bags that reach wire-facing hydrate endpoints, and a
+ * permission is not a bound.
+ */
+export interface ExtractOptions extends ArchiveLimits {
+  /**
+   * Permit members whose symlink target is absolute (`/opt/x`). Off by default.
+   *
+   * **Only enable for archives you produced yourself.** It exists because an overlay upper dir
+   * cannot round-trip without it: a package manager inevitably writes absolute links such as
+   * `/etc/alternatives/editor`, and a single one would otherwise fail the whole extraction.
+   *
+   * What this does NOT relax: extraction still refuses to *write through* any symlink. Links are
+   * created last, after every file and directory; each write opens with `O_NOFOLLOW`, and
+   * `ensureNoSymlinkParents` re-checks the parent chain. So an absolute link can be created but
+   * never used as a pivot by its own archive. Relative targets escaping the root stay rejected.
+   */
+  allowAbsoluteSymlinks?: boolean;
+}
+
 type MemberType = 'file' | 'directory' | 'symlink';
 
 interface ParsedMember {
@@ -65,6 +92,8 @@ interface ParsedMember {
   type: MemberType;
   size: number;
   linkname: string;
+  /** Permission bits from the header, already masked to `0o777`. */
+  mode: number;
   /** Offset of the member's file data within the archive buffer. */
   dataOffset: number;
 }
@@ -205,7 +234,10 @@ function parseMembers(buf: Buffer): ParsedMember[] {
       throw new UnsafeArchiveMemberError(name, reason);
     }
 
-    members.push({ name, type, size: effSize, linkname: effLink, dataOffset });
+    // Mask to 0o777: setuid/setgid/sticky are never honoured from an archive, so a crafted
+    // member cannot plant a privilege-escalating binary in the destination root.
+    const mode = readNumeric(buf, offset + 100, 8) & 0o777;
+    members.push({ name, type, size: effSize, linkname: effLink, dataOffset, mode });
     // Advance past the file DATA using the effective size: a PAX `size` record
     // overrides a zeroed header size field, so trusting the header size here
     // would land the next header read inside the file body.
@@ -243,9 +275,21 @@ function safeRelParts(name: string): string[] {
 }
 
 /** Reject a symlink whose target would resolve outside the archive root. */
-function validateSymlinkTarget(name: string, relParts: string[], target: string): void {
+function validateSymlinkTarget(
+  name: string,
+  relParts: string[],
+  target: string,
+  allowAbsolute = false,
+): void {
   if (target.startsWith('/') || /^[A-Za-z]:/.test(target)) {
-    throw new UnsafeArchiveMemberError(name, `absolute symlink target not allowed: ${target}`);
+    if (!allowAbsolute) {
+      throw new UnsafeArchiveMemberError(name, `absolute symlink target not allowed: ${target}`);
+    }
+    // Return rather than fall through: the containment arithmetic below resolves the target
+    // against the member's parent, which is meaningless for an absolute path. Skipping only the
+    // throw would let `/etc/passwd` reduce to the stack ['etc','passwd'] and silently "pass",
+    // implying a containment check that never happened.
+    return;
   }
   // Resolve the target relative to the symlink's parent directory and ensure it
   // does not climb above the root.
@@ -270,9 +314,9 @@ interface PlannedMember extends ParsedMember {
 }
 
 /** Validate every member and enforce resource limits (single pass, no bombs). */
-function planExtraction(members: ParsedMember[], limits: ArchiveLimits | undefined): PlannedMember[] {
-  const maxMembers = limits?.maxMembers;
-  const maxBytes = limits?.maxExtractedBytes;
+function planExtraction(members: ParsedMember[], options: ExtractOptions | undefined): PlannedMember[] {
+  const maxMembers = options?.maxMembers;
+  const maxBytes = options?.maxExtractedBytes;
 
   const planned: PlannedMember[] = [];
   const byPath = new Map<string, PlannedMember>();
@@ -295,7 +339,7 @@ function planExtraction(members: ParsedMember[], limits: ArchiveLimits | undefin
       }
     }
     if (member.type === 'symlink') {
-      validateSymlinkTarget(member.name, relParts, member.linkname);
+      validateSymlinkTarget(member.name, relParts, member.linkname, options?.allowAbsoluteSymlinks);
     }
 
     const key = relParts.join('/');
@@ -358,9 +402,9 @@ async function ensureNoSymlinkParents(root: string, relParts: string[]): Promise
 export async function safeExtractTar(
   archive: Buffer,
   destRoot: string,
-  limits?: ArchiveLimits,
+  options?: ExtractOptions,
 ): Promise<void> {
-  const members = planExtraction(parseMembers(archive), limits);
+  const members = planExtraction(parseMembers(archive), options);
   await fsp.mkdir(destRoot, { recursive: true, mode: 0o700 });
   const root = await fsp.realpath(destRoot);
 
@@ -375,7 +419,11 @@ export async function safeExtractTar(
     if (member.type === 'file') {
       await ensureNoSymlinkParents(root, member.relParts);
       await fsp.mkdir(path.dirname(dest), { recursive: true });
-      await writeFileNoFollow(dest, archive.subarray(member.dataOffset, member.dataOffset + member.size));
+      await writeFileNoFollow(
+        dest,
+        archive.subarray(member.dataOffset, member.dataOffset + member.size),
+        member.mode,
+      );
     }
   }
 
@@ -390,12 +438,16 @@ export async function safeExtractTar(
   }
 }
 
-async function writeFileNoFollow(dest: string, data: Buffer): Promise<void> {
+async function writeFileNoFollow(dest: string, data: Buffer, mode: number): Promise<void> {
   await fsp.rm(dest, { force: true }); // replace any existing regular file
   const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW;
+  // Create restrictively, then widen via the open handle. `open`'s mode argument is filtered by
+  // the process umask, so it cannot reproduce the recorded permissions exactly; `fchmod` on the
+  // handle can — and operating on the fd rather than the path leaves no window for a swap.
   const handle = await fsp.open(dest, flags, 0o600);
   try {
     await handle.writeFile(data);
+    await handle.chmod(mode);
   } finally {
     await handle.close();
   }
@@ -408,6 +460,7 @@ interface TarEntry {
   type: MemberType;
   data?: Buffer;
   linkname?: string;
+  mode?: number;
 }
 
 /** Archive a directory tree into a tar buffer (USTAR + PAX for long fields). */
@@ -436,8 +489,9 @@ async function collectEntries(root: string, rel: string[], out: TarEntry[]): Pro
       out.push({ relParts: childRel, type: 'directory' });
       await collectEntries(root, childRel, out);
     } else if (dirent.isFile()) {
-      const data = await fsp.readFile(path.join(root, ...childRel));
-      out.push({ relParts: childRel, type: 'file', data });
+      const full = path.join(root, ...childRel);
+      const data = await fsp.readFile(full);
+      out.push({ relParts: childRel, type: 'file', data, mode: (await fsp.stat(full)).mode & 0o777 });
     }
     // Sockets, fifos, and devices are intentionally skipped.
   }
@@ -458,7 +512,7 @@ function encodeEntry(entry: TarEntry): Buffer[] {
   const blocks: Buffer[] = [];
   if (pax.size > 0) {
     const paxData = encodePaxRecords(pax);
-    blocks.push(buildHeader({ name: `PaxHeader/${entry.relParts.join('/')}`.slice(0, 100), size: paxData.length, typeflag: 'x' }));
+    blocks.push(buildHeader({ name: `PaxHeader/${entry.relParts.join('/')}`.slice(0, 100), size: paxData.length, typeflag: 'x', mode: 0o644 }));
     blocks.push(padTo512(paxData));
   }
 
@@ -469,6 +523,9 @@ function encodeEntry(entry: TarEntry): Buffer[] {
       size: pax.has('size') ? 0 : size,
       typeflag,
       linkname: pax.has('linkpath') ? '' : linkname,
+      // Directories and symlinks keep conventional modes; only regular files carry the
+      // recorded one (a symlink's own mode is not meaningful on Linux).
+      mode: entry.type === 'file' ? (entry.mode ?? 0o644) : entry.type === 'directory' ? 0o755 : 0o777,
     }),
   );
   if (entry.type === 'file' && entry.data && entry.data.length > 0) {
@@ -502,12 +559,13 @@ interface HeaderFields {
   size: number;
   typeflag: string;
   linkname?: string;
+  mode: number;
 }
 
 function buildHeader(fields: HeaderFields): Buffer {
   const header = Buffer.alloc(BLOCK);
   writeString(header, fields.name, 0, 100);
-  writeOctal(header, 0o644, 100, 8); // mode
+  writeOctal(header, fields.mode & 0o777, 100, 8); // mode
   writeOctal(header, 0, 108, 8); // uid
   writeOctal(header, 0, 116, 8); // gid
   writeOctal(header, fields.size, 124, 12);

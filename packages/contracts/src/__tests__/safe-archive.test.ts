@@ -214,3 +214,106 @@ describe('safeExtractTar enforces resource limits', () => {
     await expect(safeExtractTar(archive, dest, { maxExtractedBytes: 1024 })).rejects.toBeInstanceOf(ArchiveLimitError);
   });
 });
+
+describe('safeExtractTar allowAbsoluteSymlinks', () => {
+  it('still rejects an absolute symlink target by default', async () => {
+    const dest = await mkTmp();
+    await expect(
+      safeExtractTar(craftTar([{ name: 'link', type: '2', linkname: '/etc/passwd' }]), dest),
+    ).rejects.toBeInstanceOf(UnsafeArchiveMemberError);
+  });
+
+  it('creates an absolute symlink when opted in', async () => {
+    const dest = await mkTmp();
+    await safeExtractTar(craftTar([{ name: 'link', type: '2', linkname: '/opt/rhwp/node_modules' }]), dest, {
+      allowAbsoluteSymlinks: true,
+    });
+    const stat = await fsp.lstat(path.join(dest, 'link'));
+    expect(stat.isSymbolicLink()).toBe(true);
+    expect(await fsp.readlink(path.join(dest, 'link'))).toBe('/opt/rhwp/node_modules');
+  });
+
+  it('round-trips an overlay-style tree of absolute links when opted in', async () => {
+    const src = await mkTmp();
+    await fsp.mkdir(path.join(src, 'etc', 'alternatives'), { recursive: true });
+    await fsp.symlink('/usr/bin/vim.basic', path.join(src, 'etc', 'alternatives', 'editor'));
+    await fsp.writeFile(path.join(src, 'etc', 'hosts'), '127.0.0.1 localhost\n');
+
+    const dest = await mkTmp();
+    await safeExtractTar(await writeTar(src), dest, { allowAbsoluteSymlinks: true });
+
+    expect(await fsp.readlink(path.join(dest, 'etc', 'alternatives', 'editor'))).toBe('/usr/bin/vim.basic');
+    expect(await fsp.readFile(path.join(dest, 'etc', 'hosts'), 'utf8')).toBe('127.0.0.1 localhost\n');
+  });
+
+  it('still rejects a relative target escaping the root when opted in', async () => {
+    const dest = await mkTmp();
+    await expect(
+      safeExtractTar(craftTar([{ name: 'link', type: '2', linkname: '../../etc/passwd' }]), dest, {
+        allowAbsoluteSymlinks: true,
+      }),
+    ).rejects.toBeInstanceOf(UnsafeArchiveMemberError);
+  });
+
+  // The flag permits *creating* an absolute link, never *writing through* one. This is the
+  // regression that matters: the same archive plants `a -> /tmp` then writes `a/b`.
+  it('still refuses to descend through an absolute symlink it just created', async () => {
+    const dest = await mkTmp();
+    const archive = craftTar([
+      { name: 'a', type: '2', linkname: '/tmp' },
+      { name: 'a/b', data: Buffer.from('escaped') },
+    ]);
+    await expect(
+      safeExtractTar(archive, dest, { allowAbsoluteSymlinks: true }),
+    ).rejects.toBeInstanceOf(UnsafeArchiveMemberError);
+  });
+
+  it('still refuses to write through a pre-existing on-disk symlink parent when opted in', async () => {
+    const dest = await mkTmp();
+    const outside = await mkTmp();
+    await fsp.symlink(outside, path.join(dest, 'link'));
+    const archive = craftTar([{ name: 'link/pwned', data: Buffer.from('x') }]);
+    await expect(
+      safeExtractTar(archive, dest, { allowAbsoluteSymlinks: true }),
+    ).rejects.toBeInstanceOf(UnsafeArchiveMemberError);
+    await expect(fsp.stat(path.join(outside, 'pwned'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('safeExtractTar preserves file modes', () => {
+  it('round-trips executable and non-executable modes', async () => {
+    const src = await mkTmp();
+    await fsp.writeFile(path.join(src, 'exe'), '#!/bin/sh\n', { mode: 0o755 });
+    await fsp.writeFile(path.join(src, 'plain'), 'x', { mode: 0o644 });
+    await fsp.writeFile(path.join(src, 'secret'), 'x', { mode: 0o600 });
+
+    const dest = await mkTmp();
+    await safeExtractTar(await writeTar(src), dest);
+
+    for (const [name, mode] of [['exe', 0o755], ['plain', 0o644], ['secret', 0o600]] as const) {
+      expect((await fsp.stat(path.join(dest, name))).mode & 0o777).toBe(mode);
+    }
+  });
+
+  // An archive must never be able to plant a privilege-escalating binary, so the setuid,
+  // setgid, and sticky bits are dropped even when the header carries them.
+  it('strips setuid/setgid/sticky bits from a crafted header', async () => {
+    const dest = await mkTmp();
+    const header = tarHeader({ name: 'evil', size: 1 });
+    header.write('0004755\0', 100, 8, 'latin1'); // setuid + 0755
+    // Recompute the checksum for the tampered header.
+    header.write('        ', 148, 8, 'latin1');
+    let sum = 0;
+    for (const b of header) sum += b;
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'latin1');
+
+    const archive = Buffer.concat([header, padData(Buffer.from('x')), Buffer.alloc(BLOCK * 2)]);
+    await safeExtractTar(archive, dest);
+
+    const mode = (await fsp.stat(path.join(dest, 'evil'))).mode;
+    expect(mode & 0o4000).toBe(0); // setuid
+    expect(mode & 0o2000).toBe(0); // setgid
+    expect(mode & 0o1000).toBe(0); // sticky
+    expect(mode & 0o777).toBe(0o755);
+  });
+});

@@ -4,7 +4,10 @@ import { getBuiltinProviders, getBuiltinModels } from '@earendil-works/pi-ai/pro
 // auth-based alternative (Models.getAuth) is async and would force this sync,
 // public `listAvailableModels` API to become async, so we keep the compat import.
 import { getEnvApiKey } from '@earendil-works/pi-ai/compat';
-import type { KnownProvider } from '@earendil-works/pi-ai';
+// BuiltinProvider (= keyof MODELS) is the catalog-backed subset. Root
+// `KnownProvider` additionally carries purely dynamic providers (e.g. "radius")
+// that getBuiltinModels() cannot take — pi-ai split the two in 0.80.10.
+import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all';
 
 /**
  * Model catalog enumeration for the Multica `pi` protocol_family backend.
@@ -44,7 +47,7 @@ export function listAvailableModels(options: ListAvailableModelsOptions = {}): s
   const out: string[] = [];
   const seen = new Set<string>();
 
-  const collect = (provider: KnownProvider): number => {
+  const collect = (provider: BuiltinProvider): number => {
     let models: ReturnType<typeof getBuiltinModels>;
     try {
       models = getBuiltinModels(provider);
@@ -77,7 +80,7 @@ export function listAvailableModels(options: ListAvailableModelsOptions = {}): s
   }
 
   if (credentialedCount === 0) {
-    collect(fallbackProvider as KnownProvider);
+    collect(fallbackProvider as BuiltinProvider);
   }
 
   return out;

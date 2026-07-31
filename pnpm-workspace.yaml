@@ -1,3 +1,10 @@
+# pnpm 11 은 install script 가 무시된 의존성이 있으면 에러로 막는다(pnpm 10 은 경고).
+# 아래 둘은 postinstall 없이도 정상 동작해 왔으므로 현상태(미실행)를 명시한다 —
+# 새로 허용하면 공급망 실행 표면만 넓어진다. 둘 다 pi-ai/otel 의 전이 의존성.
+ignoredBuiltDependencies:
+  - "@google/genai"
+  - protobufjs
+
 packages:
   - "packages/*"
   - "agents/*"
@@ -6,3 +13,6 @@ packages:
   - "platform/registry"
   - "platform/cli"
   - "examples/*"
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false

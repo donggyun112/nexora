@@ -58,6 +58,12 @@ export interface LocalExecutionHarnessOptions {
   idleTimeoutMs?: number;
   /** Optional architecture-level suspend hook. Forwarded to RuntimeServices. */
   onSuspend?: RuntimeServices['onSuspend'];
+  /**
+   * Optional per-round stop policy. Forwarded to RuntimeServices — the architecture
+   * asks after each tool round whether to finish instead of taking another LLM turn
+   * (budget ceilings, verification gates, app-level turn limits).
+   */
+  shouldStopAfterTurn?: RuntimeServices['shouldStopAfterTurn'];
   /** Optional workspace provider. When set, tools receive a per-run workspace session. */
   workspaceProvider?: WorkspaceProvider;
   /** Per-runtime seed dirs forwarded into workspaceProvider.acquire(). See WorkspaceAcquireOptions.seedDirs. */
@@ -99,6 +105,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly pipeline: MiddlewarePipeline;
   private readonly idleTimeoutMs: number;
   private readonly onSuspend?: RuntimeServices['onSuspend'];
+  private readonly shouldStopAfterTurn?: RuntimeServices['shouldStopAfterTurn'];
   private readonly workspaceProvider?: WorkspaceProvider;
   private readonly workspaceSeedDirs?: WorkspaceAcquireOptions['seedDirs'];
   private readonly transcript?: TranscriptStore;
@@ -139,6 +146,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.pipeline = new MiddlewarePipeline(options.middlewares ?? []);
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.onSuspend = options.onSuspend;
+    this.shouldStopAfterTurn = options.shouldStopAfterTurn;
     this.workspaceProvider = options.workspaceProvider;
     this.workspaceSeedDirs = options.workspaceSeedDirs;
     this.transcript = options.transcript;
@@ -228,6 +236,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
         signal: controller.signal,
         drainSteers: () => (this.pendingSteers.length > 0 ? this.pendingSteers.splice(0) : []),
         onSuspend: this.onSuspend,
+        shouldStopAfterTurn: this.shouldStopAfterTurn,
       };
 
       // Pass actual ToolDefinition objects to beforeExecution when the executor

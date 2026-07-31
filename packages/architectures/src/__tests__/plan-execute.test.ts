@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createPlanExecuteArchitecture } from '../plan-execute.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, RuntimeServices } from '@dongkseo/contracts';
+import type { AgentEvent, RuntimeServices, ToolDefinition } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -169,5 +169,68 @@ describe('PlanExecuteArchitecture — plan-mode gating', () => {
 
     expect(done?.usage).toEqual({ promptTokens: 30, completionTokens: 12, cachedTokens: 3 });
     expect(done?.model).toBe('mock-model');
+  });
+});
+
+describe('PlanExecuteArchitecture — round-end termination', () => {
+  const researchLLM = () => new MockLLMProvider([
+    { text: 'researching', toolCalls: [{ id: 'r1', name: 'web_search', arguments: { q: 'x' } }] },
+    { text: 'still going' },
+  ]);
+  const researchTools = () => new Map<string, (i: unknown) => Promise<unknown>>([
+    ['web_search', async () => ({ type: 'text' as const, text: 'results' })],
+  ]);
+
+  it('ends the run when shouldStopAfterTurn returns true', async () => {
+    const llm = researchLLM();
+    const services = servicesWithToolList(llm, researchTools(), ['web_search']);
+    services.shouldStopAfterTurn = () => true;
+
+    const events = await collect(createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan' }).loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(1);
+    const done = events.find(e => e.type === 'done');
+    expect(done).toBeDefined();
+    if (done?.type === 'done') expect(done.content).toBe('researching');
+  });
+
+  it('ends the run after a terminating tool succeeds', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'wrapping up', toolCalls: [{ id: 's1', name: 'submit_keywords', arguments: {} }] },
+      { text: 'should never be reached' },
+    ]);
+    const tools = new Map<string, (i: unknown) => Promise<unknown>>([
+      ['submit_keywords', async () => ({ type: 'text' as const, text: 'submitted' })],
+    ]);
+    const services = servicesWithToolList(llm, tools, ['submit_keywords']);
+    const submitDefinition: ToolDefinition = {
+      name: 'submit_keywords',
+      description: 'submit',
+      parameters: {},
+      terminatesLoop: true,
+      execute: async () => ({ type: 'text', text: 'submitted' }),
+    };
+    services.tools.get = name => (name === 'submit_keywords' ? submitDefinition : undefined);
+
+    const events = await collect(createPlanExecuteArchitecture({
+      exitPlanTool: 'submit_plan',
+      executePhaseTools: [],
+    }).loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(1);
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(1);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('wrapping up');
+  });
+
+  it('keeps looping when neither path fires (기존 동작 유지)', async () => {
+    const llm = researchLLM();
+    const services = servicesWithToolList(llm, researchTools(), ['web_search']);
+
+    const events = await collect(createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan' }).loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(2);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('still going');
   });
 });

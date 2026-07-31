@@ -29,6 +29,7 @@ import {
   sanitizeToolPairsInPlace,
   selectToolCallsForExecution,
   suspendHistorySnapshot,
+  toolTerminatesLoop,
   userContentForInput,
   type LoopCompactionOptions,
   type ToolResultBlock,
@@ -254,6 +255,29 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         if (options.compaction) pruneLoopHistory(history, options.compaction);
         await services.memory.compact();
         sanitizeToolPairsInPlace(history);
+
+        // 라운드 종료 판정. 결과·이벤트·history 는 이미 다 반영된 뒤라, 멈춰도 다음 LLM
+        // 턴만 생략된다. 두 경로:
+        //   - 도구 주도(submit/finish): 성공한 terminatesLoop 호출. error 는 회복 기회를 준다.
+        //   - 정책 주도: shouldStopAfterTurn 훅. 도구가 끝냈어도 훅에는 알린다(회계용).
+        const stopByTool = toolResults.some(
+          ({ tc, isError }) => !isError && toolTerminatesLoop(services, tc),
+        );
+        const stopByPolicy = await services.shouldStopAfterTurn?.({
+          iteration,
+          content: response.content,
+          toolCalls: toolCalls.map(tc => ({ name: tc.name, input: tc.arguments })),
+        }) === true;
+        if (stopByTool || stopByPolicy) {
+          yield {
+            type: 'done',
+            content: lastContent || (stopByTool ? '(tool ended the run)' : '(stopped after turn)'),
+            toolCalls: allToolCalls,
+            usage: sawUsage ? turnUsage : undefined,
+            model: options.model,
+          };
+          return;
+        }
       }
 
       // max iterations 도달

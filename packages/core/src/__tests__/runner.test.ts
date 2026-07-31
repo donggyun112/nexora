@@ -619,4 +619,39 @@ describe('AgentRunner', () => {
     expect(calls).toEqual([{ pendingId: 'pid-1' }]);
     expect(events.some(e => e.type === 'suspended')).toBe(true);
   });
+
+  it('AgentRunner forwards shouldStopAfterTurn to RuntimeServices', async () => {
+    const seen: { iteration: number }[] = [];
+
+    // 아키텍처는 라운드가 끝나면 훅에 물어보고, true 면 그 자리에서 done 한다 —
+    // react/plan-execute 가 하는 것과 같은 규약.
+    const askArch: AgentArchitecture = {
+      name: 'ask-arch',
+      async *loop(services: RuntimeServices): AsyncGenerator<AgentEvent> {
+        const stop = await services.shouldStopAfterTurn?.({
+          iteration: 0,
+          content: 'round 0',
+          toolCalls: [{ name: 'noop', input: {} }],
+        });
+        yield { type: 'done', content: stop === true ? 'stopped' : 'continued', toolCalls: [] };
+      },
+    };
+
+    const runner = new AgentRunner({
+      architecture: askArch,
+      llm: new MockLLMProvider([]),
+      tools: new CoreToolExecutor({ tools: [], context: mockContext }),
+      shouldStopAfterTurn: (info) => {
+        seen.push({ iteration: info.iteration });
+        return true;
+      },
+    });
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runner.execute({ prompt: 'go' })) events.push(ev);
+
+    expect(seen).toEqual([{ iteration: 0 }]);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('stopped');
+  });
 });

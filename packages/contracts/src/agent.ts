@@ -153,6 +153,25 @@ export interface RuntimeServices {
   drainSteers?: () => LLMMessage[];
 
   /**
+   * 한 도구 라운드가 끝난 뒤 "여기서 멈출까?"를 앱 정책에 묻는다. true 면 아키텍처는
+   * 다음 LLM 호출 없이 done 을 방출하고 끝낸다(budget/verification gate 가 꽂히는 자리).
+   *
+   * 도구 호출이 없던 턴은 어차피 그 자리에서 done 으로 끝나므로 호출되지 않는다.
+   * 대기 중인 steer 보다 우선한다 — 멈추기로 했으면 주입 메시지로 되살리지 않는다.
+   * 미설정이면 아키텍처의 maxIterations 까지 계속한다.
+   *
+   * 아직 react/plan-execute 아키텍처만 이 훅을 존중한다.
+   */
+  shouldStopAfterTurn?: (info: {
+    /** 방금 끝난 라운드 index (0-based). */
+    iteration: number;
+    /** 그 라운드의 assistant 텍스트. 도구만 호출했으면 빈 문자열. */
+    content: string;
+    /** 그 라운드에서 실제 실행된 도구 호출. */
+    toolCalls: { name: string; input: unknown }[];
+  }) => boolean | Promise<boolean>;
+
+  /**
    * Architecture-level hook invoked when a tool returns ToolResult.suspend.
    * Receives the architecture history snapshot so the caller can persist it.
    * If not provided, the architecture still emits a `suspended` event but no

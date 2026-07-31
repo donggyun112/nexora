@@ -45,6 +45,17 @@ export interface ToolDefinition {
   isDestructive?: boolean | ((input?: unknown) => boolean);
 
   /**
+   * True if a *successful* call ends the agent loop. The result is still emitted
+   * and recorded in history; the architecture just skips the next LLM turn —
+   * `submit`/`finish` style tools that carry the final answer themselves.
+   *
+   * An error result never terminates: the model must get a chance to recover.
+   * A suspend result takes precedence (the run is checkpointed, not finished).
+   * Default: false.
+   */
+  terminatesLoop?: boolean | ((input?: unknown) => boolean);
+
+  /**
    * First-class policy/permission groups for gate middleware and adapters.
    *
    * Examples:

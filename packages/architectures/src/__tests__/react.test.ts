@@ -561,3 +561,184 @@ describe('ReAct within-turn compaction', () => {
     expect(placeholderInFinalHistory(llm)).toBe(false);
   });
 });
+
+describe('ReAct shouldStopAfterTurn', () => {
+  /** 라운드 0: 도구 호출 → 라운드 1: 텍스트로 종료. 훅이 없으면 LLM 이 2번 불린다. */
+  const twoRoundLLM = () => new MockLLMProvider([
+    { text: 'first turn', toolCalls: [{ id: 't1', name: 'echo', arguments: { n: 1 } }] },
+    { text: 'second turn' },
+  ]);
+  const echoTools = () => new Map<string, (input: unknown) => Promise<unknown>>([
+    ['echo', async () => ({ type: 'text' as const, text: 'ok' })],
+  ]);
+
+  it('ends the run after the tool round when the hook returns true', async () => {
+    const llm = twoRoundLLM();
+    const services = makeServices(llm, echoTools(), { shouldStopAfterTurn: () => true });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(1);
+    expect(events.some(e => e.type === 'tool_result')).toBe(true);
+    const done = events.find(e => e.type === 'done');
+    expect(done).toBeDefined();
+    if (done?.type === 'done') {
+      expect(done.content).toBe('first turn');
+      expect(done.toolCalls).toEqual([{ name: 'echo', input: { n: 1 } }]);
+    }
+  });
+
+  it('keeps looping when the hook returns false', async () => {
+    const llm = twoRoundLLM();
+    const services = makeServices(llm, echoTools(), { shouldStopAfterTurn: () => false });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(2);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('second turn');
+  });
+
+  it('receives the completed round index with that round\'s content and tool calls', async () => {
+    const seen: { iteration: number; content: string; names: string[] }[] = [];
+    const llm = twoRoundLLM();
+    const services = makeServices(llm, echoTools(), {
+      shouldStopAfterTurn: (info) => {
+        seen.push({ iteration: info.iteration, content: info.content, names: info.toolCalls.map(tc => tc.name) });
+        return false;
+      },
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(seen).toEqual([{ iteration: 0, content: 'first turn', names: ['echo'] }]);
+  });
+
+  it('is not consulted when the assistant issued no tool calls', async () => {
+    const llm = new MockLLMProvider([{ text: 'no tools here' }]);
+    const hook = vi.fn(() => true);
+    const services = makeServices(llm, new Map(), { shouldStopAfterTurn: hook });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  it('awaits an async hook', async () => {
+    const llm = twoRoundLLM();
+    const services = makeServices(llm, echoTools(), { shouldStopAfterTurn: async () => true });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(1);
+  });
+});
+
+describe('ReAct tool-driven termination', () => {
+  const submitDefinition = (
+    terminatesLoop: ToolDefinition['terminatesLoop'],
+  ): ToolDefinition => ({
+    name: 'submit',
+    description: 'submit the final answer',
+    parameters: {},
+    terminatesLoop,
+    execute: async () => ({ type: 'text', text: 'submitted' }),
+  });
+
+  const withDefinitions = (
+    services: RuntimeServices,
+    definitions: Record<string, ToolDefinition>,
+  ): RuntimeServices => {
+    services.tools.get = name => definitions[name];
+    return services;
+  };
+
+  it('ends the run after a terminating tool succeeds', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'wrapping up', toolCalls: [{ id: 't1', name: 'submit', arguments: {} }] },
+      { text: 'should never be reached' },
+    ]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>([
+      ['submit', async () => ({ type: 'text' as const, text: 'submitted' })],
+    ]);
+    const services = withDefinitions(
+      makeServices(llm, tools) as unknown as RuntimeServices,
+      { submit: submitDefinition(true) },
+    );
+
+    const events = await collect(createReactArchitecture().loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(1);
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(1);
+    const done = events.find(e => e.type === 'done');
+    expect(done).toBeDefined();
+    if (done?.type === 'done') expect(done.content).toBe('wrapping up');
+  });
+
+  it('keeps looping when the terminating tool returns an error', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'trying', toolCalls: [{ id: 't1', name: 'submit', arguments: {} }] },
+      { text: 'recovered' },
+    ]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>([
+      ['submit', async () => ({ type: 'error' as const, message: 'validation failed' })],
+    ]);
+    const services = withDefinitions(
+      makeServices(llm, tools) as unknown as RuntimeServices,
+      { submit: submitDefinition(true) },
+    );
+
+    const events = await collect(createReactArchitecture().loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(2);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('recovered');
+  });
+
+  it('honors the predicate form against the call input', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'draft', toolCalls: [{ id: 't1', name: 'submit', arguments: { final: false } }] },
+      { text: 'final', toolCalls: [{ id: 't2', name: 'submit', arguments: { final: true } }] },
+      { text: 'should never be reached' },
+    ]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>([
+      ['submit', async () => ({ type: 'text' as const, text: 'submitted' })],
+    ]);
+    const services = withDefinitions(
+      makeServices(llm, tools) as unknown as RuntimeServices,
+      { submit: submitDefinition(input => (input as { final?: boolean } | undefined)?.final === true) },
+    );
+
+    const events = await collect(createReactArchitecture().loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(2);
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(2);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('final');
+  });
+
+  it('terminates the whole batch once a terminating call succeeds', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'both', toolCalls: [
+        { id: 't1', name: 'echo', arguments: {} },
+        { id: 't2', name: 'submit', arguments: {} },
+      ]},
+      { text: 'should never be reached' },
+    ]);
+    const tools = new Map<string, (input: unknown) => Promise<unknown>>([
+      ['echo', async () => ({ type: 'text' as const, text: 'ok' })],
+      ['submit', async () => ({ type: 'text' as const, text: 'submitted' })],
+    ]);
+    const services = withDefinitions(
+      makeServices(llm, tools) as unknown as RuntimeServices,
+      { submit: submitDefinition(true) },
+    );
+
+    const events = await collect(createReactArchitecture().loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(1);
+    // 배치의 두 결과 모두 방출된 뒤에 종료한다 — 중간에 잘리지 않는다.
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(2);
+    expect(events.some(e => e.type === 'done')).toBe(true);
+  });
+});

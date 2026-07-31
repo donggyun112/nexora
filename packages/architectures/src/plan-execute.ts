@@ -31,6 +31,7 @@ import {
   sanitizeToolPairsInPlace,
   selectToolCallsForExecution,
   suspendHistorySnapshot,
+  toolTerminatesLoop,
   userContentForInput,
   type ToolResultBlock,
 } from './loop-helpers.js';
@@ -241,6 +242,27 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         await services.memory.compact();
         sanitizeToolPairsInPlace(history);
+
+        // 라운드 종료 판정 — react.ts 와 동일 규약. PLAN→EXECUTE 전이 뒤에 오므로
+        // 계획 제출로 전이한 라운드도 정책이 멈출 수 있다.
+        const stopByTool = toolResults.some(
+          ({ tc, isError }) => !isError && toolTerminatesLoop(services, tc),
+        );
+        const stopByPolicy = await services.shouldStopAfterTurn?.({
+          iteration,
+          content: response.content,
+          toolCalls: toolCalls.map(tc => ({ name: tc.name, input: tc.arguments })),
+        }) === true;
+        if (stopByTool || stopByPolicy) {
+          yield {
+            type: 'done',
+            content: lastContent || (stopByTool ? '(tool ended the run)' : '(stopped after turn)'),
+            toolCalls: allToolCalls,
+            usage: sawUsage ? turnUsage : undefined,
+            model: options.model,
+          };
+          return;
+        }
       }
 
       yield {

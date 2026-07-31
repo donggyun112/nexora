@@ -115,6 +115,21 @@ export function buildBwrapArgs(
      * `[]` → drop nothing (legacy full-root); `['ALL']` → drop every capability.
      */
     capDrops?: readonly string[];
+    /**
+     * 컨테이너 rootfs 를 읽어올 루트. 기본 `/`.
+     *
+     * 잽을 **shift-map userns**(inner 1..65536 → outer 100000..) 안에서 돌릴 때, `/` 를
+     * **idmapped bind** 로 비춘 뷰 경로를 넘긴다. 그냥 shift 하면 이미지 안 기존 파일의
+     * 소유자가 매핑 밖으로 나간다 — 게스트 실측: `/etc/gshadow` 는 디스크상 `0:42` 인데
+     * ns 안에서 `0:65534`(overflow) 로 보여 `useradd` 가 `cannot open /etc/gshadow` 로
+     * 죽는다(= apt postinst 계열 전부 붕괴). idmapped 뷰로 읽으면 ns 안에서 `0:42` 로
+     * 정상 복원되고 useradd/chown/overlay write 가 모두 통과한다.
+     *
+     * **컨테이너 rootfs 를 가리키는 소스만** 이 아래로 옮긴다. 우리가 소유하는 경로
+     * (sessionDir 의 upper/work, workspace, 소켓)는 뷰 밖 게스트 파일시스템에 있으므로
+     * 그대로 둬야 한다 — 옮기면 존재하지 않는 경로가 된다.
+     */
+    sourceRoot?: string;
     /** Optional session-private home mount used by the agent jail runner. */
     sessionHomeDir?: string;
     /** Task source exposed inside a session home as read-only input. */
@@ -142,7 +157,12 @@ export function buildBwrapArgs(
   // privileged container root — the trust boundary here) makes the overlay use
   // trusted xattrs, which nest correctly. Isolation still comes from the mount/
   // pid/ipc/uts/cgroup(/net) namespaces + the overlay rootfs + workspace jail.
-  const args = ['--ro-bind', '/', '/', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup'];
+  // 상대경로면 bwrap 이 cwd 기준으로 해석해 **조용히 엉뚱한 트리**를 잽에 건다 — 여기서 막는다.
+  const srcRoot = base.sourceRoot ?? '/';
+  if (!path.posix.isAbsolute(srcRoot)) {
+    throw new Error(`buildBwrapArgs: sourceRoot must be an absolute path (got ${JSON.stringify(srcRoot)})`);
+  }
+  const args = ['--ro-bind', srcRoot, '/', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup'];
   if (base.network !== 'share') args.push('--unshare-net');
   args.push('--die-with-parent', '--uid', '0', '--gid', '0');
   // Drop escape-relevant capabilities even though we run as uid 0 without a userns
@@ -151,7 +171,7 @@ export function buildBwrapArgs(
   for (const cap of base.capDrops ?? DEFAULT_CAP_DROPS) args.push('--cap-drop', cap);
   for (const dir of base.systemDirs) {
     args.push(
-      '--overlay-src', `/${dir}`,
+      '--overlay-src', path.posix.join(srcRoot, dir),
       '--overlay', path.join(base.sessionDir, 'upper', dir), path.join(base.sessionDir, 'work', dir), `/${dir}`,
     );
   }

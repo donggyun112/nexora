@@ -38,6 +38,18 @@ export function selectToolCallsForExecution(
   return exclusive ? [exclusive] : toolCalls;
 }
 
+/**
+ * 이 호출이 성공 시 루프를 끝내는가 — ToolDefinition.terminatesLoop 조회.
+ * 정의를 노출하지 않는 executor(get 미구현)에서는 항상 false.
+ */
+export function toolTerminatesLoop(services: RuntimeServices, tc: ToolCall): boolean {
+  const tool = services.tools.get?.(tc.name);
+  if (!tool?.terminatesLoop) return false;
+  return typeof tool.terminatesLoop === 'function'
+    ? tool.terminatesLoop(tc.arguments)
+    : tool.terminatesLoop;
+}
+
 export async function executeToolCalls(
   services: RuntimeServices,
   toolCalls: ToolCall[],

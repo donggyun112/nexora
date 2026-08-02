@@ -21,17 +21,17 @@
   "dependencies": {
     "@dongkseo/adapters": "workspace:^",
     "@dongkseo/architectures": "workspace:^",
+    "@dongkseo/context": "workspace:^",
     "@dongkseo/contracts": "workspace:^",
     "@dongkseo/core": "workspace:^",
     "@dongkseo/gateway": "workspace:^",
     "@dongkseo/registry": "workspace:^",
     "@dongkseo/tools": "workspace:^",
-    "@dongkseo/transport": "workspace:^",
-    "@dongkseo/context": "workspace:^"
+    "@dongkseo/transport": "workspace:^"
   },
   "devDependencies": {
-    "@types/node": "^26.0.1",
-    "typescript": "^6.0.3"
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2"
   },
   "nexora": {
     "stability": "stable"

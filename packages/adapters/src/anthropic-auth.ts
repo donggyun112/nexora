@@ -2,14 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { getOAuthApiKey } from '@earendil-works/pi-ai/oauth';
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic';
+import type { ModelAuth, OAuthCredential } from '@earendil-works/pi-ai';
 
 // Claude(Anthropic) 구독 OAuth 로 anthropic provider 를 인증한다 — codex-auth 와 대칭.
 // 토큰은 ~8h 만료. PiAiProvider 는 apiKey 를 생성자에서 고정하므로, 부팅 때 한 번 resolve 한
 // 토큰으로 굳히면 만료 후 모든 호출이 stale 토큰으로 401 난다. 호출자(RotatingKeyProvider)가
 // 매 요청 전에 이걸 다시 부르고, 이 resolver 는 라이브 소스(keychain/credentials.json)를 읽어
 // 외부 Claude Code 의 갱신을 그대로 집어온다. 소스 토큰이 만료(임박)면 refresh_token 으로
-// getOAuthApiKey 가 직접 재발급하고 rotate 된 토큰을 소스에 되쓴다.
+// pi-ai OAuth flow 가 직접 재발급하고 rotate 된 토큰을 소스에 되쓴다.
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
@@ -26,9 +27,21 @@ export interface AnthropicOAuthSource extends OAuthBlob {
   file?: string;
 }
 
+/**
+ * pi-ai OAuth 표면 중 이 모듈이 쓰는 최소 포트. pi-ai 0.80.10 이 `getOAuthApiKey` 를 없애고
+ * refresh(토큰 교환)/toAuth(요청 auth 파생) 로 쪼갰다 — "만료면 refresh" 판단이 라이브러리
+ * 내부에서 호출자로 넘어왔으므로, 아래 resolver 가 버퍼를 보고 직접 결정한다.
+ */
+export interface OAuthPort {
+  /** refresh_token 교환. 네트워크 호출이며 실패 시 throw(invalid_grant 등). */
+  refresh: (credential: OAuthCredential) => Promise<OAuthCredential>;
+  /** credential → 요청 auth 파생. 부수효과 없음. */
+  toAuth: (credential: OAuthCredential) => Promise<ModelAuth>;
+}
+
 export interface AnthropicKeyResolverDeps {
   readSource: () => AnthropicOAuthSource | null;
-  refreshOAuth: typeof getOAuthApiKey;
+  oauth: OAuthPort;
   writeBack: (source: AnthropicOAuthSource, blob: OAuthBlob) => void;
   staticApiKey: () => string | undefined;
   envOAuthToken: () => string | undefined;
@@ -157,9 +170,32 @@ function writeBackToSource(source: AnthropicOAuthSource, blob: OAuthBlob): void 
   }
 }
 
+/**
+ * 실제 포트 — pi-ai anthropic provider 가 노출하는 OAuth flow 로 위임한다. flow 는
+ * lazyOAuth 래퍼라 첫 refresh/toAuth 호출 때 구현이 동적 로드된다(모듈 로드 시 비용 없음).
+ */
+function piAnthropicOAuthPort(): OAuthPort {
+  const flow = () => {
+    const oauth = anthropicProvider().auth.oauth;
+    if (!oauth) throw new Error('pi-ai anthropic provider 가 OAuth flow 를 노출하지 않는다 — pi-ai 버전 확인.');
+    return oauth;
+  };
+  return {
+    refresh: credential => flow().refresh(credential),
+    toAuth: credential => flow().toAuth(credential),
+  };
+}
+
+/** toAuth 결과에서 apiKey 를 뽑는다. anthropic 은 access token 을 그대로 apiKey 로 쓴다. */
+async function apiKeyFrom(auth: Promise<ModelAuth>): Promise<string> {
+  const { apiKey } = await auth;
+  if (!apiKey) throw new Error('anthropic OAuth 에서 apiKey 를 파생하지 못했다 — pi-ai toAuth 응답에 apiKey 없음.');
+  return apiKey;
+}
+
 const REAL_DEPS: AnthropicKeyResolverDeps = {
   readSource: readAnthropicSource,
-  refreshOAuth: getOAuthApiKey,
+  oauth: piAnthropicOAuthPort(),
   writeBack: writeBackToSource,
   staticApiKey: () => process.env.ANTHROPIC_API_KEY,
   envOAuthToken: () => process.env.ANTHROPIC_OAUTH_TOKEN,
@@ -203,27 +239,33 @@ export function createAnthropicKeyResolver(deps: AnthropicKeyResolverDeps = REAL
       return source.access;
     }
 
-    // pi-ai 의 getOAuthApiKey 는 Date.now() >= expires 일 때만 refresh 한다(자체 버퍼 없음).
-    // 실제 만료를 BUFFER 만큼 앞당겨 넘겨, 경계 전에 선제 교체되게 한다.
-    const result = await deps.refreshOAuth('anthropic', {
-      anthropic: {
-        access: source.access,
-        refresh: source.refresh,
-        expires: source.expires ? source.expires - REFRESH_BUFFER_MS : 0,
-      },
-    });
-    if (!result) throw new Error("anthropic OAuth 토큰 resolve 실패 — 'claude' 로그인 후 재시도.");
+    const credential: OAuthCredential = {
+      type: 'oauth',
+      access: source.access,
+      refresh: source.refresh,
+      expires: source.expires,
+    };
 
-    const next = result.newCredentials;
-    const rotated = !!next && (next.access !== source.access || next.refresh !== source.refresh);
+    // pi-ai 의 refresh 는 무조건 토큰을 교환한다 — 만료 판단은 우리 몫이다. 소스 토큰이
+    // 아직 BUFFER 밖이면 네트워크 없이 그대로 파생해 쓴다(외부 Claude Code 가 갱신한
+    // 토큰을 집어오는 경로). expires 가 0(=불명)이면 즉시 교환을 유도한다.
+    if (source.expires && deps.now() < source.expires - REFRESH_BUFFER_MS) {
+      const apiKey = await apiKeyFrom(deps.oauth.toAuth(credential));
+      cached = { apiKey, expiresAt: source.expires };
+      return apiKey;
+    }
+
+    const next = await deps.oauth.refresh(credential);
+    const rotated = next.access !== source.access || next.refresh !== source.refresh;
     if (rotated && next.refresh) {
       deps.writeBack(source, { access: next.access, refresh: next.refresh, expires: next.expires || source.expires });
     }
 
-    // rotate 됐으면 next.expires 가 토큰 엔드포인트가 준 실제 새 만료. 안 됐으면 getOAuthApiKey 는
-    // 입력 creds 를 echo 하므로 우리가 넣은 (줄인) 값이라 신뢰하지 말고 source.expires 를 캐싱한다.
-    cached = { apiKey: result.apiKey, expiresAt: rotated ? next.expires || source.expires : source.expires };
-    return result.apiKey;
+    // next.expires 는 토큰 엔드포인트가 준 실제 만료(pi-ai 가 이미 5분 여유를 뺀 값).
+    // cachedIfFresh 가 BUFFER 를 한 번 더 빼므로 실제로는 만료 10분 전에 선제 교체된다.
+    const apiKey = await apiKeyFrom(deps.oauth.toAuth(next));
+    cached = { apiKey, expiresAt: next.expires || source.expires };
+    return apiKey;
   };
 
   return async function resolveAnthropicApiKey(): Promise<string> {

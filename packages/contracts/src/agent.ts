@@ -9,6 +9,9 @@ import type { OutboundArtifact } from './adapter.js';
  */
 
 export interface AgentInput {
+  /** Stable ingress id used to deduplicate a retried turn. */
+  inputId?: string;
+
   /** 사용자 프롬프트 */
   prompt: string;
 
@@ -145,6 +148,9 @@ export interface RuntimeServices {
    */
   signal: AbortSignal;
 
+  /** Optional runtime-owned admission queue. Planners append and admit at the model boundary. */
+  inputs?: RuntimeInputAdmission;
+
   /**
    * 실행 중 주입(steer)된 user 메시지를 큐에서 꺼낸다(소비). 아키텍처는 매 루프 반복
    * LLM 호출 직전, 그리고 종료 직전에 호출해 history 에 도착순으로 합류시켜야 한다.
@@ -194,8 +200,31 @@ export interface LLMProvider {
 }
 
 export interface LLMMessage {
+  /** Stable ingress id when this message came through RuntimeInputAdmission. */
+  id?: string;
   role: 'system' | 'user' | 'assistant' | 'tool_result';
   content: string | LLMContentBlock[];
+}
+
+/** One queued input with provenance kept separate from model-visible message content. */
+export type PendingRuntimeInput =
+  | {
+      kind: 'user_prompt';
+      originId?: string;
+      input: AgentInput;
+    }
+  | {
+      kind: string;
+      originId?: string;
+      message: LLMMessage;
+    };
+
+/** Runtime-owned input boundary consumed by a planner immediately before a model call. */
+export interface RuntimeInputAdmission {
+  submit(input: PendingRuntimeInput): Promise<PendingRuntimeInput>;
+  claim(representedIds?: ReadonlySet<string>): Promise<PendingRuntimeInput[]>;
+  admit(inputs: readonly PendingRuntimeInput[]): Promise<void>;
+  discard(inputs: readonly PendingRuntimeInput[]): Promise<void>;
 }
 
 export type LLMContentBlock =

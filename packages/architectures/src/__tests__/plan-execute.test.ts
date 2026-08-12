@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createPlanExecuteArchitecture } from '../plan-execute.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, RuntimeServices, ToolDefinition } from '@dongkseo/contracts';
+import type { AgentEvent, PendingRuntimeInput, RuntimeServices, ToolDefinition } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -20,6 +20,37 @@ function servicesWithToolList(llm: MockLLMProvider, tools: Map<string, (i: unkno
 }
 
 describe('PlanExecuteArchitecture — plan-mode gating', () => {
+  it('applies the PLAN prompt while admitting an orchestrated initial input', async () => {
+    const llm = new MockLLMProvider([{ text: 'planning' }]);
+    const services = servicesWithToolList(llm, new Map(), ['submit_research_plan']);
+    const queued: PendingRuntimeInput = {
+      kind: 'user_prompt',
+      originId: 'input-1',
+      input: { prompt: 'queued prompt' },
+    };
+    let firstClaim = true;
+    const admitted: PendingRuntimeInput[] = [];
+    services.inputs = {
+      submit: async input => input,
+      claim: async () => firstClaim ? (firstClaim = false, [queued]) : [],
+      admit: async inputs => { admitted.push(...inputs); },
+      discard: async () => {},
+    };
+    const arch = createPlanExecuteArchitecture({
+      exitPlanTool: 'submit_research_plan',
+      planPrompt: 'PLAN_FROM_QUEUE',
+    });
+
+    await collect(arch.loop(services, { prompt: 'must not be appended directly' }));
+
+    expect(llm.callLog[0].messages).toContainEqual({
+      id: 'input-1',
+      role: 'user',
+      content: 'queued prompt\n\nPLAN_FROM_QUEUE',
+    });
+    expect(admitted).toEqual([queued]);
+  });
+
   it('hides execute-phase tools until the plan is submitted, then reveals them', async () => {
     const llm = new MockLLMProvider([
       { text: '', toolCalls: [{ id: 'r1', name: 'web_search', arguments: { q: 'landscape' } }] }, // plan: research

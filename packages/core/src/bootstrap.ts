@@ -396,6 +396,7 @@ async function handleMessage(args: {
     const runtime = await createRuntime({ context, envelope, onSuspend });
 
     const input = await toAgentInput(envelope);
+    input.inputId ??= envelope.id;
 
     const events: AgentEvent[] = [];
     for await (const event of runtime.execute(input)) {
@@ -576,6 +577,7 @@ async function resumeHandraiseTurn(args: {
     );
 
     const input = await toAgentInput(state.envelope);
+    input.inputId ??= state.envelope.id;
     input.resumeContext = {
       architectureHistory: state.architectureHistory,
       completedResults: state.completedResults ?? [],

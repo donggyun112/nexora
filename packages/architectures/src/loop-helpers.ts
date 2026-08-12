@@ -11,6 +11,7 @@ import type {
   LLMContentBlock,
   LLMMessage,
   LLMResponse,
+  PendingRuntimeInput,
   RuntimeServices,
   ToolBatchResult,
 } from '@dongkseo/contracts';
@@ -218,6 +219,49 @@ export function userContentForInput(
 
   if (imageBlocks.length === 0) return text;
   return [{ type: 'text', text }, ...imageBlocks];
+}
+
+/**
+ * Move one ordered input group across the runtime/planner admission boundary.
+ * Falls back to the legacy synchronous steer queue when no orchestrator is attached.
+ */
+export async function absorbRuntimeInputs(
+  services: RuntimeServices,
+  history: LLMMessage[],
+  promptText: (input: AgentInput) => string = input => input.prompt,
+): Promise<number> {
+  if (!services.inputs) {
+    const steers = services.drainSteers?.() ?? [];
+    history.push(...steers);
+    return steers.length;
+  }
+
+  const representedIds = new Set(
+    history.flatMap(message => message.id ? [message.id] : []),
+  );
+  const inputs = await services.inputs.claim(representedIds);
+  for (const input of inputs) {
+    history.push(messageForRuntimeInput(input, promptText));
+  }
+  if (inputs.length > 0) await services.inputs.admit(inputs);
+  return inputs.length;
+}
+
+function messageForRuntimeInput(
+  pending: PendingRuntimeInput,
+  promptText: (input: AgentInput) => string,
+): LLMMessage {
+  if ('input' in pending) {
+    return {
+      ...(pending.originId ? { id: pending.originId } : {}),
+      role: 'user',
+      content: userContentForInput(pending.input, promptText(pending.input)),
+    };
+  }
+  return {
+    ...structuredClone(pending.message),
+    ...(pending.originId ? { id: pending.originId } : {}),
+  };
 }
 
 function appendInputFileSummaries(

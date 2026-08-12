@@ -2,6 +2,7 @@ import type {
   AgentInput,
   AgentLogger,
   LLMProvider,
+  RuntimeInputAdmission,
   ToolExecutor,
 } from './agent.js';
 
@@ -24,6 +25,12 @@ export interface RuntimeOrchestratorContext {
 export interface RuntimeOrchestrationSession {
   wrapLLM(inner: LLMProvider): LLMProvider;
   wrapTools(inner: ToolExecutor): ToolExecutor;
+  /**
+   * Optional ordered ingress queue owned by this orchestration session.
+   * When exposed, open() must submit the initial non-resume AgentInput because
+   * planners stop appending AgentInput directly and consume this boundary only.
+   */
+  inputs?: RuntimeInputAdmission;
   close(): Promise<void>;
 }
 

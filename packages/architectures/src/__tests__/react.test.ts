@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createReactArchitecture } from '../react.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, RuntimeServices, LLMMessage, ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import type { AgentEvent, PendingRuntimeInput, RuntimeServices, LLMMessage, ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import { suspendResult } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
@@ -11,6 +11,32 @@ async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
 }
 
 describe('ReactArchitecture', () => {
+  it('claims and admits an orchestrated prompt at the model boundary', async () => {
+    const llm = new MockLLMProvider([{ text: 'queued response' }]);
+    const services = makeServices(llm, new Map()) as unknown as RuntimeServices;
+    const queued: PendingRuntimeInput = {
+      kind: 'user_prompt',
+      originId: 'input-1',
+      input: { prompt: 'queued prompt' },
+    };
+    let firstClaim = true;
+    const admitted: PendingRuntimeInput[] = [];
+    services.inputs = {
+      submit: async input => input,
+      claim: async () => firstClaim ? (firstClaim = false, [queued]) : [],
+      admit: async inputs => { admitted.push(...inputs); },
+      discard: async () => {},
+    };
+
+    const arch = createReactArchitecture();
+    await collect(arch.loop(services, { prompt: 'must not be appended directly' }));
+
+    expect(llm.callLog[0].messages.filter(message => message.role === 'user')).toEqual([
+      { id: 'input-1', role: 'user', content: 'queued prompt' },
+    ]);
+    expect(admitted).toEqual([queued]);
+  });
+
   it('completes immediately when no tool calls', async () => {
     const llm = new MockLLMProvider([{ text: 'hello world' }]);
     const services = makeServices(llm, new Map());

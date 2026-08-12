@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import type {
   AgentArchitecture,
   AgentEvent,
+  AgentInput,
   LLMProvider,
   RuntimeOrchestrator,
   RuntimeServices,
+  RuntimeInputQueue,
   ToolExecutor,
 } from '@dongkseo/contracts';
 import { OrchestrationControlError } from '@dongkseo/contracts';
+import { DurableRuntimeOrchestrator } from '../durable-runtime-orchestrator.js';
 import { LocalExecutionHarness } from '../execution-harness.js';
+import { MemoryEffectLedger } from '../memory-effect-ledger.js';
 
 function model(onComplete: () => void): LLMProvider {
   return {
@@ -41,9 +45,12 @@ const probeArchitecture: AgentArchitecture = {
   },
 };
 
-async function drain(harness: LocalExecutionHarness): Promise<AgentEvent[]> {
+async function drain(
+  harness: LocalExecutionHarness,
+  input: AgentInput = { prompt: 'go' },
+): Promise<AgentEvent[]> {
   const events: AgentEvent[] = [];
-  for await (const event of harness.execute({ prompt: 'go' })) events.push(event);
+  for await (const event of harness.execute(input)) events.push(event);
   return events;
 }
 
@@ -115,6 +122,110 @@ describe('LocalExecutionHarness orchestration port', () => {
       'inner:tool',
       'close',
     ]);
+  });
+
+  it('routes the initial prompt through durable claim and admission when an input queue is attached', async () => {
+    const ledger = new MemoryEffectLedger();
+    const admittedPrompts: string[] = [];
+    const architecture: AgentArchitecture = {
+      name: 'input-probe',
+      async *loop(services): AsyncGenerator<AgentEvent> {
+        const pending = await services.inputs?.claim() ?? [];
+        for (const item of pending) {
+          if ('input' in item) admittedPrompts.push(item.input.prompt);
+        }
+        await services.inputs?.admit(pending);
+        yield { type: 'done', content: 'done', toolCalls: [] };
+      },
+    };
+    const orchestrator = new DurableRuntimeOrchestrator({
+      ledger,
+      inputQueue: ledger,
+      runId: 'run-inputs',
+    });
+    const harness = new LocalExecutionHarness({
+      architecture,
+      llm: model(() => {}),
+      tools: tools(() => {}),
+      orchestrator,
+    });
+
+    await drain(harness, { inputId: 'input-1', prompt: 'queued once' });
+    await drain(harness, { inputId: 'input-1', prompt: 'queued once' });
+
+    expect(admittedPrompts).toEqual(['queued once', 'queued once']);
+    expect(await ledger.listInputs('run-inputs')).toMatchObject([{
+      inputId: 'input-1',
+      status: 'admitted',
+      sequence: 0,
+    }]);
+  });
+
+  it('routes an in-flight steer through the attached durable input queue', async () => {
+    const ledger = new MemoryEffectLedger();
+    let releaseTurn!: () => void;
+    const turnReleased = new Promise<void>(resolve => { releaseTurn = resolve; });
+    let initialAdmitted!: () => void;
+    const initialWasAdmitted = new Promise<void>(resolve => { initialAdmitted = resolve; });
+    const kinds: string[] = [];
+    const architecture: AgentArchitecture = {
+      name: 'steer-input-probe',
+      async *loop(services): AsyncGenerator<AgentEvent> {
+        const initial = await services.inputs!.claim();
+        kinds.push(...initial.map(item => item.kind));
+        await services.inputs!.admit(initial);
+        initialAdmitted();
+        await turnReleased;
+        const late = await services.inputs!.claim();
+        kinds.push(...late.map(item => item.kind));
+        await services.inputs!.admit(late);
+        yield { type: 'done', content: 'done', toolCalls: [] };
+      },
+    };
+    const harness = new LocalExecutionHarness({
+      architecture,
+      llm: model(() => {}),
+      tools: tools(() => {}),
+      orchestrator: new DurableRuntimeOrchestrator({
+        ledger,
+        inputQueue: ledger,
+        runId: 'run-steer',
+      }),
+    });
+
+    const running = drain(harness, { inputId: 'prompt-1', prompt: 'start' });
+    await initialWasAdmitted;
+    expect(harness.steer('change direction')).toBe(true);
+    releaseTurn();
+    await running;
+
+    expect(kinds).toEqual(['user_prompt', 'user_steer']);
+    expect(await ledger.listInputs('run-steer')).toHaveLength(2);
+    expect((await ledger.listInputs('run-steer')).every(record => record.status === 'admitted')).toBe(true);
+  });
+
+  it('releases the run lease when initial durable input submission fails', async () => {
+    const ledger = new MemoryEffectLedger();
+    const failingQueue: RuntimeInputQueue = {
+      enqueueInput: async () => { throw new Error('queue unavailable'); },
+      listInputs: async () => [],
+      claimInput: async () => {},
+      admitInputs: async () => {},
+      discardInputs: async () => {},
+    };
+    const harness = new LocalExecutionHarness({
+      architecture: probeArchitecture,
+      llm: model(() => {}),
+      tools: tools(() => {}),
+      orchestrator: new DurableRuntimeOrchestrator({
+        ledger,
+        inputQueue: failingQueue,
+        runId: 'run-open-failure',
+      }),
+    });
+
+    expect(await drain(harness)).toContainEqual({ type: 'error', message: 'queue unavailable' });
+    expect(await ledger.acquire('run-open-failure', 'next-worker', 60_000)).toBeGreaterThan(0);
   });
 
   it('lets generic orchestration control failures escape the agent event stream', async () => {

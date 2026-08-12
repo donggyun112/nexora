@@ -7,7 +7,7 @@ import type {
   StoreBackendInfo,
 } from '@dongkseo/contracts';
 import { EffectWriteFencedError } from '@dongkseo/contracts';
-import type { Sql } from './pg-client.js';
+import type { QuerySql, Sql } from './pg-client.js';
 import { jsonParam } from './helpers.js';
 
 /** PostgreSQL EffectLedger with transactional intent writes and fenced leases. */
@@ -170,7 +170,7 @@ export class EffectLedgerPg implements EffectLedger, RuntimeInputQueue, Describa
   }
 }
 
-async function assertFence(sql: Sql, runId: string, presentedToken: number): Promise<void> {
+async function assertFence(sql: QuerySql, runId: string, presentedToken: number): Promise<void> {
   const rows = await sql`
     SELECT token
     FROM nexora_effect_leases

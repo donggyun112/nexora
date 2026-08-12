@@ -85,19 +85,30 @@ import {
   MemoryEffectLedger,
 } from '@dongkseo/core';
 
+const durableState = new MemoryEffectLedger(); // 개발/테스트 전용
 const runtime = new AgentRunner({
   architecture,
   llm,
   tools,
   orchestrator: new DurableRuntimeOrchestrator({
-    ledger: new MemoryEffectLedger(), // 개발/테스트 전용; 운영에서는 durable EffectLedger 구현 주입
+    ledger: durableState, // 운영에서는 durable EffectLedger 구현 주입
+    inputQueue: durableState, // 선택: prompt/steer도 동일한 admission boundary로 통과
     runId: envelope.id,
     modelIdentity: { provider: 'anthropic', model: 'claude-sonnet-4-5' },
   }),
 });
+
+for await (const event of runtime.execute({
+  inputId: envelope.id, // retry/recovery에서도 동일한 stable ingress id
+  prompt,
+})) {
+  // ...
+}
 ```
 
-다른 실행 정책도 contracts의 `RuntimeOrchestrator` 포트(`open`, `wrapLLM`, `wrapTools`, `close`)만
+`inputQueue`를 주입하면 planner는 매 모델 호출 직전에 ordered input을 claim하고 history에 붙인 뒤
+admit한다. 다른 실행 정책도 contracts의 `RuntimeOrchestrator` 포트(`open`, `wrapLLM`, `wrapTools`,
+optional `inputs`, `close`)만
 구현하면 하네스를 수정하지 않고 탈부착할 수 있다. 기존 `durability` 옵션은 호환 어댑터로 유지된다.
 
 한 batch는 모든 호출이 `isConcurrencySafe`를 명시한 경우에만 병렬 실행된다. call id가 없거나

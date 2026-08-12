@@ -3,9 +3,9 @@
  * postgres.js expects JSONValue but our contract types are unknown-shaped.
  */
 
-import type { Sql } from './pg-client.js';
+import type { QuerySql, Sql } from './pg-client.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function jsonParam(sql: Sql, value: unknown): ReturnType<Sql['json']> {
+export function jsonParam(sql: QuerySql, value: unknown): ReturnType<Sql['json']> {
   return sql.json(value as any);
 }

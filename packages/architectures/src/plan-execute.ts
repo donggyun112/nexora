@@ -25,6 +25,7 @@ import type {
 } from '@dongkseo/contracts';
 import {
   executeToolCalls,
+  absorbRuntimeInputs,
   formatResultForLLM,
   imageBlocksFromResult,
   isErrorResult,
@@ -105,9 +106,15 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         // 이전 turn 이 실려있으면 계획은 이미 첫 turn 에 했다 → EXECUTE 로 시작.
         if (history.length > 0) phase = 'execute';
 
-        const promptText = phase === 'plan' && planPrompt ? `${input.prompt}\n\n${planPrompt}` : input.prompt;
-        const userContent = userContentForInput(input, promptText);
-        history.push({ role: 'user', content: userContent });
+        if (!services.inputs) {
+          const promptText = phase === 'plan' && planPrompt ? `${input.prompt}\n\n${planPrompt}` : input.prompt;
+          const userContent = userContentForInput(input, promptText);
+          history.push({
+            ...(input.inputId ? { id: input.inputId } : {}),
+            role: 'user',
+            content: userContent,
+          });
+        }
       }
 
       const allToolCalls: { name: string; input: unknown }[] = [];
@@ -115,17 +122,17 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
       const turnUsage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
       let sawUsage = false;
 
-      const absorbSteers = async (): Promise<number> => {
-        const steers = services.drainSteers?.() ?? [];
-        for (const s of steers) {
-          history.push(s);
-        }
-        return steers.length;
-      };
+      const absorbInputs = (): Promise<number> => absorbRuntimeInputs(
+        services,
+        history,
+        queued => phase === 'plan' && planPrompt
+          ? `${queued.prompt}\n\n${planPrompt}`
+          : queued.prompt,
+      );
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         if (services.signal.aborted) return;
-        await absorbSteers();
+        await absorbInputs();
 
         let response: LLMResponse;
         try {
@@ -159,7 +166,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
           history.push({ role: 'assistant', content: response.content });
-          if ((await absorbSteers()) > 0) continue;
+          if ((await absorbInputs()) > 0) continue;
           yield {
             type: 'done',
             content: response.content,

@@ -5,6 +5,7 @@
  * accounting, and steering. AgentRunner stays as the public facade.
  */
 
+import { randomUUID } from 'node:crypto';
 import type {
   AgentArchitecture,
   AgentEvent,
@@ -30,6 +31,7 @@ import type {
   WorkspaceSession,
   RuntimeOrchestrationSession,
   RuntimeOrchestrator,
+  RuntimeInputAdmission,
 } from '@dongkseo/contracts';
 import {
   InMemoryBackgroundTaskRegistry,
@@ -140,6 +142,9 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private activeRecorder: TranscriptRecorder | null = null;
   /** In-flight steer record() promises for the active execute() — awaited before flush so steers aren't lost. */
   private activeSteerWrites: Promise<void>[] = [];
+  /** Active orchestrated ingress boundary and writes started by the synchronous steer API. */
+  private activeInputs: RuntimeInputAdmission | null = null;
+  private activeInputWrites: Promise<unknown>[] = [];
   /**
    * Active controllers per concurrent execute() call. abort() aborts ALL of them.
    * Per-call structure means concurrent executions don't trample each other's state.
@@ -188,6 +193,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
       : null;
     this.activeRecorder = recorder;
     this.activeSteerWrites = [];
+    this.activeInputWrites = [];
     const collectedEvents: AgentEvent[] = [];
     const toolInputs = new Map<string, unknown>();
     let finalContent = '';
@@ -214,6 +220,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
         logger: this.logger,
         modelIdentity: { providerClass: this.llm.constructor.name },
       });
+      this.activeInputs = orchestration?.inputs ?? null;
 
       // A contending worker must not append transcript state before it owns the run.
       if (recorder && !input.resumeContext) {
@@ -269,6 +276,16 @@ export class LocalExecutionHarness implements ExecutionHarness {
         memory: this.memory,
         logger: this.logger,
         signal: controller.signal,
+        inputs: orchestration?.inputs ? {
+          submit: input => orchestration!.inputs!.submit(input),
+          claim: async representedIds => {
+            await Promise.all(this.activeInputWrites);
+            this.activeInputWrites = [];
+            return orchestration!.inputs!.claim(representedIds);
+          },
+          admit: inputs => orchestration!.inputs!.admit(inputs),
+          discard: inputs => orchestration!.inputs!.discard(inputs),
+        } : undefined,
         drainSteers: () => (this.pendingSteers.length > 0 ? this.pendingSteers.splice(0) : []),
         onSuspend: this.onSuspend,
         shouldStopAfterTurn: this.shouldStopAfterTurn,
@@ -362,6 +379,14 @@ export class LocalExecutionHarness implements ExecutionHarness {
       }
       this.activeRecorder = null;
       this.activeSteerWrites = [];
+      if (this.activeInputWrites.length > 0) {
+        try { await Promise.all(this.activeInputWrites); } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn('orchestration.input-submit.failed', { error: message });
+        }
+      }
+      this.activeInputs = null;
+      this.activeInputWrites = [];
       // Close the underlying generator so any remaining `yield`s are aborted.
       // This is what prevents the architecture from continuing to run after timeout.
       if (loopGen) {
@@ -414,8 +439,17 @@ export class LocalExecutionHarness implements ExecutionHarness {
     const trimmed = text.trim();
     if (!trimmed) return this.activeControllers.size > 0;
     if (this.activeControllers.size === 0) return false;
-    this.pendingSteers.push({ role: 'user', content: trimmed });
-    const steerWrite = this.activeRecorder?.recordSteer(trimmed);
+    const originId = this.activeInputs ? randomUUID() : undefined;
+    if (this.activeInputs) {
+      this.activeInputWrites.push(this.activeInputs.submit({
+        kind: 'user_steer',
+        originId,
+        message: { id: originId, role: 'user', content: trimmed },
+      }));
+    } else {
+      this.pendingSteers.push({ role: 'user', content: trimmed });
+    }
+    const steerWrite = this.activeRecorder?.recordSteer(trimmed, originId);
     if (steerWrite) this.activeSteerWrites.push(steerWrite.catch(() => {}));
     return true;
   }

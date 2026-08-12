@@ -17,6 +17,8 @@ export interface PgOptions {
 }
 
 export type Sql = postgres.Sql;
+/** Query surface shared by pooled clients and transaction-scoped clients. */
+export type QuerySql = postgres.Sql | postgres.TransactionSql;
 
 export async function createPgClient(options: PgOptions): Promise<{
   sql: Sql;

@@ -23,6 +23,23 @@ describe('llmContentToBlocks', () => {
 
 describe('toLLMMessages', () => {
   const base = { conversationId: 'x', schemaVersion: 'v2' as const, timestamp: '2026-06-25T00:00:00Z' };
+  it('restores a stable runtime input id without exposing transcript entry ids', async () => {
+    const entries: TranscriptEntry[] = [{
+      ...base,
+      type: 'user',
+      uuid: 'transcript-entry-1',
+      parentUuid: null,
+      metadata: { inputId: 'input-1' },
+      content: [{ type: 'text', text: 'go' }],
+    }];
+
+    expect(await toLLMMessages(entries, noImages)).toEqual([{
+      id: 'input-1',
+      role: 'user',
+      content: [{ type: 'text', text: 'go' }],
+    }]);
+  });
+
   it('round-trips assistant tool_use and user tool_result into rich LLM messages', async () => {
     const entries: TranscriptEntry[] = [
       { ...base, type: 'user', uuid: 'u1', parentUuid: null, content: [{ type: 'text', text: 'go' }] },

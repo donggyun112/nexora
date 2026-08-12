@@ -53,10 +53,11 @@ export class TranscriptRecorder {
       uuid: randomUUID(),
       parentUuid: this.lastUuid,
       content,
+      ...(input.inputId ? { metadata: { inputId: input.inputId } } : {}),
     });
   }
 
-  async recordSteer(text: string): Promise<void> {
+  async recordSteer(text: string, inputId?: string): Promise<void> {
     await this.flushPendingToolResults();
     await this.flushPendingAssistant();
     await this.write({
@@ -65,6 +66,7 @@ export class TranscriptRecorder {
       uuid: randomUUID(),
       parentUuid: this.lastUuid,
       content: [{ type: 'text', text }],
+      ...(inputId ? { metadata: { inputId } } : {}),
     });
   }
 

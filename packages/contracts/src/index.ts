@@ -227,6 +227,8 @@ export type {
   AgentRuntime,
   AgentArchitecture,
   RuntimeServices,
+  RuntimeInputAdmission,
+  PendingRuntimeInput,
   LLMProvider,
   LLMMessage,
   LLMContentBlock,

@@ -59,7 +59,14 @@ export async function toLLMMessages(
         }
       }
     }
-    messages.push({ role: e.type === 'assistant' ? 'assistant' : roleForUserEntry(e.content), content });
+    const inputId = typeof e.metadata?.inputId === 'string'
+      ? e.metadata.inputId
+      : undefined;
+    messages.push({
+      ...(inputId ? { id: inputId } : {}),
+      role: e.type === 'assistant' ? 'assistant' : roleForUserEntry(e.content),
+      content,
+    });
   }
 
   // 3. Drop dangling tool pairs so the provider never 400s.

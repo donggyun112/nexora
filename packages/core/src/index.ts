@@ -45,6 +45,8 @@ export { DurableLLMProvider } from './durable-llm-provider.js';
 export type { DurableLLMProviderOptions } from './durable-llm-provider.js';
 export { DurableInputController } from './durable-input-controller.js';
 export type { DurableInputControllerOptions } from './durable-input-controller.js';
+export { DurableRuntimeOrchestrator } from './durable-runtime-orchestrator.js';
+export type { DurableExecutionOptions } from './durable-runtime-orchestrator.js';
 
 export { TranscriptMemoryProvider } from './transcript-memory.js';
 export type { TranscriptMemoryProviderOptions } from './transcript-memory.js';
@@ -92,7 +94,7 @@ export { createIdleTimeout, IdleTimeoutError } from './idle-timeout.js';
 export type { IdleTimeout } from './idle-timeout.js';
 
 export { LocalExecutionHarness } from './execution-harness.js';
-export type { LocalExecutionHarnessOptions, DurableExecutionOptions } from './execution-harness.js';
+export type { LocalExecutionHarnessOptions } from './execution-harness.js';
 export { HostWorkspaceProvider } from './workspace-provider.js';
 export type { HostWorkspaceProviderOptions } from './workspace-provider.js';
 export { AsrtSandboxClient } from './asrt-sandbox-client.js';

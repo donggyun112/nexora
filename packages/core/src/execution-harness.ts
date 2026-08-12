@@ -5,7 +5,6 @@
  * accounting, and steering. AgentRunner stays as the public facade.
  */
 
-import { randomUUID } from 'node:crypto';
 import type {
   AgentArchitecture,
   AgentEvent,
@@ -29,12 +28,13 @@ import type {
   WorkspaceAcquireOptions,
   WorkspaceProvider,
   WorkspaceSession,
-  EffectLedger,
+  RuntimeOrchestrationSession,
+  RuntimeOrchestrator,
 } from '@dongkseo/contracts';
 import {
-  EffectWriteFencedError,
   InMemoryBackgroundTaskRegistry,
   InMemoryTriggerHost,
+  OrchestrationControlError,
 } from '@dongkseo/contracts';
 import { TranscriptRecorder } from './transcript-recorder.js';
 import { bindFallbackContext, type FallbackSink } from './llm/index.js';
@@ -47,24 +47,9 @@ import {
   IdleTimeoutError,
 } from './idle-timeout.js';
 import {
-  DurableExecutionError,
-  DurableToolExecutor,
-  RunLeaseContendedError,
-} from './durable-tool-executor.js';
-import { DurableLLMProvider } from './durable-llm-provider.js';
-
-export interface DurableExecutionOptions {
-  /** Durable store for effect intent and results. */
-  ledger: EffectLedger;
-  /** Stable id for this execution attempt. Tool call ids are scoped underneath it. */
-  runId: string | ((input: AgentInput) => string);
-  /** Unique worker identity. Defaults to a fresh UUID for every execute() call. */
-  owner?: (input: AgentInput) => string;
-  /** Lease lifetime. The tool boundary renews it before every new effect. */
-  leaseTtlMs?: number;
-  /** Stable provider/model configuration used in the model request fingerprint. */
-  modelIdentity?: unknown;
-}
+  DurableRuntimeOrchestrator,
+  type DurableExecutionOptions,
+} from './durable-runtime-orchestrator.js';
 
 export interface LocalExecutionHarnessOptions {
   /** 사고 패턴 */
@@ -110,7 +95,9 @@ export interface LocalExecutionHarnessOptions {
    * same-key writes across them serialize; leave undefined for a single agent.
    */
   resourceLock?: ResourceLock;
-  /** Opt-in durable tool execution. Existing non-durable callers remain unchanged. */
+  /** Optional execution coordinator. Omit for the direct in-process path. */
+  orchestrator?: RuntimeOrchestrator;
+  /** @deprecated Prefer `orchestrator: new DurableRuntimeOrchestrator(...)`. */
   durability?: DurableExecutionOptions;
 }
 
@@ -141,7 +128,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
   private readonly triggers: TriggerHost;
   private readonly resourceLock?: ResourceLock;
-  private readonly durability?: DurableExecutionOptions;
+  private readonly orchestrator?: RuntimeOrchestrator;
   /**
    * Per-harness file-read history shared into the tool context so the read tool
    * can dedup unchanged re-reads. Lives for the harness lifetime (survives across
@@ -183,7 +170,11 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.deliverResult = options.deliverResult;
     this.triggers = options.triggers ?? new InMemoryTriggerHost();
     this.resourceLock = options.resourceLock;
-    this.durability = options.durability;
+    if (options.orchestrator && options.durability) {
+      throw new Error('Set either orchestrator or durability, not both');
+    }
+    this.orchestrator = options.orchestrator
+      ?? (options.durability ? new DurableRuntimeOrchestrator(options.durability) : undefined);
   }
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
@@ -209,7 +200,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
 
     let workspace: WorkspaceSession | undefined;
     let toolExecutor = this.tools;
-    let effectLease: { runId: string; owner: string; token: number } | undefined;
+    let orchestration: RuntimeOrchestrationSession | undefined;
     let loopGen: AsyncGenerator<AgentEvent> | null = null;
     // Side channel for tool-emitted progress events (ctx.emitProgress). Merged
     // into the yielded stream so a tool can surface activity (e.g. a delegate
@@ -217,20 +208,12 @@ export class LocalExecutionHarness implements ExecutionHarness {
     const progress = createProgressChannel();
 
     try {
-      if (this.durability) {
-        const runId = typeof this.durability.runId === 'function'
-          ? this.durability.runId(input)
-          : this.durability.runId;
-        if (!runId) throw new Error('Durable execution runId must not be empty');
-        const owner = this.durability.owner?.(input) ?? randomUUID();
-        const token = await this.durability.ledger.acquire(
-          runId,
-          owner,
-          this.durability.leaseTtlMs ?? 60_000,
-        );
-        if (token === 0) throw new RunLeaseContendedError(runId);
-        effectLease = { runId, owner, token };
-      }
+      orchestration = await this.orchestrator?.open({
+        input,
+        signal: controller.signal,
+        logger: this.logger,
+        modelIdentity: { providerClass: this.llm.constructor.name },
+      });
 
       // A contending worker must not append transcript state before it owns the run.
       if (recorder && !input.resumeContext) {
@@ -268,26 +251,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
         });
       }
 
-      if (this.durability && effectLease) {
-        const durability = this.durability;
-        const lease = effectLease;
-        toolExecutor = new DurableToolExecutor({
-          inner: toolExecutor,
-          ledger: durability.ledger,
-          runId: lease.runId,
-          fencingToken: lease.token,
-          renewLease: async () => {
-            const token = await durability.ledger.acquire(
-              lease.runId,
-              lease.owner,
-              durability.leaseTtlMs ?? 60_000,
-            );
-            if (token === 0) throw new RunLeaseContendedError(lease.runId);
-            lease.token = token;
-            return token;
-          },
-        });
-      }
+      if (orchestration) toolExecutor = orchestration.wrapTools(toolExecutor);
 
       // Per-execute services snapshot — signal injected so architectures can forward.
       // Wrap the shared ToolExecutor so its execute() always sees this call's signal.
@@ -296,26 +260,8 @@ export class LocalExecutionHarness implements ExecutionHarness {
         ? { record: (r) => { void recorder.recordFallback(r); } }
         : undefined;
       const modelWithMiddleware = wrapLLMWithMiddleware(this.llm, this.pipeline);
-      const activeModel = this.durability && effectLease
-        ? new DurableLLMProvider({
-            inner: modelWithMiddleware,
-            ledger: this.durability.ledger,
-            runId: effectLease.runId,
-            fencingToken: effectLease.token,
-            modelIdentity: this.durability.modelIdentity ?? {
-              providerClass: this.llm.constructor.name,
-            },
-            renewLease: async () => {
-              const token = await this.durability!.ledger.acquire(
-                effectLease!.runId,
-                effectLease!.owner,
-                this.durability!.leaseTtlMs ?? 60_000,
-              );
-              if (token === 0) throw new RunLeaseContendedError(effectLease!.runId);
-              effectLease!.token = token;
-              return token;
-            },
-          })
+      const activeModel = orchestration
+        ? orchestration.wrapLLM(modelWithMiddleware)
         : modelWithMiddleware;
       const services: RuntimeServices = {
         llm: bindFallbackContext(activeModel, fallbackSink),
@@ -381,7 +327,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
         yield event;
       }
     } catch (err) {
-      if (err instanceof DurableExecutionError || err instanceof EffectWriteFencedError) {
+      if (err instanceof OrchestrationControlError) {
         executionError = err;
         throw err;
       }
@@ -434,12 +380,12 @@ export class LocalExecutionHarness implements ExecutionHarness {
           this.logger.warn('workspace.cleanup.failed', { error: message });
         }
       }
-      if (this.durability && effectLease) {
+      if (orchestration) {
         try {
-          await this.durability.ledger.release(effectLease.runId, effectLease.owner);
+          await orchestration.close();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          this.logger.warn('effect-lease.release.failed', { error: message });
+          this.logger.warn('orchestration.close.failed', { error: message });
         }
       }
       try {

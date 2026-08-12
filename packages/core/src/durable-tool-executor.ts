@@ -9,6 +9,7 @@ import type {
   ToolExecutor,
   ToolResult,
 } from '@dongkseo/contracts';
+import { OrchestrationControlError } from '@dongkseo/contracts';
 
 interface StoredToolEffect {
   version: 1;
@@ -27,7 +28,7 @@ export interface DurableToolExecutorOptions {
   renewLease?: () => Promise<number>;
 }
 
-export class DurableExecutionError extends Error {}
+export class DurableExecutionError extends OrchestrationControlError {}
 
 /** An interrupted effect has intent but no committed result. */
 export class IndeterminateEffectError extends DurableExecutionError {

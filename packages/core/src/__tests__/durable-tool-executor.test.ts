@@ -128,7 +128,7 @@ describe('DurableToolExecutor', () => {
   it('surfaces interrupted running intent instead of repeating the effect', async () => {
     const ledger = new MemoryEffectLedger();
     const token = await ledger.acquire('run-1', 'worker-a', 60_000);
-    await ledger.start('run-1', 'call-1', token);
+    await ledger.start('run-1', 'agent:tool:call-1', token);
     let calls = 0;
     const durable = new DurableToolExecutor({
       inner: executor(async () => {
@@ -252,7 +252,7 @@ describe('LocalExecutionHarness durability', () => {
   it('does not turn an indeterminate effect into a normal error event', async () => {
     const ledger = new MemoryEffectLedger();
     const token = await ledger.acquire('run-1', 'crashed-worker', 0);
-    await ledger.start('run-1', 'call-1', token);
+    await ledger.start('run-1', 'agent:tool:call-1', token);
     const architecture: AgentArchitecture = {
       name: 'one-effect',
       async *loop(services: RuntimeServices): AsyncGenerator<AgentEvent> {

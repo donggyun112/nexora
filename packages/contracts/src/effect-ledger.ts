@@ -1,3 +1,5 @@
+import { OrchestrationControlError } from './orchestration.js';
+
 /**
  * Durable effect ledger contract.
  *
@@ -39,7 +41,7 @@ export interface EffectLedger {
 }
 
 /** A lease-protected write arrived after a newer worker took ownership. */
-export class EffectWriteFencedError extends Error {
+export class EffectWriteFencedError extends OrchestrationControlError {
   constructor(
     public readonly runId: string,
     public readonly presentedToken: number,

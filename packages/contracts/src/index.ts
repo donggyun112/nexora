@@ -14,6 +14,7 @@
 //   Store         ./store, ./store-backend, ./context   StoreBackend
 //   Effects       ./effect-ledger   EffectLedger, EffectRecord
 //   Input queue   ./input-queue     RuntimeInputQueue, RuntimeInputRecord
+//   Orchestration ./orchestration   RuntimeOrchestrator, RuntimeOrchestrationSession
 //   Transcript    ./transcript  TranscriptStore, ContentBlock     ./session-tree  SessionTree
 //   Tenancy/Ctx   ./ctx         createTenantAgentScope, DEFAULT_TENANT
 //   Adapters      ./adapter, ./transport (assertDurable), ./channel-adapter
@@ -248,6 +249,12 @@ export type {
   RuntimeInputRecord,
   RuntimeInputStatus,
 } from './input-queue.js';
+export type {
+  RuntimeOrchestrator,
+  RuntimeOrchestratorContext,
+  RuntimeOrchestrationSession,
+} from './orchestration.js';
+export { OrchestrationControlError } from './orchestration.js';
 
 export { imageResultForLLM, imageBlocksFromResult, sanitizeToolPairsInPlace } from './llm-message.js';
 

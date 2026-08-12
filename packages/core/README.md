@@ -73,24 +73,32 @@ const agent = await bootstrapAgent({
 폴백·예산 가드를 얹으려면 `FallbackLLMProvider`로 provider를 묶고 `createBudgetMiddleware`를 파이프라인에 추가한다.
 더 큰 예제: [`examples/auto-work-flow`](../../examples/auto-work-flow) (PM→Coder→Reviewer 멀티에이전트, suspend/재개 포함).
 
-도구와 모델 효과를 durable boundary로 실행하려면 runtime에 ledger와 안정적인 실행 id를 준다.
+오케스트레이션은 선택 사항이다. 아무것도 주입하지 않으면 runtime은 기존처럼 모델과 도구를
+직접 실행한다. 도구와 모델 효과를 durable boundary로 실행하려면 durable orchestrator를 주입한다.
 완료된 `runId + callId` 및 동일한 model-visible request는 기록된 결과를 replay한다. `running`
 intent만 남은 호출은 외부 효과를 중복 실행하지 않고 `IndeterminateEffectError`를 발생시킨다.
 
 ```ts
-import { AgentRunner, MemoryEffectLedger } from '@dongkseo/core';
+import {
+  AgentRunner,
+  DurableRuntimeOrchestrator,
+  MemoryEffectLedger,
+} from '@dongkseo/core';
 
 const runtime = new AgentRunner({
   architecture,
   llm,
   tools,
-  durability: {
+  orchestrator: new DurableRuntimeOrchestrator({
     ledger: new MemoryEffectLedger(), // 개발/테스트 전용; 운영에서는 durable EffectLedger 구현 주입
     runId: envelope.id,
     modelIdentity: { provider: 'anthropic', model: 'claude-sonnet-4-5' },
-  },
+  }),
 });
 ```
+
+다른 실행 정책도 contracts의 `RuntimeOrchestrator` 포트(`open`, `wrapLLM`, `wrapTools`, `close`)만
+구현하면 하네스를 수정하지 않고 탈부착할 수 있다. 기존 `durability` 옵션은 호환 어댑터로 유지된다.
 
 한 batch는 모든 호출이 `isConcurrencySafe`를 명시한 경우에만 병렬 실행된다. call id가 없거나
 한 batch 안에서 중복되면 어떤 효과도 시작하기 전에 거부한다.
@@ -114,6 +122,7 @@ ctx_read(path="packages/core/src/tool-executor.ts", mode="signatures")   # CoreT
 ctx_read(path="packages/core/src/durable-tool-executor.ts", mode="signatures") # durable effects
 ctx_read(path="packages/core/src/durable-llm-provider.ts", mode="signatures")  # durable model calls
 ctx_read(path="packages/core/src/durable-input-controller.ts", mode="signatures") # input admission
+ctx_read(path="packages/core/src/durable-runtime-orchestrator.ts", mode="signatures") # detachable durable orchestration
 ctx_read(path="packages/core/src/pi-headless.ts",   mode="signatures")   # drivePi
 ```
 

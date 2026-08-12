@@ -227,7 +227,13 @@ export type ToolResultContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string };
 
-export type ToolResult =
+/** Extra model context admitted after the ordinary tool answer. */
+export interface ToolContextMessage {
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type ToolResult = (
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string }
   /**
@@ -239,7 +245,11 @@ export type ToolResult =
    */
   | { type: 'content'; blocks: ToolResultContentBlock[] }
   | { type: 'error'; message: string }
-  | { type: 'suspend'; pendingId: string };
+  | { type: 'suspend'; pendingId: string }
+) & {
+  /** Full instructions or other context disclosed only after this tool executes. */
+  contextMessages?: ToolContextMessage[];
+};
 
 /** 텍스트 결과 헬퍼 — 기존 tool-helpers.ts의 text() 함수와 동일 역할 */
 export function textResult(text: string): ToolResult {

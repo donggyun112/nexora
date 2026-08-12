@@ -77,6 +77,7 @@ export class DurableToolExecutor implements ToolExecutor {
   private readonly renewLease?: () => Promise<number>;
 
   readonly get?: (name: string) => ToolDefinition | undefined;
+  readonly prepare?: ToolExecutor['prepare'];
   readonly withTools?: (tools: ToolDefinition[]) => ToolExecutor;
   readonly withContext?: (context: ToolContext) => ToolExecutor;
   readonly getContext?: () => ToolContext;
@@ -90,6 +91,7 @@ export class DurableToolExecutor implements ToolExecutor {
     this.renewLease = options.renewLease;
 
     if (this.inner.get) this.get = this.inner.get.bind(this.inner);
+    if (this.inner.prepare) this.prepare = this.inner.prepare.bind(this.inner);
     if (this.inner.getContext) this.getContext = this.inner.getContext.bind(this.inner);
     if (this.inner.withTools) {
       this.withTools = (tools) => this.rewrap(this.inner.withTools?.(tools) ?? this.inner);

@@ -146,6 +146,7 @@ export type {
   ToolLogger,
   ToolResult,
   ToolResultContentBlock,
+  ToolContextMessage,
   FileReadState,
 } from './tool.js';
 export { textResult, errorResult, contentResult, suspendResult, getToolPolicyGroups } from './tool.js';

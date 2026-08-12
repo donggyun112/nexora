@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { CoreContextLoader, currentRuntime } from '../loader.js';
 import { PersonaLoader } from '../persona.js';
-import { SkillLoader } from '../skills.js';
 import { TenantConfigStore } from '../tenant.js';
 
 let tmpDir: string;
@@ -44,50 +43,6 @@ describe('PersonaLoader', () => {
     const loader = new PersonaLoader({ root: tmpDir });
     expect(loader.load('dev', 'tenant-A')).toBe('tenant-A dev');
     expect(loader.load('dev', 'tenant-B')).toBe('default dev');
-  });
-});
-
-describe('SkillLoader', () => {
-  it('returns empty when no skills dir', () => {
-    const loader = new SkillLoader({ root: tmpDir });
-    expect(loader.list()).toEqual([]);
-    expect(loader.buildMenu()).toBe('');
-  });
-
-  it('parses frontmatter for name + description', () => {
-    setupTree();
-    fs.writeFileSync(
-      path.join(tmpDir, 'skills', 'jira-create.md'),
-      '---\nname: jira-create\ndescription: Create Jira tickets\n---\n\n# Body\n',
-    );
-    const loader = new SkillLoader({ root: tmpDir });
-    const list = loader.list();
-    expect(list).toEqual([{ name: 'jira-create', description: 'Create Jira tickets' }]);
-    const menu = loader.buildMenu();
-    expect(menu).toContain('Available Skills');
-    expect(menu).toContain('jira-create: Create Jira tickets');
-  });
-
-  it('tenant skills merge with defaults (override by name)', () => {
-    setupTree();
-    fs.writeFileSync(
-      path.join(tmpDir, 'skills', 'a.md'),
-      '---\nname: a\ndescription: default a\n---\n',
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, 'skills', 'b.md'),
-      '---\nname: b\ndescription: default b\n---\n',
-    );
-    fs.writeFileSync(
-      path.join(tmpDir, 'tenants', 'tenant-A', 'skills', 'a.md'),
-      '---\nname: a\ndescription: tenant a\n---\n',
-    );
-
-    const loader = new SkillLoader({ root: tmpDir });
-    const tenantList = loader.list('tenant-A');
-    expect(tenantList).toHaveLength(2);
-    expect(tenantList.find(s => s.name === 'a')?.description).toBe('tenant a');
-    expect(tenantList.find(s => s.name === 'b')?.description).toBe('default b');
   });
 });
 
@@ -157,7 +112,7 @@ describe('CoreContextLoader', () => {
     expect(ctx.systemPrompt).toContain('You are dev.');
     expect(ctx.systemPrompt).toContain('Tenant-A specific notes.');
     expect(ctx.systemPrompt).toContain('Today:');
-    expect(ctx.systemPrompt).toContain('lint');
+    expect(ctx.systemPrompt).not.toContain('lint');
     expect(ctx.tools).toEqual(['read']);
     expect(ctx.limits.model).toBe('claude-haiku-4-5');
     expect(ctx.runtime.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);

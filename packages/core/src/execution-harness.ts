@@ -524,6 +524,7 @@ function wrapToolExecutorWithSignal(inner: ToolExecutor, signal: AbortSignal): T
     wrapped.executeBatch = (calls, callerSignal) =>
       inner.executeBatch?.(calls, callerSignal ?? signal) ?? Promise.resolve([]);
   }
+  if (inner.prepare) wrapped.prepare = messages => inner.prepare?.(messages);
   // Pass-through optional helpers (for middleware that calls .get()).
   const innerWithExtras = inner as ToolExecutor & {
     get?: (name: string) => unknown;

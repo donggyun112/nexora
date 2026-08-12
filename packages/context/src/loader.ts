@@ -8,7 +8,8 @@
  *   2. persona — 에이전트 정체성
  *   3. tenant.extraContext — 테넌트 추가 컨텍스트
  *   4. runtime — 날짜, workdir, requester 등
- *   5. skills 메뉴
+ * Skills are disclosed by @dongkseo/skills through the single lazy `skill`
+ * tool and are intentionally absent from the system prompt.
  */
 
 import fs from 'node:fs';
@@ -21,11 +22,10 @@ import type {
 } from '@dongkseo/contracts';
 import { createTenantAgentScope } from '@dongkseo/contracts';
 import { PersonaLoader } from './persona.js';
-import { SkillLoader } from './skills.js';
 import { TenantConfigStore, DEFAULT_LIMITS } from './tenant.js';
 
 export interface ContextLoaderOptions {
-  /** 컨텍스트 루트 디렉토리 (personas/, skills/, tenants/, common.md 포함) */
+  /** 컨텍스트 루트 디렉토리 (personas/, tenants/, common.md 포함) */
   root: string;
   /** 기본 도구 목록 (테넌트별 화이트리스트가 없으면 사용) */
   defaultTools?: string[];
@@ -43,7 +43,6 @@ export interface ContextLoaderOptions {
 export class CoreContextLoader implements IContextLoader {
   private readonly root: string;
   private readonly personas: PersonaLoader;
-  private readonly skills: SkillLoader;
   private readonly tenants: TenantConfigStore;
   private readonly defaultTools: string[];
   private readonly workdirBase: string;
@@ -58,7 +57,6 @@ export class CoreContextLoader implements IContextLoader {
       cache: this.cacheEnabled,
       resolveDefaultPath: options.resolvePersonaPath,
     });
-    this.skills = new SkillLoader({ root: this.root, cache: this.cacheEnabled });
     this.tenants = new TenantConfigStore({ root: this.root, cache: this.cacheEnabled });
     this.defaultTools = options.defaultTools ?? [];
     this.workdirBase = options.workdirBase ?? process.cwd();
@@ -72,7 +70,6 @@ export class CoreContextLoader implements IContextLoader {
     const scope = overrides?.scope ?? createTenantAgentScope(tenantId, agentName);
     const persona = this.personas.load(agentName, tenantId);
     const tenantConfig = this.tenants.load(tenantId);
-    const skillsMenu = this.skills.buildMenu(tenantId);
     const common = this.loadCommon();
 
     const limits: ResourceLimits = {
@@ -94,7 +91,6 @@ export class CoreContextLoader implements IContextLoader {
       persona,
       extraContext: tenantConfig.extraContext,
       runtime,
-      skillsMenu,
       override: overrides?.systemPrompt,
     });
 
@@ -114,7 +110,6 @@ export class CoreContextLoader implements IContextLoader {
     persona: string;
     extraContext?: string;
     runtime: RuntimeContext;
-    skillsMenu: string;
     override?: string;
   }): string {
     if (args.override) return args.override;
@@ -131,7 +126,6 @@ export class CoreContextLoader implements IContextLoader {
       args.persona,
       args.extraContext ?? '',
       runtimeBlock,
-      args.skillsMenu,
     ].filter(p => p && p.trim().length > 0);
 
     return parts.join('\n\n---\n\n');
@@ -148,7 +142,6 @@ export class CoreContextLoader implements IContextLoader {
   clearCache(): void {
     this.commonContext = null;
     this.personas.clearCache();
-    this.skills.clearCache();
     this.tenants.clearCache();
   }
 }

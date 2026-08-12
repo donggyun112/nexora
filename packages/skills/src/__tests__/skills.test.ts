@@ -1,15 +1,21 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type {
+  LLMMessage,
+  ToolDefinition,
+  ToolDefinitionSummary,
+  ToolExecutor,
+  ToolResult,
+} from '@dongkseo/contracts';
 import {
-  parseSkillFile,
-  loadSkillsFromDir,
-  loadSkills,
-  defaultSkillSources,
-  buildSkillMenu,
+  DirectorySkillSource,
+  Skill,
   SkillRegistry,
-  SkillCreator,
+  SkillTools,
+  type SkillMetadata,
+  type SkillSource,
 } from '../index.js';
 
 let tmpDir: string;
@@ -22,309 +28,235 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function writeSkillDir(
-  root: string,
-  dirName: string,
-  frontmatter: string,
-  body = 'body',
-): string {
-  const skillDir = path.join(root, dirName);
-  fs.mkdirSync(skillDir, { recursive: true });
-  const filePath = path.join(skillDir, 'SKILL.md');
-  fs.writeFileSync(filePath, `---\n${frontmatter}\n---\n\n${body}`, 'utf-8');
-  return filePath;
+function writeSkill(root: string, name: string, description: string, body: string): string {
+  const directory = path.join(root, name);
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, 'SKILL.md');
+  fs.writeFileSync(file, [
+    '---',
+    `name: ${name}`,
+    `description: ${description}`,
+    'allowed-tools: [read, Bash]',
+    'paths: [scripts/run.ts]',
+    '---',
+    '',
+    body,
+  ].join('\n'));
+  return file;
 }
 
-describe('parseSkillFile', () => {
-  it('parses a valid SKILL.md', () => {
-    const content = `---
-name: test-skill
-description: A test skill
-tags: [test, example]
-version: 2
-author: agent
----
+class StoredSkillSource implements SkillSource {
+  readonly loads: string[] = [];
 
-# Test Skill
+  constructor(readonly skill: Skill, readonly revision = '42') {}
 
-## Steps
-1. Do something
-2. Do something else`;
+  async list(): Promise<readonly SkillMetadata[]> {
+    return [{
+      name: this.skill.name,
+      description: this.skill.description,
+      revision: this.revision,
+    }];
+  }
 
-    const skill = parseSkillFile(content, '/test/SKILL.md');
-    expect(skill.meta.name).toBe('test-skill');
-    expect(skill.meta.description).toBe('A test skill');
-    expect(skill.meta.tags).toEqual(['test', 'example']);
-    expect(skill.meta.version).toBe(2);
-    expect(skill.meta.author).toBe('agent');
-    expect(skill.body).toContain('# Test Skill');
-    expect(skill.source).toBe('/test/SKILL.md');
+  async load(name: string): Promise<Skill | null> {
+    this.loads.push(name);
+    return name === this.skill.name ? this.skill : null;
+  }
+}
+
+class EmptyTools implements ToolExecutor {
+  readonly calls: string[] = [];
+
+  list(): ToolDefinitionSummary[] { return []; }
+
+  async execute(name: string): Promise<unknown> {
+    this.calls.push(name);
+    return { type: 'text', text: `ran ${name}` } satisfies ToolResult;
+  }
+}
+
+class RebindableTools implements ToolExecutor {
+  constructor(readonly definitions: ToolDefinition[] = []) {}
+
+  list(): ToolDefinitionSummary[] {
+    return this.definitions.map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    }));
+  }
+
+  get(name: string): ToolDefinition | undefined {
+    return this.definitions.find(definition => definition.name === name);
+  }
+
+  async execute(name: string): Promise<unknown> {
+    return { type: 'text', text: `ran ${name}` } satisfies ToolResult;
+  }
+
+  withTools(tools: ToolDefinition[]): ToolExecutor {
+    return new RebindableTools(tools);
+  }
+}
+
+describe('DirectorySkillSource', () => {
+  it('discovers metadata and loads the body only by exact name', async () => {
+    writeSkill(tmpDir, 'review', 'Review a change', 'SECRET ${ARGUMENTS}');
+    fs.writeFileSync(path.join(tmpDir, 'not-a-skill.md'), 'ignored');
+    const source = new DirectorySkillSource(tmpDir);
+
+    const listed = await source.list();
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ name: 'review', description: 'Review a change' });
+    expect(listed[0].revision).toMatch(/^\d+$/);
+    expect(JSON.stringify(listed)).not.toContain('SECRET');
+
+    const skill = await source.load('review');
+    expect(skill?.body).toBe('SECRET ${ARGUMENTS}');
+    expect(skill?.allowedTools).toEqual(['read', 'Bash']);
+    expect(skill?.paths).toEqual(['scripts/run.ts']);
+    expect(skill?.origin).toMatch(/^file:/);
+    expect(skill?.context('PR-42')).toContain('SECRET PR-42');
+    expect(skill?.context('PR-42')).toContain(`Resource base for this skill: ${path.join(tmpDir, 'review')}`);
   });
 
-  it('throws on missing frontmatter', () => {
-    expect(() => parseSkillFile('# No frontmatter', '/test')).toThrow(/no frontmatter/);
+  it('ignores symlinked skill roots', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nexora-outside-skill-'));
+    try {
+      writeSkill(outside, 'escaped', 'Must not escape', 'secret');
+      fs.symlinkSync(path.join(outside, 'escaped'), path.join(tmpDir, 'link'));
+      expect(await new DirectorySkillSource(tmpDir).list()).toEqual([]);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 
-  it('throws on missing name', () => {
-    const content = `---
-description: no name
----
-
-body`;
-    expect(() => parseSkillFile(content, '/test')).toThrow(/missing required field "name"/);
+  it('returns null when a discovered skill disappears before load', async () => {
+    const file = writeSkill(tmpDir, 'review', 'Review', 'body');
+    const source = new DirectorySkillSource(tmpDir);
+    await source.list();
+    fs.rmSync(file);
+    expect(await source.load('review')).toBeNull();
   });
 
-  it('parses allowed-tools and platforms', () => {
-    const content = `---
-name: with-tools
-description: Has tools
-tags: [test]
-allowed-tools: [read, grep, exec]
-platforms: [macos, linux]
-version: 1
-author: system
----
+  it('does not treat delimiter-like body text as closing frontmatter', async () => {
+    const directory = path.join(tmpDir, 'broken');
+    fs.mkdirSync(directory);
+    fs.writeFileSync(path.join(directory, 'SKILL.md'), [
+      '---',
+      'name: broken',
+      'description: malformed',
+      '---not-a-delimiter',
+      'SECRET',
+    ].join('\n'));
 
-body`;
-
-    const skill = parseSkillFile(content, '/test');
-    expect(skill.meta.allowedTools).toEqual(['read', 'grep', 'exec']);
-    expect(skill.meta.platforms).toEqual(['macos', 'linux']);
-  });
-
-  it('parses metadata dot notation and conditional activation fields', () => {
-    const content = `---
-name: conditional
-description: Has metadata
-tags: [test]
-metadata.owner: platform
-metadata.retry.count: 3
-metadata.flags: [safe, fast]
-requires-toolsets: [mcp]
-fallback-for-toolsets: [browser]
-requires-env: [HOME]
-requires-bins: [node]
-always: true
-version: 1
-author: system
----
-
-body`;
-
-    const skill = parseSkillFile(content, '/test');
-    expect(skill.meta.metadata).toEqual({
-      owner: 'platform',
-      retry: { count: 3 },
-      flags: ['safe', 'fast'],
-    });
-    expect(skill.meta.requires_toolsets).toEqual(['mcp']);
-    expect(skill.meta.fallback_for_toolsets).toEqual(['browser']);
-    expect(skill.meta.requires_env).toEqual(['HOME']);
-    expect(skill.meta.requires_bins).toEqual(['node']);
-    expect(skill.meta.always).toBe(true);
-  });
-});
-
-describe('loadSkillsFromDir', () => {
-  it('loads skills from subdirectories with SKILL.md', async () => {
-    const skillDir = path.join(tmpDir, 'my-skill');
-    fs.mkdirSync(skillDir);
-    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---
-name: my-skill
-description: From dir
-tags: [test]
-version: 1
-author: system
----
-
-body`, 'utf-8');
-
-    const skills = await loadSkillsFromDir(tmpDir);
-    expect(skills).toHaveLength(1);
-    expect(skills[0].meta.name).toBe('my-skill');
-  });
-
-  it('loads flat .md files as skills', async () => {
-    fs.writeFileSync(path.join(tmpDir, 'flat.md'), `---
-name: flat-skill
-description: Flat file
-tags: []
-version: 1
-author: system
----
-
-body`, 'utf-8');
-
-    const skills = await loadSkillsFromDir(tmpDir);
-    expect(skills).toHaveLength(1);
-    expect(skills[0].meta.name).toBe('flat-skill');
-  });
-
-  it('returns empty for non-existent directory', async () => {
-    const skills = await loadSkillsFromDir('/nonexistent');
-    expect(skills).toEqual([]);
-  });
-});
-
-describe('loadSkills (multi-source)', () => {
-  it('later directories override earlier by name', async () => {
-    const dir1 = path.join(tmpDir, 'base');
-    const dir2 = path.join(tmpDir, 'custom');
-    fs.mkdirSync(dir1);
-    fs.mkdirSync(dir2);
-
-    fs.writeFileSync(path.join(dir1, 'skill.md'), `---
-name: shared
-description: v1
-tags: []
-version: 1
-author: system
----
-v1 body`, 'utf-8');
-
-    fs.writeFileSync(path.join(dir2, 'skill.md'), `---
-name: shared
-description: v2
-tags: []
-version: 2
-author: agent
----
-v2 body`, 'utf-8');
-
-    const skills = await loadSkills(dir1, dir2);
-    expect(skills).toHaveLength(1);
-    expect(skills[0].meta.description).toBe('v2');
-  });
-});
-
-describe('defaultSkillSources', () => {
-  it('returns user and project skill directories without hidden package sources', () => {
-    expect(defaultSkillSources(tmpDir)).toEqual([
-      path.join(os.homedir(), '.nexora', 'skills'),
-      path.join(tmpDir, '.nexora', 'skills'),
-      path.join(tmpDir, 'skills'),
-    ]);
-  });
-});
-
-describe('buildSkillMenu', () => {
-  it('applies loader eligibility rules for aliases, fallbacks, and binaries', () => {
-    const skillsDir = path.join(tmpDir, 'menu-skills');
-
-    writeSkillDir(skillsDir, 'mac', `name: macos-only
-description: macOS alias skill
-tags: [platform]
-platforms: [macos]
-version: 1
-author: system`);
-
-    writeSkillDir(skillsDir, 'fallback', `name: fallback-only
-description: fallback skill
-tags: [fallback]
-fallback-for-toolsets: [mcp]
-version: 1
-author: system`);
-
-    writeSkillDir(skillsDir, 'missing-bin', `name: missing-bin
-description: missing binary skill
-tags: [bin]
-requires-bins: [definitely-not-a-real-nexora-bin]
-version: 1
-author: system`);
-
-    const withMcp = buildSkillMenu({
-      agentSkillsDir: skillsDir,
-      filter: {
-        platform: 'darwin',
-        availableToolsets: new Set(['mcp']),
-      },
-      cacheScope: 'with-mcp',
-    });
-    expect(withMcp).toContain('macos-only');
-    expect(withMcp).not.toContain('fallback-only');
-    expect(withMcp).not.toContain('missing-bin');
-
-    const withoutMcp = buildSkillMenu({
-      agentSkillsDir: skillsDir,
-      filter: {
-        platform: 'darwin',
-        availableToolsets: new Set(),
-      },
-      cacheScope: 'without-mcp',
-    });
-    expect(withoutMcp).toContain('fallback-only');
-    expect(withoutMcp).not.toContain('missing-bin');
+    expect(await new DirectorySkillSource(tmpDir).list()).toEqual([]);
   });
 });
 
 describe('SkillRegistry', () => {
-  it('registers and retrieves skills', () => {
-    const registry = new SkillRegistry();
-    const skill = parseSkillFile(`---
-name: test
-description: Test skill
-tags: [test]
-version: 1
-author: system
----
-body`, '/test');
+  it('lets a later source override an earlier source', async () => {
+    const user = new StoredSkillSource(new Skill('review', 'user version', 'old'));
+    const project = new StoredSkillSource(new Skill('review', 'project version', 'new'));
+    const registry = new SkillRegistry([user, project]);
 
-    registry.register(skill);
-    expect(registry.get('test')).toBe(skill);
-    expect(registry.list()).toHaveLength(1);
+    expect(await registry.load('review')).toMatchObject({ body: 'new' });
+    expect(user.loads).toEqual([]);
+    expect(project.loads).toEqual(['review']);
   });
 
-  it('searches by keyword', () => {
-    const registry = new SkillRegistry();
-    registry.registerAll([
-      parseSkillFile(`---\nname: code-review\ndescription: Review code quality\ntags: [code, review]\nversion: 1\nauthor: system\n---\nbody`, '/a'),
-      parseSkillFile(`---\nname: debugging\ndescription: Debug and fix bugs\ntags: [debug, fix]\nversion: 1\nauthor: system\n---\nbody`, '/b'),
-    ]);
+  it('does not load source bodies while building the catalog', async () => {
+    const source = new StoredSkillSource(
+      new Skill('review', 'Review a change', 'SECRET FULL PROCEDURE'),
+    );
+    const catalog = await new SkillRegistry([source]).catalog();
 
-    const results = registry.search('review code');
-    expect(results.length).toBeGreaterThan(0);
-    expect(results[0].skill.meta.name).toBe('code-review');
-    expect(results[0].score).toBeGreaterThan(0.3);
+    expect(catalog).toContain('review');
+    expect(catalog).toContain('Review a change');
+    expect(catalog).not.toContain('SECRET FULL PROCEDURE');
+    expect(source.loads).toEqual([]);
   });
 
-  it('formatCatalogForPrompt generates XML catalog', () => {
-    const registry = new SkillRegistry();
-    registry.register(parseSkillFile(`---\nname: test\ndescription: Test\ntags: []\nversion: 1\nauthor: system\n---\nbody`, '/test'));
+  it('bounds large catalogs without loading bodies', async () => {
+    const sources = Array.from({ length: 50 }, (_, index) =>
+      new StoredSkillSource(new Skill(`skill-${index}`, 'x'.repeat(200), `secret-${index}`)));
+    const catalog = await new SkillRegistry(sources, { catalogCharBudget: 300 }).catalog();
 
-    const catalog = registry.formatCatalogForPrompt(registry.list() as any);
-    expect(catalog).toContain('<available_skills>');
-    expect(catalog).toContain('<name>test</name>');
-    expect(catalog).toContain('<location>/test</location>');
+    expect(catalog.length).toBeLessThanOrEqual(300);
+    expect(catalog).toContain('more');
+    expect(sources.every(source => source.loads.length === 0)).toBe(true);
   });
 
-  it('filters by tag', () => {
-    const registry = new SkillRegistry();
-    registry.registerAll([
-      parseSkillFile(`---\nname: a\ndescription: A\ntags: [code]\nversion: 1\nauthor: system\n---\nbody`, '/a'),
-      parseSkillFile(`---\nname: b\ndescription: B\ntags: [debug]\nversion: 1\nauthor: system\n---\nbody`, '/b'),
-    ]);
-
-    expect(registry.filterByTag('code')).toHaveLength(1);
-    expect(registry.filterByTag('code')[0].meta.name).toBe('a');
+  it('refreshes metadata explicitly and keeps snapshot I/O-free', async () => {
+    writeSkill(tmpDir, 'a', 'A', 'body a');
+    const registry = new SkillRegistry([tmpDir]);
+    expect((await registry.list()).map(skill => skill.name)).toEqual(['a']);
+    writeSkill(tmpDir, 'b', 'B', 'body b');
+    expect(registry.snapshot().map(skill => skill.name)).toEqual(['a']);
+    expect((await registry.refresh()).map(skill => skill.name)).toEqual(['a', 'b']);
   });
 });
 
-describe('SkillCreator', () => {
-  it('creates a SKILL.md file', async () => {
-    const creator = new SkillCreator({ outputDir: tmpDir });
-    const skill = await creator.create({
-      taskDescription: 'Deploy to production',
-      steps: ['Build the project', 'Run tests', 'Push to registry'],
-      toolsUsed: ['exec'],
-      tags: ['deploy', 'ops'],
+describe('SkillTools', () => {
+  it('owns the catalog once in the skill schema and loads context on demand', async () => {
+    const source = new StoredSkillSource(
+      new Skill('review', 'Review without body disclosure', 'FOLLOW THIS PROCEDURE'),
+    );
+    const tools = new SkillTools(new EmptyTools(), new SkillRegistry([source]));
+
+    await tools.prepare?.([] as LLMMessage[]);
+    const definition = tools.list().find(tool => tool.name === 'skill');
+    expect(definition?.description.match(/Review without body disclosure/g)).toHaveLength(1);
+    expect(definition?.description).not.toContain('FOLLOW THIS PROCEDURE');
+    expect(source.loads).toEqual([]);
+
+    const result = await tools.execute('skill', 's1', { skill: 'review', args: 'PR-42' }) as ToolResult;
+    expect(result).toMatchObject({ type: 'text', text: 'Loaded skill review.' });
+    expect(result.contextMessages?.[0].content).toContain('FOLLOW THIS PROCEDURE');
+    expect(result.contextMessages?.[0].content).toContain('Arguments: PR-42');
+    expect(result.contextMessages?.[0].metadata).toMatchObject({
+      kind: 'skill',
+      name: 'review',
     });
+    expect(source.loads).toEqual(['review']);
+  });
 
-    expect(skill.meta.name).toBe('deploy-to-production');
-    expect(skill.meta.author).toBe('agent');
-    expect(skill.body).toContain('Deploy to production');
-    expect(skill.body).toContain('Build the project');
+  it('delegates ordinary tools and rejects invalid skill arguments', async () => {
+    const inner = new EmptyTools();
+    const tools = new SkillTools(inner, new SkillRegistry([]));
 
-    // Verify file exists
-    expect(fs.existsSync(skill.source)).toBe(true);
+    expect(await tools.execute('read', 'r1', {})).toMatchObject({ type: 'text' });
+    expect(inner.calls).toEqual(['read']);
+    expect(await tools.execute('skill', 's1', {})).toMatchObject({ type: 'error' });
+    expect(await tools.execute('skill', 's2', { skill: 'missing' })).toMatchObject({
+      type: 'error',
+      message: 'unknown skill: missing',
+    });
+  });
+
+  it('rejects wrapping an executor that already exposes skill', () => {
+    const inner = new EmptyTools();
+    inner.list = () => [{ name: 'skill', description: '', parameters: {} }];
+    expect(() => new SkillTools(inner, new SkillRegistry([]))).toThrow(
+      "already defines 'skill'",
+    );
+  });
+
+  it('survives policy rebinding without duplicating its synthetic tool', () => {
+    const tools = new SkillTools(new RebindableTools(), new SkillRegistry([]));
+    const skill = tools.get('skill')!;
+    const read: ToolDefinition = {
+      name: 'read',
+      description: 'Read a file',
+      parameters: {},
+      execute: async () => ({ type: 'text', text: 'ok' }),
+    };
+
+    const allowed = tools.withTools?.([read, skill]);
+    expect(allowed?.list().map(tool => tool.name)).toEqual(['read', 'skill']);
+
+    const denied = tools.withTools?.([read]);
+    expect(denied?.list().map(tool => tool.name)).toEqual(['read']);
   });
 });

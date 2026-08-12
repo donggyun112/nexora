@@ -202,6 +202,8 @@ export interface LLMProvider {
 export interface LLMMessage {
   /** Stable ingress id when this message came through RuntimeInputAdmission. */
   id?: string;
+  /** Runtime-only provenance for context injected by tools such as a loaded skill. */
+  metadata?: Record<string, unknown>;
   role: 'system' | 'user' | 'assistant' | 'tool_result';
   content: string | LLMContentBlock[];
 }
@@ -273,6 +275,12 @@ export interface LLMResponse {
 }
 
 export interface ToolExecutor {
+  /**
+   * Refresh dynamic tool discovery before a model request. Implementations must
+   * not load deferred bodies here; only schemas/discovery metadata may change.
+   */
+  prepare?(messages: LLMMessage[]): void | Promise<void>;
+
   /**
    * 도구 실행. signal이 주어지면 도중 취소 시 즉시 중단해야 한다.
    * (단, 이미 시작된 도구는 자체적으로 signal을 honor해야 실제 종료된다.)

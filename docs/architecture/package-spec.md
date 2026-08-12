@@ -128,7 +128,7 @@ tools/
 |------|-----------|
 | ContextLoader | system-prompt.ts buildSystemPrompt() |
 | PersonaLoader | orca/personas/*.md |
-| SkillLoader | orca/skills/*.md + Deep Agents skills.py |
+| DirectorySkillSource / SkillRegistry / SkillTools | Python Nexora progressive disclosure |
 | KnowledgeLoader | knowledge.tool.ts + AGENTS.md |
 | TenantConfigResolver | jira-guilds.ts → DB 기반으로 전환 |
 

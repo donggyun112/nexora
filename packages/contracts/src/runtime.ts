@@ -34,7 +34,6 @@ export interface ReactRuntimeSpec {
   kind: 'react';
   architecture?: string;
   persona?: string;
-  mainSkill?: string[];
   config?: Record<string, unknown>;
 }
 

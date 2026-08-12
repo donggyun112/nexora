@@ -17,7 +17,7 @@
 | 도구 레지스트리·내장 도구·MCP·delegate/handraise | `@dongkseo/tools` | `ToolRegistry`, `ToolsetRegistry`, delegate/handraise 도구 | `ctx_read("packages/tools/src/index.ts", mode="map")` |
 | 원격/클라우드 워크스페이스 격리(wire 클라이언트) | `@dongkseo/sandbox-remote` | `RemoteSandboxClient` (SandboxClient/WorkspaceProvider를 HTTP wire로 구현; 로컬↔원격 교체) | `ctx_read("packages/sandbox-remote/src/index.ts", mode="map")` |
 | sandbox wire 프로토콜 참조 서버 (+ 주입식 OS-격리 backend·세션 lifecycle·네트워크 사이드카) | `@dongkseo/sandbox-server` | `createSandboxServer` (주입식 SandboxClient를 HTTP로 노출; exec/fs/stat/readdir/persist/hydrate/reattach), `OverlayRootfsSandboxClient`+`buildBwrapArgs`(bwrap/overlay), `GvisorSandboxClient`+`buildOciConfig`(runsc/gVisor), `SessionRegistry`, `TarArchiveStore`/`DurableDirStore`, `startEgressProxy`, `startAuthInjectingGateway` | `ctx_read("packages/sandbox-server/src/index.ts", mode="map")` |
-| 자가학습 스킬(SKILL.md) | `@dongkseo/skills` | `parseSkillFile`, `loadSkills`, `SkillRegistry`, `SkillCreator`, `buildSkillMenu` | `ctx_read("packages/skills/src/index.ts", mode="map")` |
+| 지연 로딩 스킬(SKILL.md) | `@dongkseo/skills` | `DirectorySkillSource`, `SkillRegistry`, `SkillTools` | `ctx_read("packages/skills/src/index.ts", mode="map")` |
 | 멀티에이전트 대화(턴테이킹) | `@dongkseo/conversation` | `ConversationRoom`, `TurnManager` | `ctx_read("packages/conversation/src/index.ts", mode="map")` |
 | 영속 store 번들(설정→백엔드) | `@dongkseo/store` | `createStoreProvider`, `StoreProvider`, `StoreConfig`, `EffectLedger`, `RuntimeInputQueue` | `ctx_read("packages/store/src/index.ts", mode="map")` |
 | 개발용 JSON 파일 백엔드 | `@dongkseo/store-json` | JSON store 구현, `EffectLedgerJson` | `ctx_read("packages/store-json/src/index.ts", mode="map")` |
@@ -96,7 +96,7 @@ gateway        -> adapters, contracts
 registry       -> contracts
 cli            -> adapters, architectures, context, contracts, core, gateway, registry, tools, transport
 ```
-런타임 동적/optional 간선(정적 deps에 없음): `store ⇢ store-json|store-pg`(동적 import), `otel ⇢ transport`(래핑), `tools ⇢ skills`(`skill_reload` 실행 시 optional peer 로드). 런타임 호스트 요구(패키지 의존성 아님): `sandbox-server`의 `OverlayRootfsSandboxClient`는 `bwrap` 서브프로세스를 spawn하고 커널 기능을 요구하며, egress/auth 사이드카는 unix 소켓을 연다.
+런타임 동적/optional 간선(정적 deps에 없음): `store ⇢ store-json|store-pg`(동적 import), `otel ⇢ transport`(래핑). 런타임 호스트 요구(패키지 의존성 아님): `sandbox-server`의 `OverlayRootfsSandboxClient`는 `bwrap` 서브프로세스를 spawn하고 커널 기능을 요구하며, egress/auth 사이드카는 unix 소켓을 연다.
 
 ## 계층 요청 흐름
 

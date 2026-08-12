@@ -192,9 +192,8 @@ export interface DelegateToolOptions {
  * Default tools blocked for delegated child agents.
  * - delegate: prevent recursive delegation chains
  * - handraise: children shouldn't interact with humans directly
- * - skill-manage: children shouldn't create/modify skills
  */
-const DEFAULT_BLOCKED_TOOLS_FOR_CHILD = ['delegate', 'handraise', 'skill-manage'];
+const DEFAULT_BLOCKED_TOOLS_FOR_CHILD = ['delegate', 'handraise'];
 
 interface DelegateTask {
   capability: string;

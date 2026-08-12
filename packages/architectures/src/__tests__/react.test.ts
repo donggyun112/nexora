@@ -81,6 +81,35 @@ describe('ReactArchitecture', () => {
     }
   });
 
+  it('prepares dynamic tools and injects tool context only after invocation', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 's1', name: 'skill', arguments: { skill: 'review' } }] },
+      { text: 'followed skill' },
+    ]);
+    const services = makeServices(llm, new Map([
+      ['skill', async () => ({
+        type: 'text' as const,
+        text: 'Loaded skill review.',
+        contextMessages: [{
+          content: 'FOLLOW THIS PROCEDURE',
+          metadata: { kind: 'skill', name: 'review' },
+        }],
+      })],
+    ])) as unknown as RuntimeServices;
+    const prepared: LLMMessage[][] = [];
+    services.tools.prepare = async messages => { prepared.push(structuredClone(messages)); };
+
+    await collect(createReactArchitecture().loop(services, { prompt: 'review this' }));
+
+    expect(prepared).toHaveLength(2);
+    expect(JSON.stringify(prepared[0])).not.toContain('FOLLOW THIS PROCEDURE');
+    expect(prepared[1]).toContainEqual({
+      role: 'user',
+      content: 'FOLLOW THIS PROCEDURE',
+      metadata: { kind: 'skill', name: 'review' },
+    });
+  });
+
   it('passes image tool results back as multimodal context', async () => {
     const llm = new MockLLMProvider([
       { text: '', toolCalls: [{ id: 't1', name: 'recall_image', arguments: { image_id: 'img_1_0.png' } }] },

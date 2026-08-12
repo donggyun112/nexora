@@ -20,16 +20,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },
-  "peerDependencies": {
-    "@dongkseo/skills": "^0.1.4"
-  },
-  "peerDependenciesMeta": {
-    "@dongkseo/skills": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@dongkseo/skills": "workspace:^",
     "@types/node": "^26.1.2",
     "typescript": "^7.0.2"
   },

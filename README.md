@@ -112,14 +112,14 @@ Adapter (HTTP / Discord / Slack)
 | `@dongkseo/contracts` | Shared interfaces, ID helpers, budget, goal, registry contracts |
 | `@dongkseo/core` | AgentRunner, LLM providers, ToolExecutor, Compaction, Middleware, Bootstrap, Schema, Lint, Budget, ExtensionLoader |
 | `@dongkseo/transport` | LocalTransport, RedisTransport, RedisStreamsTransport, InMemoryDurableTransport, TracingTransport, DLQTransport |
-| `@dongkseo/context` | PersonaLoader, SkillLoader, TenantConfigStore, CoreContextLoader |
+| `@dongkseo/context` | PersonaLoader, TenantConfigStore, CoreContextLoader |
 | `@dongkseo/store` / `@dongkseo/store-json` | 6-store abstraction + JSON file implementations |
 | `@dongkseo/store-pg` | PostgreSQL production store (all 6 stores + session tree + auto-migration) |
 | `@dongkseo/orchestrator` | WorkflowEngine (checkpoint/resume) + CronScheduler |
 | `@dongkseo/fleet` | Worker registry, capability matching, dispatch, broadcast/fan-out, HTTP worker invoker |
 | `@dongkseo/architectures` | ReAct |
 | `@dongkseo/tools` | ToolRegistry + ToolsetRegistry + 9 builtins + MCP bridge + handraise + delegate |
-| `@dongkseo/skills` | Self-learning skills system (SKILL.md format, SkillLoader, SkillRegistry, SkillCreator) |
+| `@dongkseo/skills` | Metadata-first SkillSource/Registry + lazy `skill` tool |
 | `@dongkseo/conversation` | ConversationRoom, TurnManager (turn-taking protocol) |
 | `@dongkseo/otel` | OTelTransport (W3C TraceContext), agent span middleware |
 | `@dongkseo/adapters` | HttpAdapter, DiscordAdapter, SlackAdapter, PaperclipAdapter |

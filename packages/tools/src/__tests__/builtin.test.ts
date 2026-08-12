@@ -12,10 +12,8 @@ import {
   createKnowledgeTool,
   createWebSearchTool,
   createImageSearchTool,
-  createSkillReloadTool,
 } from '../builtin/index.js';
 import type { ToolContext, KnowledgeStore, ToolResult } from '@dongkseo/contracts';
-import { buildSkillMenu } from '@dongkseo/skills';
 
 // Minimal per-key serializing lock — local to the test so tools' test suite
 // doesn't depend on @dongkseo/core. KeyedSerializer's own semantics are unit-
@@ -735,44 +733,6 @@ describe('knowledge tool', () => {
     }, ctx);
 
     expect(namespaces).toEqual(['tenant-1:helpdesk-agent']);
-  });
-});
-
-describe('skill_reload tool', () => {
-  function writeSkill(root: string, dirName: string, name: string, description: string): void {
-    const skillDir = path.join(root, dirName);
-    fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(skillDir, 'SKILL.md'),
-      `---\nname: ${name}\ndescription: ${description}\ntags: [test]\nversion: 1\nauthor: system\n---\n\nbody`,
-      'utf-8',
-    );
-  }
-
-  it('reports skills added and removed since the last menu build', async () => {
-    const skillsDir = path.join(tmpDir, 'skills');
-    fs.mkdirSync(skillsDir);
-    writeSkill(skillsDir, 'old', 'old-skill', 'Old skill');
-
-    buildSkillMenu({ agentSkillsDir: skillsDir });
-
-    fs.rmSync(path.join(skillsDir, 'old'), { recursive: true, force: true });
-    writeSkill(skillsDir, 'new', 'new-skill', 'New skill');
-
-    const tool = createSkillReloadTool({ agentSkillsDir: skillsDir });
-    const result = await tool.execute('reload-1', {}, makeContext(tmpDir));
-
-    expect(result.type).toBe('text');
-    if (result.type === 'text') {
-      const parsed = JSON.parse(result.text) as {
-        added: Array<{ name: string }>;
-        removed: Array<{ name: string }>;
-        total: number;
-      };
-      expect(parsed.added.map(s => s.name)).toEqual(['new-skill']);
-      expect(parsed.removed.map(s => s.name)).toEqual(['old-skill']);
-      expect(parsed.total).toBe(1);
-    }
   });
 });
 

@@ -226,7 +226,7 @@ defineCapability({
 
 defineAgent({
   name: 'in7-long-form-writer',
-  runtime: { kind: 'react', persona: '...', mainSkill: ['long-form-content'] },
+  runtime: { kind: 'react', persona: '...' },
   provides: ['marketing.long-form-content@v1'],
 });
 

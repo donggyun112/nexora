@@ -24,6 +24,7 @@ import { OrchestrationControlError } from '@dongkseo/contracts';
 import {
   executeToolCalls,
   absorbRuntimeInputs,
+  contextMessagesFromResult,
   formatResultForLLM,
   imageBlocksFromResult,
   isErrorResult,
@@ -116,6 +117,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         if (services.signal.aborted) return;
         // 직전 LLM/도구 실행 동안 주입된 steer 를 다음 LLM 호출 전에 합류.
         await absorbInputs();
+        await services.tools.prepare?.(history);
 
         let response: LLMResponse;
         try {
@@ -195,6 +197,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         // tool_result emit + history에 추가할 블록 생성
         const toolResultBlocks: ToolResultBlock[] = [];
         const toolImageMessages: LLMMessage[] = [];
+        const toolContextMessages: LLMMessage[] = [];
         let suspended: { pendingId: string; toolCallId: string } | null = null;
         for (const { tc, result, isError } of toolResults) {
           yield { type: 'tool_result', id: tc.id, name: tc.name, result, isError };
@@ -230,6 +233,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
               ],
             });
           }
+          toolContextMessages.push(...contextMessagesFromResult(result));
         }
 
         if (suspended) {
@@ -253,6 +257,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
           content: toolResultBlocks,
         });
         history.push(...toolImageMessages);
+        history.push(...toolContextMessages);
 
         // 한 턴 내부 history 프루닝(결정적) + 크로스턴 memory 컴팩션 + tool pair sanitization
         if (options.compaction) pruneLoopHistory(history, options.compaction);

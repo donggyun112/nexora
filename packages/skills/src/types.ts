@@ -1,77 +1,56 @@
-/**
- * Skill types — YAML frontmatter + Markdown body.
- *
- * Skills are procedural knowledge packages: "how to do X" expressed as
- * structured instructions an LLM can follow. Unlike tools (which are
- * executable functions), skills are injected into the system prompt or
- * user message as context.
- *
- * Format:
- * ```markdown
- * ---
- * name: code-review
- * description: Review code for quality, bugs, and security
- * tags: [code, review, quality]
- * trigger: "review this code"
- * version: 1
- * author: system | agent
- * ---
- *
- * # Code Review Skill
- *
- * ## Steps
- * 1. Read the file(s) to review
- * 2. Check for correctness issues
- * ...
- * ```
- */
-
-export interface SkillFrontmatter {
-  /** Unique skill name (kebab-case) */
+/** Metadata-only discovery result. Full instructions are deliberately absent. */
+export interface SkillMetadata {
   name: string;
-  /** One-line description for search/matching */
   description: string;
-  /** Tags for filtering and search */
-  tags: string[];
-  /** Optional trigger phrase — when user says this, suggest this skill */
-  trigger?: string;
-  /** Schema version (increment on breaking changes) */
-  version: number;
-  /** Who created: 'system' (builtin) or 'agent' (auto-created) */
-  author: 'system' | 'agent';
-  /** Tools this skill requires or is allowed to use */
-  allowedTools?: string[];
-  /** Platform constraints (e.g., ['macos', 'linux']) */
-  platforms?: string[];
-  /** Prerequisites (other skills or capabilities needed) */
-  prerequisites?: string[];
-  /** Arbitrary metadata. Nested objects use dot notation, e.g. metadata.owner: platform. */
-  metadata?: Record<string, unknown>;
-
-  // ─── Conditional activation (hermes pattern) ─────────────────────
-  /** Only activate when ALL of these toolsets are available */
-  requires_toolsets?: string[];
-  /** Activate as fallback when ANY of these toolsets are unavailable */
-  fallback_for_toolsets?: string[];
-  /** Required environment variables (openclaw pattern) */
-  requires_env?: string[];
-  /** Required binaries on PATH (openclaw pattern) */
-  requires_bins?: string[];
-  /** Always include regardless of filtering. Default: false */
-  always?: boolean;
+  revision?: string;
 }
 
-export interface Skill {
-  /** Parsed frontmatter */
-  meta: SkillFrontmatter;
-  /** Raw Markdown body (instructions for the LLM) */
-  body: string;
-  /** Source file path (for debugging/editing) */
-  source: string;
+export interface SkillOptions {
+  origin?: string;
+  resourceBase?: string;
+  allowedTools?: readonly string[];
+  paths?: readonly string[];
 }
 
-export interface SkillMatch {
-  skill: Skill;
-  /** 0.0–1.0 relevance score */
-  score: number;
+/** Full instructions loaded on demand from an arbitrary source. */
+export class Skill {
+  readonly origin?: string;
+  readonly resourceBase?: string;
+  readonly allowedTools: readonly string[];
+  readonly paths: readonly string[];
+
+  constructor(
+    readonly name: string,
+    readonly description: string,
+    readonly body: string,
+    options: SkillOptions = {},
+  ) {
+    this.origin = options.origin;
+    this.resourceBase = options.resourceBase;
+    this.allowedTools = [...(options.allowedTools ?? [])];
+    this.paths = [...(options.paths ?? [])];
+  }
+
+  /** Render the context disclosed after the skill tool is invoked. */
+  context(argumentsText = ''): string {
+    let body = this.body;
+    let prefix = '';
+    if (this.resourceBase) {
+      body = body
+        .replaceAll('${NEXORA_SKILL_ROOT}', this.resourceBase)
+        .replaceAll('${NEXORA_SKILL_DIR}', this.resourceBase);
+      prefix = `Resource base for this skill: ${this.resourceBase}\n\n`;
+    }
+    body = body
+      .replaceAll('${ARGUMENTS}', argumentsText)
+      .replaceAll('$ARGUMENTS', argumentsText);
+    const argumentBlock = argumentsText ? `\n\nArguments: ${argumentsText}` : '';
+    return `${prefix}${body}${argumentBlock}`;
+  }
+}
+
+/** Metadata-first store for directory, database, API, or package-backed skills. */
+export interface SkillSource {
+  list(): Promise<readonly SkillMetadata[]>;
+  load(name: string): Promise<Skill | null>;
 }

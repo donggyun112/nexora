@@ -51,6 +51,25 @@ export function toolTerminatesLoop(services: RuntimeServices, tc: ToolCall): boo
     : tool.terminatesLoop;
 }
 
+/** Full model context disclosed by a tool only after its ordinary answer. */
+export function contextMessagesFromResult(result: unknown): LLMMessage[] {
+  if (!result || typeof result !== 'object') return [];
+  const messages = (result as { contextMessages?: unknown }).contextMessages;
+  if (!Array.isArray(messages)) return [];
+  return messages.flatMap((message): LLMMessage[] => {
+    if (!message || typeof message !== 'object') return [];
+    const candidate = message as { content?: unknown; metadata?: unknown };
+    if (typeof candidate.content !== 'string') return [];
+    return [{
+      role: 'user',
+      content: candidate.content,
+      ...(candidate.metadata && typeof candidate.metadata === 'object'
+        ? { metadata: structuredClone(candidate.metadata as Record<string, unknown>) }
+        : {}),
+    }];
+  });
+}
+
 export async function executeToolCalls(
   services: RuntimeServices,
   toolCalls: ToolCall[],

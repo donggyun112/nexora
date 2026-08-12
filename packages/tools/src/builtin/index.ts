@@ -1,5 +1,5 @@
 /**
- * Builtin tools: file I/O + exec + knowledge + web/image search + handraise + delegate + skill_manage.
+ * Builtin tools: file I/O + exec + knowledge + web/image search + handraise + delegate.
  */
 
 export { createExecTool } from './exec.js';
@@ -65,12 +65,6 @@ export {
 
 export { monitoringToolDefinitions, registerMonitoringTools } from './monitoring-bundle.js';
 export type { MonitoringToolBundleOptions } from './monitoring-bundle.js';
-
-export { createSkillManageTool } from './skill-manage.js';
-export type { SkillManageToolOptions } from './skill-manage.js';
-
-export { createSkillReloadTool } from './skill-reload.js';
-export type { SkillReloadToolOptions } from './skill-reload.js';
 
 export { createTodoTool, TodoStore } from './todo.js';
 export type { TodoItem } from './todo.js';

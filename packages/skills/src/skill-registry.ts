@@ -1,158 +1,122 @@
-/**
- * SkillRegistry — search and filter skills by query, tags, or trigger.
- *
- * Provides keyword-based matching (no embeddings required) with
- * TF-IDF-like scoring. For semantic search, use with an embedding
- * provider (future: store-memory package).
- */
+/** Source-neutral skill registry with bounded metadata-only disclosure. */
 
-import type { Skill, SkillMatch } from './types.js';
+import { DirectorySkillSource } from './skill-loader.js';
+import type { Skill, SkillMetadata, SkillSource } from './types.js';
 
-function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+const DEFAULT_CATALOG_BUDGET = 8_000;
+const DESCRIPTION_LIMIT = 250;
+
+export interface SkillRegistryOptions {
+  catalogCharBudget?: number;
 }
 
+/** Later sources override earlier sources by exact skill name. */
 export class SkillRegistry {
-  private skills: Skill[] = [];
+  private readonly sources: readonly SkillSource[];
+  private readonly catalogCharBudget: number;
+  private metadata: Map<string, SkillMetadata> | null = null;
+  private owners = new Map<string, SkillSource>();
+  private refreshing: Promise<readonly SkillMetadata[]> | null = null;
 
-  /** Register a single skill. Replaces existing skill with same name. */
-  register(skill: Skill): void {
-    this.skills = this.skills.filter(s => s.meta.name !== skill.meta.name);
-    this.skills.push(skill);
+  constructor(
+    sources: readonly (SkillSource | string)[],
+    options: SkillRegistryOptions = {},
+  ) {
+    this.catalogCharBudget = options.catalogCharBudget ?? DEFAULT_CATALOG_BUDGET;
+    if (this.catalogCharBudget < 256) {
+      throw new Error('skill catalog budget must be at least 256 characters');
+    }
+    this.sources = sources.map(source =>
+      typeof source === 'string' ? new DirectorySkillSource(source) : source);
   }
 
-  /** Register multiple skills at once. */
-  registerAll(skills: Skill[]): void {
-    for (const skill of skills) this.register(skill);
+  async refresh(): Promise<readonly SkillMetadata[]> {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = this.refreshNow();
+    try {
+      return await this.refreshing;
+    } finally {
+      this.refreshing = null;
+    }
   }
 
-  /** Unregister a skill by name. */
-  unregister(name: string): void {
-    this.skills = this.skills.filter(s => s.meta.name !== name);
+  clear(): void {
+    this.metadata = null;
+    this.owners.clear();
   }
 
-  /** Get a skill by exact name. */
-  get(name: string): Skill | undefined {
-    return this.skills.find(s => s.meta.name === name);
+  async list(): Promise<readonly SkillMetadata[]> {
+    if (!this.metadata) await this.refresh();
+    return this.snapshot();
   }
 
-  /** List all registered skills. */
-  list(): readonly Skill[] {
-    return this.skills;
+  snapshot(): readonly SkillMetadata[] {
+    if (!this.metadata) return [];
+    return [...this.metadata.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  /** Filter skills by tag. */
-  filterByTag(tag: string): Skill[] {
-    return this.skills.filter(s => s.meta.tags.includes(tag));
+  async load(name: string): Promise<Skill | null> {
+    await this.list();
+    const owner = this.owners.get(name);
+    if (!owner) return null;
+    const skill = await owner.load(name);
+    if (skill && skill.name !== name) {
+      throw new Error(`skill source returned ${JSON.stringify(skill.name)} for ${JSON.stringify(name)}`);
+    }
+    return skill;
   }
 
-  /**
-   * Search skills by text query. Scores based on:
-   * - Exact name match → 1.0
-   * - Trigger phrase match → 0.9
-   * - Description word overlap → 0.3–0.7
-   * - Tag match → 0.5
-   * - Body keyword presence → 0.1–0.3
-   *
-   * Returns results sorted by score, descending.
-   */
-  search(query: string, limit = 5): SkillMatch[] {
-    const queryLower = query.toLowerCase();
-    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+  async catalog(): Promise<string> {
+    await this.list();
+    return this.catalogSnapshot();
+  }
 
-    const matches: SkillMatch[] = [];
+  catalogSnapshot(): string {
+    const skills = this.snapshot();
+    if (skills.length === 0) return '';
+    const head = '<available_skills>\n';
+    const tail = '\n</available_skills>';
+    const entries = skills.map(skill =>
+      `  - ${escapeHtml(skill.name)}: ${escapeHtml(skill.description.slice(0, DESCRIPTION_LIMIT))}`);
+    const full = head + entries.join('\n') + tail;
+    if (full.length <= this.catalogCharBudget) return full;
 
-    for (const skill of this.skills) {
-      let score = 0;
-      const { name, description, tags, trigger } = skill.meta;
+    const kept: string[] = [];
+    for (const skill of skills) {
+      const entry = `  - ${escapeHtml(skill.name)}`;
+      const remaining = skills.length - kept.length - 1;
+      const suffix = remaining > 0 ? `\n  ... ${remaining} more` : '';
+      if ((head + [...kept, entry].join('\n') + suffix + tail).length > this.catalogCharBudget) break;
+      kept.push(entry);
+    }
+    const omitted = skills.length - kept.length;
+    const suffix = omitted ? `\n  ... ${omitted} more` : '';
+    return head + kept.join('\n') + suffix + tail;
+  }
 
-      // Exact name match
-      if (name.toLowerCase() === queryLower) {
-        score = 1.0;
-      } else if (name.toLowerCase().includes(queryLower) || queryLower.includes(name.toLowerCase())) {
-        score = Math.max(score, 0.8);
-      }
-
-      // Trigger match
-      if (trigger) {
-        const triggerLower = trigger.toLowerCase();
-        if (triggerLower.includes(queryLower) || queryLower.includes(triggerLower)) {
-          score = Math.max(score, 0.9);
+  private async refreshNow(): Promise<readonly SkillMetadata[]> {
+    const found = new Map<string, SkillMetadata>();
+    const owners = new Map<string, SkillSource>();
+    for (const source of this.sources) {
+      for (const metadata of await source.list()) {
+        if (!NAME.test(metadata.name)) {
+          throw new Error(`invalid skill name: ${JSON.stringify(metadata.name)}`);
         }
-      }
-
-      // Tag match
-      for (const tag of tags) {
-        if (queryWords.some(w => tag.toLowerCase().includes(w))) {
-          score = Math.max(score, 0.5);
-        }
-      }
-
-      // Description word overlap
-      const descLower = description.toLowerCase();
-      let descHits = 0;
-      for (const word of queryWords) {
-        if (descLower.includes(word)) descHits++;
-      }
-      if (queryWords.length > 0) {
-        const descScore = 0.3 + 0.4 * (descHits / queryWords.length);
-        score = Math.max(score, descScore);
-      }
-
-      // Body keyword presence (lightweight — just check presence)
-      const bodyLower = skill.body.toLowerCase();
-      let bodyHits = 0;
-      for (const word of queryWords) {
-        if (bodyLower.includes(word)) bodyHits++;
-      }
-      if (queryWords.length > 0) {
-        const bodyScore = 0.1 + 0.2 * (bodyHits / queryWords.length);
-        score = Math.max(score, bodyScore);
-      }
-
-      if (score > 0.1) {
-        matches.push({ skill, score });
+        found.set(metadata.name, { ...metadata });
+        owners.set(metadata.name, source);
       }
     }
-
-    return matches
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+    this.metadata = found;
+    this.owners = owners;
+    return this.snapshot();
   }
+}
 
-  /**
-   * Format a skill for injection into the system prompt or user message.
-   * Uses XML tags following the Agent Skills standard for interoperability.
-   */
-  formatForPrompt(skill: Skill): string {
-    const safeName = escapeXml(skill.meta.name);
-    const safeBody = skill.body.replace(/<\/skill>/gi, '&lt;/skill&gt;');
-    return `<skill name="${safeName}">\n${safeBody}\n</skill>`;
-  }
-
-  /**
-   * Format skill catalog for system prompt injection.
-   * Progressive disclosure: shows name + description + source path.
-   * The agent uses the `read` tool to load the full skill body when needed.
-   */
-  formatCatalogForPrompt(skills: Skill[]): string {
-    if (skills.length === 0) return '';
-    const entries = skills.map(s =>
-      `  <skill>\n` +
-      `    <name>${escapeXml(s.meta.name)}</name>\n` +
-      `    <description>${escapeXml(s.meta.description)}</description>\n` +
-      `    <location>${escapeXml(s.source)}</location>\n` +
-      `  </skill>`
-    );
-    return `<available_skills>\n${entries.join('\n')}\n</available_skills>`;
-  }
-
-  /**
-   * Format multiple skills for full prompt injection (when loaded on-demand).
-   */
-  formatManyForPrompt(skills: Skill[]): string {
-    if (skills.length === 0) return '';
-    const formatted = skills.map(s => this.formatForPrompt(s));
-    return `<skills>\n${formatted.join('\n\n')}\n</skills>`;
-  }
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }

@@ -122,7 +122,7 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   'group:web': ['web-search', 'web-fetch'],
   'group:memory': ['knowledge'],
   'group:agent': ['delegate', 'handraise'],
-  'group:skills': ['skill-manage'],
+  'group:skills': ['skill'],
 } as const;
 
 /**

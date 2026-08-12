@@ -27,6 +27,7 @@ import { OrchestrationControlError } from '@dongkseo/contracts';
 import {
   executeToolCalls,
   absorbRuntimeInputs,
+  contextMessagesFromResult,
   formatResultForLLM,
   imageBlocksFromResult,
   isErrorResult,
@@ -134,6 +135,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         if (services.signal.aborted) return;
         await absorbInputs();
+        await services.tools.prepare?.(history);
 
         let response: LLMResponse;
         try {
@@ -199,6 +201,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         const toolResultBlocks: ToolResultBlock[] = [];
         const toolImageMessages: LLMMessage[] = [];
+        const toolContextMessages: LLMMessage[] = [];
         let suspended: { pendingId: string; toolCallId: string } | null = null;
         let planSubmitted = false;
 
@@ -223,6 +226,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
               ],
             });
           }
+          toolContextMessages.push(...contextMessagesFromResult(result));
         }
 
         if (suspended) {
@@ -242,6 +246,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         history.push({ role: 'tool_result', content: toolResultBlocks });
         history.push(...toolImageMessages);
+        history.push(...toolContextMessages);
 
         // PLAN→EXECUTE 전이 — exitPlanTool 이 정상 실행된 뒤 다음 turn 부터 전체 도구 노출.
         if (planSubmitted) {

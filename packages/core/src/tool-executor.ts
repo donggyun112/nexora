@@ -269,6 +269,7 @@ function truncateResult(result: ToolResult, maxChars?: number): ToolResult {
   return {
     type: 'text',
     text: safeHead(result.text, head) + `\n…[truncated ${omitted} chars]…\n` + safeTail(result.text, tail),
+    ...(result.contextMessages ? { contextMessages: result.contextMessages } : {}),
   };
 }
 

@@ -112,19 +112,20 @@ export class DurableToolExecutor implements ToolExecutor {
       'Durable tool calls require a non-empty call id',
     );
     const fingerprint = fingerprintInput(name, input);
-    const existing = await this.ledger.read(this.runId, callId);
+    const effectKey = `agent:tool:${callId}`;
+    const existing = await this.ledger.read(this.runId, effectKey);
     if (existing.status === 'done') return replay(existing.value, this.runId, callId, name, fingerprint);
-    if (existing.status === 'running') throw new IndeterminateEffectError(this.runId, callId);
+    if (existing.status === 'running') throw new IndeterminateEffectError(this.runId, effectKey);
 
     if (this.renewLease) this.fencingToken = await this.renewLease();
-    const inserted = await this.ledger.start(this.runId, callId, this.fencingToken);
+    const inserted = await this.ledger.start(this.runId, effectKey, this.fencingToken);
     if (!inserted) {
-      const winner = await this.ledger.read(this.runId, callId);
+      const winner = await this.ledger.read(this.runId, effectKey);
       if (winner.status === 'done') {
         return replay(winner.value, this.runId, callId, name, fingerprint);
       }
-      if (winner.status === 'running') throw new IndeterminateEffectError(this.runId, callId);
-      throw new Error(`Effect ${JSON.stringify(callId)} disappeared while recording intent`);
+      if (winner.status === 'running') throw new IndeterminateEffectError(this.runId, effectKey);
+      throw new Error(`Effect ${JSON.stringify(effectKey)} disappeared while recording intent`);
     }
 
     // Deliberately do not clear running intent when the executor throws. A thrown
@@ -137,7 +138,7 @@ export class DurableToolExecutor implements ToolExecutor {
       inputFingerprint: fingerprint,
       result,
     };
-    await this.ledger.finish(this.runId, callId, stored, this.fencingToken);
+    await this.ledger.finish(this.runId, effectKey, stored, this.fencingToken);
     return result;
   }
 

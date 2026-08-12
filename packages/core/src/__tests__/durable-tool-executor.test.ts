@@ -181,7 +181,7 @@ describe('DurableToolExecutor', () => {
       { callId: 'same', name: 'b', input: {} },
     ])).rejects.toBeInstanceOf(InvalidDurableToolCallError);
     expect(calls).toBe(0);
-    expect(await ledger.read('run-1', 'same')).toEqual({ status: 'absent' });
+    expect(await ledger.read('run-1', 'agent:tool:same')).toEqual({ status: 'absent' });
   });
 });
 

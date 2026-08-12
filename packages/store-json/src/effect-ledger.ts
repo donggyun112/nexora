@@ -64,6 +64,15 @@ export class EffectLedgerJson implements EffectLedger, DescribableStore {
     this.save(state);
   }
 
+  async forget(runId: string, key: string, fencingToken = 0): Promise<void> {
+    const state = this.load();
+    assertFence(state, runId, fencingToken);
+    const storageKey = effectKey(runId, key);
+    if (state.effects[storageKey]?.status === 'done') return;
+    delete state.effects[storageKey];
+    this.save(state);
+  }
+
   async acquire(runId: string, owner: string, ttlMs: number): Promise<number> {
     if (!owner) throw new Error('Effect lease owner must not be empty');
     if (!Number.isFinite(ttlMs) || ttlMs < 0) {

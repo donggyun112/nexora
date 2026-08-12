@@ -58,6 +58,16 @@ export class EffectLedgerPg implements EffectLedger, DescribableStore {
     });
   }
 
+  async forget(runId: string, key: string, fencingToken = 0): Promise<void> {
+    await this.sql.begin(async sql => {
+      await assertFence(sql, runId, fencingToken);
+      await sql`
+        DELETE FROM nexora_effect_steps
+        WHERE run_id = ${runId} AND effect_key = ${key} AND status = 'running'
+      `;
+    });
+  }
+
   async acquire(runId: string, owner: string, ttlMs: number): Promise<number> {
     if (!owner) throw new Error('Effect lease owner must not be empty');
     if (!Number.isFinite(ttlMs) || ttlMs < 0) {

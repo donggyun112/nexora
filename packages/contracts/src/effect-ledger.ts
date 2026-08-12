@@ -23,6 +23,12 @@ export interface EffectLedger {
   finish(runId: string, key: string, value: unknown, fencingToken?: number): Promise<void>;
 
   /**
+   * Remove uncompleted intent after an effect proves that no output became
+   * visible. Completed effects must be preserved.
+   */
+  forget(runId: string, key: string, fencingToken?: number): Promise<void>;
+
+  /**
    * Acquire or renew a run lease. Returns its positive fencing token, or zero
    * when another owner currently holds the lease.
    */

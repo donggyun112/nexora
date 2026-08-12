@@ -4,6 +4,7 @@
 //   LLM Provider   ./llm (./llm/pi-ai, ./llm/fallback)   PiAiProvider, FallbackLLMProvider
 //   Tool Executor  ./tool-executor   CoreToolExecutor, formatToolResult, coerceToolArgs
 //                  ./durable-tool-executor   DurableToolExecutor
+//                  ./durable-llm-provider    DurableLLMProvider
 //   Memory         ./transcript-memory   TranscriptMemoryProvider
 //   Compaction     ./compaction      TwoStageCompactor, estimateTokens, shouldCompact
 //   Middleware     ./middleware      MiddlewarePipeline, loggingMiddleware, toolFilterMiddleware
@@ -40,6 +41,8 @@ export {
 } from './durable-tool-executor.js';
 export type { DurableToolExecutorOptions } from './durable-tool-executor.js';
 export { MemoryEffectLedger } from './memory-effect-ledger.js';
+export { DurableLLMProvider } from './durable-llm-provider.js';
+export type { DurableLLMProviderOptions } from './durable-llm-provider.js';
 
 export { TranscriptMemoryProvider } from './transcript-memory.js';
 export type { TranscriptMemoryProviderOptions } from './transcript-memory.js';

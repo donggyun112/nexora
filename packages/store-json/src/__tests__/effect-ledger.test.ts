@@ -37,6 +37,22 @@ describe('EffectLedgerJson', () => {
     expect(await ledger.start('run-1', 'call-1', token)).toBe(false);
   });
 
+  it('forgets only running intent and preserves completed results', async () => {
+    const token = await ledger.acquire('run-1', 'worker-a', 60_000);
+    await ledger.start('run-1', 'running', token);
+    await ledger.start('run-1', 'done', token);
+    await ledger.finish('run-1', 'done', { ok: true }, token);
+
+    await ledger.forget('run-1', 'running', token);
+    await ledger.forget('run-1', 'done', token);
+
+    expect(await ledger.read('run-1', 'running')).toEqual({ status: 'absent' });
+    expect(await ledger.read('run-1', 'done')).toEqual({
+      status: 'done',
+      value: { ok: true },
+    });
+  });
+
   it('contends live leases and fences an expired owner after takeover', async () => {
     const stale = await ledger.acquire('run-1', 'worker-a', 60_000);
     expect(await ledger.acquire('run-1', 'worker-b', 60_000)).toBe(0);

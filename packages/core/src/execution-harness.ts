@@ -51,6 +51,7 @@ import {
   DurableToolExecutor,
   RunLeaseContendedError,
 } from './durable-tool-executor.js';
+import { DurableLLMProvider } from './durable-llm-provider.js';
 
 export interface DurableExecutionOptions {
   /** Durable store for effect intent and results. */
@@ -61,6 +62,8 @@ export interface DurableExecutionOptions {
   owner?: (input: AgentInput) => string;
   /** Lease lifetime. The tool boundary renews it before every new effect. */
   leaseTtlMs?: number;
+  /** Stable provider/model configuration used in the model request fingerprint. */
+  modelIdentity?: unknown;
 }
 
 export interface LocalExecutionHarnessOptions {
@@ -292,8 +295,30 @@ export class LocalExecutionHarness implements ExecutionHarness {
       const fallbackSink: FallbackSink | undefined = recorder
         ? { record: (r) => { void recorder.recordFallback(r); } }
         : undefined;
+      const modelWithMiddleware = wrapLLMWithMiddleware(this.llm, this.pipeline);
+      const activeModel = this.durability && effectLease
+        ? new DurableLLMProvider({
+            inner: modelWithMiddleware,
+            ledger: this.durability.ledger,
+            runId: effectLease.runId,
+            fencingToken: effectLease.token,
+            modelIdentity: this.durability.modelIdentity ?? {
+              providerClass: this.llm.constructor.name,
+            },
+            renewLease: async () => {
+              const token = await this.durability!.ledger.acquire(
+                effectLease!.runId,
+                effectLease!.owner,
+                this.durability!.leaseTtlMs ?? 60_000,
+              );
+              if (token === 0) throw new RunLeaseContendedError(effectLease!.runId);
+              effectLease!.token = token;
+              return token;
+            },
+          })
+        : modelWithMiddleware;
       const services: RuntimeServices = {
-        llm: bindFallbackContext(wrapLLMWithMiddleware(this.llm, this.pipeline), fallbackSink),
+        llm: bindFallbackContext(activeModel, fallbackSink),
         tools: wrapToolExecutorWithSignal(toolExecutor, controller.signal),
         memory: this.memory,
         logger: this.logger,

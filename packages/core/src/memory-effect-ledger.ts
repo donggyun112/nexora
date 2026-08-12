@@ -39,6 +39,12 @@ export class MemoryEffectLedger implements EffectLedger {
     });
   }
 
+  async forget(runId: string, key: string, fencingToken = 0): Promise<void> {
+    this.assertFence(runId, fencingToken);
+    const storageKey = effectKey(runId, key);
+    if (this.effects.get(storageKey)?.status !== 'done') this.effects.delete(storageKey);
+  }
+
   async acquire(runId: string, owner: string, ttlMs: number): Promise<number> {
     if (!owner) throw new Error('Effect lease owner must not be empty');
     if (!Number.isFinite(ttlMs) || ttlMs < 0) {

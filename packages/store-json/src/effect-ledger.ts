@@ -4,6 +4,8 @@ import type {
   DescribableStore,
   EffectLedger,
   EffectRecord,
+  RuntimeInputQueue,
+  RuntimeInputRecord,
   StoreBackendInfo,
 } from '@dongkseo/contracts';
 import { EffectWriteFencedError } from '@dongkseo/contracts';
@@ -19,6 +21,8 @@ interface PersistedLedger {
   effects: Record<string, Exclude<EffectRecord, { status: 'absent' }>>;
   leases: Record<string, PersistedLease>;
   issuedTokens: Record<string, number>;
+  inputs: Record<string, RuntimeInputRecord>;
+  inputSequences: Record<string, number>;
 }
 
 /**
@@ -27,7 +31,7 @@ interface PersistedLedger {
  * Updates replace one state file atomically, but the backend deliberately does
  * not claim multi-process safety. Production deployments should use Postgres.
  */
-export class EffectLedgerJson implements EffectLedger, DescribableStore {
+export class EffectLedgerJson implements EffectLedger, RuntimeInputQueue, DescribableStore {
   private readonly file: string;
 
   constructor(dataDir: string) {
@@ -103,13 +107,55 @@ export class EffectLedgerJson implements EffectLedger, DescribableStore {
     this.save(state);
   }
 
+  async enqueueInput(runId: string, inputId: string, value: unknown): Promise<boolean> {
+    const state = this.load();
+    const storageKey = inputKey(runId, inputId);
+    if (state.inputs[storageKey]) return false;
+    const sequence = state.inputSequences[runId] ?? 0;
+    state.inputSequences[runId] = sequence + 1;
+    state.inputs[storageKey] = { inputId, status: 'pending', value, sequence };
+    this.save(state);
+    return true;
+  }
+
+  async listInputs(runId: string): Promise<RuntimeInputRecord[]> {
+    const prefix = inputPrefix(runId);
+    return Object.entries(this.load().inputs)
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, record]) => structuredClone(record))
+      .sort((left, right) => left.sequence - right.sequence);
+  }
+
+  async claimInput(runId: string, inputId: string, fencingToken = 0): Promise<void> {
+    this.updateInputs(runId, [inputId], fencingToken, record =>
+      record.status === 'admitted' || record.status === 'discarded'
+        ? record
+        : { ...record, status: 'claimed' });
+  }
+
+  async admitInputs(runId: string, inputIds: string[], fencingToken = 0): Promise<void> {
+    this.updateInputs(runId, inputIds, fencingToken, record =>
+      record.status === 'discarded' ? record : { ...record, status: 'admitted' });
+  }
+
+  async discardInputs(runId: string, inputIds: string[], fencingToken = 0): Promise<void> {
+    this.updateInputs(runId, inputIds, fencingToken, record => ({
+      ...record,
+      status: 'discarded',
+    }));
+  }
+
   private load(): PersistedLedger {
     if (!fs.existsSync(this.file)) return emptyLedger();
     const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<PersistedLedger>;
     if (parsed.version !== 1 || !parsed.effects || !parsed.leases || !parsed.issuedTokens) {
       throw new Error(`Invalid effect ledger at ${this.file}`);
     }
-    return parsed as PersistedLedger;
+    return {
+      ...(parsed as Omit<PersistedLedger, 'inputs' | 'inputSequences'>),
+      inputs: parsed.inputs ?? {},
+      inputSequences: parsed.inputSequences ?? {},
+    };
   }
 
   private save(state: PersistedLedger): void {
@@ -122,14 +168,48 @@ export class EffectLedgerJson implements EffectLedger, DescribableStore {
       if (fs.existsSync(temp)) fs.rmSync(temp);
     }
   }
+
+  private updateInputs(
+    runId: string,
+    inputIds: string[],
+    fencingToken: number,
+    transition: (record: RuntimeInputRecord) => RuntimeInputRecord,
+  ): void {
+    const state = this.load();
+    assertFence(state, runId, fencingToken);
+    let changed = false;
+    for (const inputId of inputIds) {
+      const storageKey = inputKey(runId, inputId);
+      const record = state.inputs[storageKey];
+      if (!record) continue;
+      state.inputs[storageKey] = transition(record);
+      changed = true;
+    }
+    if (changed) this.save(state);
+  }
 }
 
 function emptyLedger(): PersistedLedger {
-  return { version: 1, effects: {}, leases: {}, issuedTokens: {} };
+  return {
+    version: 1,
+    effects: {},
+    leases: {},
+    issuedTokens: {},
+    inputs: {},
+    inputSequences: {},
+  };
 }
 
 function effectKey(runId: string, key: string): string {
   return JSON.stringify([runId, key]);
+}
+
+function inputPrefix(runId: string): string {
+  return `${JSON.stringify(runId)}:`;
+}
+
+function inputKey(runId: string, inputId: string): string {
+  return `${inputPrefix(runId)}${JSON.stringify(inputId)}`;
 }
 
 function assertFence(state: PersistedLedger, runId: string, presentedToken: number): void {

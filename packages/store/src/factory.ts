@@ -20,6 +20,7 @@ import type {
   StoreBackendInfo,
   AgentLogger,
   EffectLedger,
+  RuntimeInputQueue,
 } from '@dongkseo/contracts';
 
 export interface StoreProvider {
@@ -41,6 +42,8 @@ export interface StoreProvider {
   workspaceState?: WorkspaceStateStore;
   /** Durable tool-effect intent/results and run lease. Optional for legacy/custom backends. */
   effectLedger?: EffectLedger;
+  /** Ordered durable inbox. The built-in backends share storage with effectLedger. */
+  inputQueue?: RuntimeInputQueue;
 }
 
 /**
@@ -61,6 +64,7 @@ export function warnDevStores(
     ['artifact', provider.artifact],
     ['workspaceState', provider.workspaceState],
     ['effectLedger', provider.effectLedger],
+    ['inputQueue', provider.inputQueue],
   ];
   for (const [name, store] of stores) {
     if (isDescribable(store)) {

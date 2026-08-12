@@ -26,6 +26,7 @@ Redis 유틸을 쓸 때는 `RedisLike` 호환 클라이언트를 직접 주입�
 | **PG 커넥션** | postgres.js 풀 생성·스키마 초기화·종료 핸들 | `createPgClient`, `PgOptions`, `Sql` |
 | **Store 구현** | 계약 인터페이스별 PG 구현 클래스 | `ConversationStorePg`, `KnowledgeStorePg`, `AuditStorePg`, `ScheduleStorePg`, `ContextStorePg`, `ToolContextStorePg`, `TranscriptStorePg`, `SuspendedTurnStorePg` |
 | **Effect ledger** | transactional intent/result와 멀티프로세스 run lease/fencing | `EffectLedgerPg` |
+| **Runtime input queue** | idempotent enqueue와 fenced admission 상태 전이 | `provider.inputQueue` |
 | **세션 트리** | 분기 가능한 대화 트리 PG 구현 | `TreeConversationStorePg` |
 | **Provider 번들** | 하나의 커넥션으로 6개 코어 스토어 전부 생성 | `createPgStoreProvider`, `PgStoreProvider` |
 | **분산 레이트리미터** | Redis 기반 분산 처리율 제한 | `createRedisRateLimiter`, `DistributedRateLimiter`, `RedisRateLimiterOptions` |

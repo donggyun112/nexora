@@ -57,10 +57,12 @@ export interface JsonStoreProvider {
   workspaceState: WorkspaceStateStoreJson;
   sessionTree: TreeConversationStoreJson;
   effectLedger: EffectLedgerJson;
+  inputQueue: EffectLedgerJson;
 }
 
 /** 모든 JSON store를 한 번에 생성 */
 export function createJsonStoreProvider(dataDir: string): JsonStoreProvider {
+  const effectLedger = new EffectLedgerJson(dataDir);
   return {
     conversation: new ConversationStoreJson(dataDir),
     transcript: new TranscriptStoreJson(dataDir),
@@ -73,6 +75,7 @@ export function createJsonStoreProvider(dataDir: string): JsonStoreProvider {
     artifact: new ArtifactChannelJson(dataDir),
     workspaceState: new WorkspaceStateStoreJson(dataDir),
     sessionTree: new TreeConversationStoreJson(dataDir),
-    effectLedger: new EffectLedgerJson(dataDir),
+    effectLedger,
+    inputQueue: effectLedger,
   };
 }

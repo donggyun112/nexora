@@ -118,6 +118,22 @@ async function migrate(sql: Sql): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS nexora_runtime_inputs (
+      sequence    BIGSERIAL PRIMARY KEY,
+      run_id      TEXT NOT NULL,
+      input_id    TEXT NOT NULL,
+      status      TEXT NOT NULL CHECK (status IN ('pending', 'claimed', 'admitted', 'discarded')),
+      value       JSONB NOT NULL,
+      admitted_at TIMESTAMPTZ,
+      UNIQUE (run_id, input_id)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_nexora_runtime_inputs_run_sequence
+    ON nexora_runtime_inputs (run_id, sequence)
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS nexora_context (
       namespace TEXT NOT NULL,
       date TEXT NOT NULL,

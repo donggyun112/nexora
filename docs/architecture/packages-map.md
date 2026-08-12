@@ -19,7 +19,7 @@
 | sandbox wire 프로토콜 참조 서버 (+ 주입식 OS-격리 backend·세션 lifecycle·네트워크 사이드카) | `@dongkseo/sandbox-server` | `createSandboxServer` (주입식 SandboxClient를 HTTP로 노출; exec/fs/stat/readdir/persist/hydrate/reattach), `OverlayRootfsSandboxClient`+`buildBwrapArgs`(bwrap/overlay), `GvisorSandboxClient`+`buildOciConfig`(runsc/gVisor), `SessionRegistry`, `TarArchiveStore`/`DurableDirStore`, `startEgressProxy`, `startAuthInjectingGateway` | `ctx_read("packages/sandbox-server/src/index.ts", mode="map")` |
 | 자가학습 스킬(SKILL.md) | `@dongkseo/skills` | `parseSkillFile`, `loadSkills`, `SkillRegistry`, `SkillCreator`, `buildSkillMenu` | `ctx_read("packages/skills/src/index.ts", mode="map")` |
 | 멀티에이전트 대화(턴테이킹) | `@dongkseo/conversation` | `ConversationRoom`, `TurnManager` | `ctx_read("packages/conversation/src/index.ts", mode="map")` |
-| 영속 store 번들(설정→백엔드) | `@dongkseo/store` | `createStoreProvider`, `StoreProvider`, `StoreConfig`, `EffectLedger` | `ctx_read("packages/store/src/index.ts", mode="map")` |
+| 영속 store 번들(설정→백엔드) | `@dongkseo/store` | `createStoreProvider`, `StoreProvider`, `StoreConfig`, `EffectLedger`, `RuntimeInputQueue` | `ctx_read("packages/store/src/index.ts", mode="map")` |
 | 개발용 JSON 파일 백엔드 | `@dongkseo/store-json` | JSON store 구현, `EffectLedgerJson` | `ctx_read("packages/store-json/src/index.ts", mode="map")` |
 | 운영용 PostgreSQL 백엔드 | `@dongkseo/store-pg` | PG store 구현(+ auto-migration), `EffectLedgerPg` | `ctx_read("packages/store-pg/src/index.ts", mode="map")` |
 | 인메모리(그래프/임베딩) 백엔드 | `@dongkseo/store-memory` | 인메모리 store 구현 | `ctx_read("packages/store-memory/src/index.ts", mode="map")` |

@@ -2,6 +2,8 @@ import type {
   DescribableStore,
   EffectLedger,
   EffectRecord,
+  RuntimeInputQueue,
+  RuntimeInputRecord,
   StoreBackendInfo,
 } from '@dongkseo/contracts';
 import { EffectWriteFencedError } from '@dongkseo/contracts';
@@ -9,7 +11,7 @@ import type { Sql } from './pg-client.js';
 import { jsonParam } from './helpers.js';
 
 /** PostgreSQL EffectLedger with transactional intent writes and fenced leases. */
-export class EffectLedgerPg implements EffectLedger, DescribableStore {
+export class EffectLedgerPg implements EffectLedger, RuntimeInputQueue, DescribableStore {
   constructor(private readonly sql: Sql) {}
 
   describeBackend(): StoreBackendInfo {
@@ -102,6 +104,69 @@ export class EffectLedgerPg implements EffectLedger, DescribableStore {
       SET owner = '', expires_at = NOW()
       WHERE run_id = ${runId} AND owner = ${owner}
     `;
+  }
+
+  async enqueueInput(runId: string, inputId: string, value: unknown): Promise<boolean> {
+    const rows = await this.sql`
+      INSERT INTO nexora_runtime_inputs (run_id, input_id, status, value)
+      VALUES (${runId}, ${inputId}, 'pending', ${jsonParam(this.sql, value)})
+      ON CONFLICT (run_id, input_id) DO NOTHING
+      RETURNING input_id
+    `;
+    return rows.length > 0;
+  }
+
+  async listInputs(runId: string): Promise<RuntimeInputRecord[]> {
+    const rows = await this.sql`
+      SELECT input_id, status, value, sequence
+      FROM nexora_runtime_inputs
+      WHERE run_id = ${runId}
+      ORDER BY sequence
+    `;
+    return rows.map(row => ({
+      inputId: String(row.input_id),
+      status: row.status as RuntimeInputRecord['status'],
+      value: row.value,
+      sequence: Number(row.sequence),
+    }));
+  }
+
+  async claimInput(runId: string, inputId: string, fencingToken = 0): Promise<void> {
+    await this.sql.begin(async sql => {
+      await assertFence(sql, runId, fencingToken);
+      await sql`
+        UPDATE nexora_runtime_inputs
+        SET status = 'claimed'
+        WHERE run_id = ${runId} AND input_id = ${inputId}
+          AND status NOT IN ('admitted', 'discarded')
+      `;
+    });
+  }
+
+  async admitInputs(runId: string, inputIds: string[], fencingToken = 0): Promise<void> {
+    if (inputIds.length === 0) return;
+    await this.sql.begin(async sql => {
+      await assertFence(sql, runId, fencingToken);
+      await sql`
+        UPDATE nexora_runtime_inputs
+        SET status = 'admitted', admitted_at = NOW()
+        WHERE run_id = ${runId}
+          AND input_id IN ${sql(inputIds)}
+          AND status <> 'discarded'
+      `;
+    });
+  }
+
+  async discardInputs(runId: string, inputIds: string[], fencingToken = 0): Promise<void> {
+    if (inputIds.length === 0) return;
+    await this.sql.begin(async sql => {
+      await assertFence(sql, runId, fencingToken);
+      await sql`
+        UPDATE nexora_runtime_inputs
+        SET status = 'discarded'
+        WHERE run_id = ${runId} AND input_id IN ${sql(inputIds)}
+      `;
+    });
   }
 }
 

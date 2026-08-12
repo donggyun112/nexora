@@ -53,6 +53,38 @@ describe('MemoryEffectLedger', () => {
       EffectWriteFencedError,
     );
   });
+
+  it('queues inputs idempotently in submission order and isolates caller mutation', async () => {
+    const ledger = new MemoryEffectLedger();
+    const value = { text: 'one' };
+
+    expect(await ledger.enqueueInput('run-1', 'in-1', value)).toBe(true);
+    value.text = 'mutated';
+    expect(await ledger.enqueueInput('run-1', 'in-1', { text: 'replacement' })).toBe(false);
+    await ledger.enqueueInput('run-1', 'in-2', { text: 'two' });
+
+    expect(await ledger.listInputs('run-1')).toEqual([
+      { inputId: 'in-1', status: 'pending', value: { text: 'one' }, sequence: 0 },
+      { inputId: 'in-2', status: 'pending', value: { text: 'two' }, sequence: 1 },
+    ]);
+  });
+
+  it('keeps admitted and discarded input states terminal', async () => {
+    const ledger = new MemoryEffectLedger();
+    const token = await ledger.acquire('run-1', 'worker-a', 60_000);
+    await ledger.enqueueInput('run-1', 'admitted', {});
+    await ledger.enqueueInput('run-1', 'discarded', {});
+    await ledger.claimInput('run-1', 'missing', token);
+    await ledger.claimInput('run-1', 'admitted', token);
+    await ledger.admitInputs('run-1', ['admitted'], token);
+    await ledger.claimInput('run-1', 'admitted', token);
+    await ledger.discardInputs('run-1', ['discarded'], token);
+    await ledger.claimInput('run-1', 'discarded', token);
+    await ledger.admitInputs('run-1', ['discarded'], token);
+
+    expect((await ledger.listInputs('run-1')).map(input => input.status))
+      .toEqual(['admitted', 'discarded']);
+  });
 });
 
 describe('DurableToolExecutor', () => {

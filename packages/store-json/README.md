@@ -32,6 +32,7 @@
 | **Context / Audit / Tool** | 컨텍스트·감사 로그·도구 컨텍스트 | `ContextStoreJson`, `AuditStoreJson`, `ToolContextStoreJson` |
 | **Suspended turn** | HITL(휴먼인더루프) 일시중단 턴 저장 | `SuspendedTurnStoreJson` |
 | **Effect ledger** | 도구 intent/result와 run lease/fencing 저장 | `EffectLedgerJson` |
+| **Runtime input queue** | 입력 순서와 pending/claimed/admitted/discarded 상태 저장 | `provider.inputQueue` |
 
 ## 사용 레시피
 

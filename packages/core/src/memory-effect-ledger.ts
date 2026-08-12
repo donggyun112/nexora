@@ -1,4 +1,9 @@
-import type { EffectLedger, EffectRecord } from '@dongkseo/contracts';
+import type {
+  EffectLedger,
+  EffectRecord,
+  RuntimeInputQueue,
+  RuntimeInputRecord,
+} from '@dongkseo/contracts';
 import { EffectWriteFencedError } from '@dongkseo/contracts';
 
 interface Lease {
@@ -8,10 +13,12 @@ interface Lease {
 }
 
 /** Process-local ledger for tests and development. It is not restart-safe. */
-export class MemoryEffectLedger implements EffectLedger {
+export class MemoryEffectLedger implements EffectLedger, RuntimeInputQueue {
   private readonly effects = new Map<string, EffectRecord>();
   private readonly leases = new Map<string, Lease>();
   private readonly issuedTokens = new Map<string, number>();
+  private readonly inputs = new Map<string, RuntimeInputRecord>();
+  private readonly inputSequences = new Map<string, number>();
 
   async read(runId: string, key: string): Promise<EffectRecord> {
     const record = this.effects.get(effectKey(runId, key));
@@ -70,6 +77,60 @@ export class MemoryEffectLedger implements EffectLedger {
     if (held?.owner === owner) {
       this.leases.set(runId, { ...held, owner: '', expiresAt: Date.now() });
     }
+  }
+
+  async enqueueInput(runId: string, inputId: string, value: unknown): Promise<boolean> {
+    const storageKey = effectKey(runId, inputId);
+    if (this.inputs.has(storageKey)) return false;
+    const sequence = this.inputSequences.get(runId) ?? 0;
+    this.inputSequences.set(runId, sequence + 1);
+    this.inputs.set(storageKey, {
+      inputId,
+      status: 'pending',
+      value: structuredClone(value),
+      sequence,
+    });
+    return true;
+  }
+
+  async listInputs(runId: string): Promise<RuntimeInputRecord[]> {
+    return Array.from(this.inputs.entries())
+      .filter(([key]) => key.startsWith(`${runId.length}:${runId}`))
+      .map(([, record]) => structuredClone(record))
+      .sort((left, right) => left.sequence - right.sequence);
+  }
+
+  async claimInput(runId: string, inputId: string, fencingToken = 0): Promise<void> {
+    this.assertFence(runId, fencingToken);
+    this.transitionInput(runId, inputId, record =>
+      record.status === 'admitted' || record.status === 'discarded'
+        ? record
+        : { ...record, status: 'claimed' });
+  }
+
+  async admitInputs(runId: string, inputIds: string[], fencingToken = 0): Promise<void> {
+    this.assertFence(runId, fencingToken);
+    for (const inputId of inputIds) {
+      this.transitionInput(runId, inputId, record =>
+        record.status === 'discarded' ? record : { ...record, status: 'admitted' });
+    }
+  }
+
+  async discardInputs(runId: string, inputIds: string[], fencingToken = 0): Promise<void> {
+    this.assertFence(runId, fencingToken);
+    for (const inputId of inputIds) {
+      this.transitionInput(runId, inputId, record => ({ ...record, status: 'discarded' }));
+    }
+  }
+
+  private transitionInput(
+    runId: string,
+    inputId: string,
+    transition: (record: RuntimeInputRecord) => RuntimeInputRecord,
+  ): void {
+    const storageKey = effectKey(runId, inputId);
+    const record = this.inputs.get(storageKey);
+    if (record) this.inputs.set(storageKey, transition(record));
   }
 
   private assertFence(runId: string, presentedToken: number): void {

@@ -74,10 +74,12 @@ export interface PgStoreProvider {
   artifact: ArtifactChannelPg;
   workspaceState: WorkspaceStateStorePg;
   effectLedger: EffectLedgerPg;
+  inputQueue: EffectLedgerPg;
 }
 
 /** Create all core stores from a single Postgres connection. */
 export function createPgStoreProvider(sql: Sql): PgStoreProvider {
+  const effectLedger = new EffectLedgerPg(sql);
   return {
     conversation: new ConversationStorePg(sql),
     knowledge: new KnowledgeStorePg(sql),
@@ -89,6 +91,7 @@ export function createPgStoreProvider(sql: Sql): PgStoreProvider {
     suspendedTurn: new SuspendedTurnStorePg(sql),
     artifact: new ArtifactChannelPg(sql),
     workspaceState: new WorkspaceStateStorePg(sql),
-    effectLedger: new EffectLedgerPg(sql),
+    effectLedger,
+    inputQueue: effectLedger,
   };
 }

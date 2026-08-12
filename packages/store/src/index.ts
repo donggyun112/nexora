@@ -36,6 +36,9 @@ export type {
   WorkspaceStateStore,
   EffectLedger,
   EffectRecord,
+  RuntimeInputQueue,
+  RuntimeInputRecord,
+  RuntimeInputStatus,
 } from '@dongkseo/contracts';
 
 export { createStoreProvider, warnDevStores } from './factory.js';

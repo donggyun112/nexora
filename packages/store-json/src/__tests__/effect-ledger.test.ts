@@ -68,4 +68,31 @@ describe('EffectLedgerJson', () => {
     fs.writeFileSync(path.join(dataDir, 'effect-ledger.json'), '{broken', 'utf8');
     await expect(ledger.read('run-1', 'call-1')).rejects.toBeInstanceOf(SyntaxError);
   });
+
+  it('persists an idempotent ordered input queue across instances', async () => {
+    expect(await ledger.enqueueInput('run-1', 'in-1', { text: 'one' })).toBe(true);
+    expect(await ledger.enqueueInput('run-1', 'in-1', { text: 'changed' })).toBe(false);
+    await ledger.enqueueInput('run-1', 'in-2', { text: 'two' });
+
+    const reopened = new EffectLedgerJson(dataDir);
+    expect(await reopened.listInputs('run-1')).toEqual([
+      { inputId: 'in-1', status: 'pending', value: { text: 'one' }, sequence: 0 },
+      { inputId: 'in-2', status: 'pending', value: { text: 'two' }, sequence: 1 },
+    ]);
+  });
+
+  it('fences input transitions and preserves terminal states', async () => {
+    const stale = await ledger.acquire('run-1', 'worker-a', 60_000);
+    await ledger.enqueueInput('run-1', 'in-1', {});
+    await ledger.release('run-1', 'worker-a');
+    const current = await ledger.acquire('run-1', 'worker-b', 60_000);
+
+    await expect(ledger.claimInput('run-1', 'in-1', stale))
+      .rejects.toBeInstanceOf(EffectWriteFencedError);
+    await ledger.claimInput('run-1', 'in-1', current);
+    await ledger.discardInputs('run-1', ['in-1'], current);
+    await ledger.admitInputs('run-1', ['in-1'], current);
+
+    expect((await ledger.listInputs('run-1'))[0].status).toBe('discarded');
+  });
 });

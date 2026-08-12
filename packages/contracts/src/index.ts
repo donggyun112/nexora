@@ -12,6 +12,7 @@
 //   Tools         ./tool        textResult, errorResult, suspendResult
 //   Workflow      ./workflow, ./workflow-state, ./suspended-turn
 //   Store         ./store, ./store-backend, ./context   StoreBackend
+//   Effects       ./effect-ledger   EffectLedger, EffectRecord
 //   Transcript    ./transcript  TranscriptStore, ContentBlock     ./session-tree  SessionTree
 //   Tenancy/Ctx   ./ctx         createTenantAgentScope, DEFAULT_TENANT
 //   Adapters      ./adapter, ./transport (assertDurable), ./channel-adapter
@@ -238,6 +239,9 @@ export type {
   MemoryProvider,
   AgentLogger,
 } from './agent.js';
+
+export type { EffectLedger, EffectRecord } from './effect-ledger.js';
+export { EffectWriteFencedError } from './effect-ledger.js';
 
 export { imageResultForLLM, imageBlocksFromResult, sanitizeToolPairsInPlace } from './llm-message.js';
 

@@ -10,6 +10,7 @@
 //   Audit          ./audit            AuditStoreJson
 //   Tool context   ./tool-context     ToolContextStoreJson
 //   Suspended turn ./suspended-turn   SuspendedTurnStoreJson       (HITL 일시중단 턴)
+//   Effect ledger  ./effect-ledger    EffectLedgerJson             (도구 intent/result + lease)
 //   Artifact       ./artifact         ArtifactChannelJson          (에이전트 간 산출물 공유)
 //   Provider       ./index            JsonStoreProvider, createJsonStoreProvider (한 번에 전부 생성)
 //
@@ -28,6 +29,7 @@ export { SuspendedTurnStoreJson } from './suspended-turn.js';
 export { TreeConversationStoreJson } from './session-tree.js';
 export { ArtifactChannelJson } from './artifact.js';
 export { WorkspaceStateStoreJson } from './workspace-state.js';
+export { EffectLedgerJson } from './effect-ledger.js';
 
 import { ConversationStoreJson } from './conversation.js';
 import { TranscriptStoreJson } from './transcript.js';
@@ -40,6 +42,7 @@ import { SuspendedTurnStoreJson } from './suspended-turn.js';
 import { TreeConversationStoreJson } from './session-tree.js';
 import { ArtifactChannelJson } from './artifact.js';
 import { WorkspaceStateStoreJson } from './workspace-state.js';
+import { EffectLedgerJson } from './effect-ledger.js';
 
 export interface JsonStoreProvider {
   conversation: ConversationStoreJson;
@@ -53,6 +56,7 @@ export interface JsonStoreProvider {
   artifact: ArtifactChannelJson;
   workspaceState: WorkspaceStateStoreJson;
   sessionTree: TreeConversationStoreJson;
+  effectLedger: EffectLedgerJson;
 }
 
 /** 모든 JSON store를 한 번에 생성 */
@@ -69,5 +73,6 @@ export function createJsonStoreProvider(dataDir: string): JsonStoreProvider {
     artifact: new ArtifactChannelJson(dataDir),
     workspaceState: new WorkspaceStateStoreJson(dataDir),
     sessionTree: new TreeConversationStoreJson(dataDir),
+    effectLedger: new EffectLedgerJson(dataDir),
   };
 }

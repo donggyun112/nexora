@@ -25,6 +25,7 @@ Redis 유틸을 쓸 때는 `RedisLike` 호환 클라이언트를 직접 주입�
 | 개념 | 무엇 | 대표 export |
 | **PG 커넥션** | postgres.js 풀 생성·스키마 초기화·종료 핸들 | `createPgClient`, `PgOptions`, `Sql` |
 | **Store 구현** | 계약 인터페이스별 PG 구현 클래스 | `ConversationStorePg`, `KnowledgeStorePg`, `AuditStorePg`, `ScheduleStorePg`, `ContextStorePg`, `ToolContextStorePg`, `TranscriptStorePg`, `SuspendedTurnStorePg` |
+| **Effect ledger** | transactional intent/result와 멀티프로세스 run lease/fencing | `EffectLedgerPg` |
 | **세션 트리** | 분기 가능한 대화 트리 PG 구현 | `TreeConversationStorePg` |
 | **Provider 번들** | 하나의 커넥션으로 6개 코어 스토어 전부 생성 | `createPgStoreProvider`, `PgStoreProvider` |
 | **분산 레이트리미터** | Redis 기반 분산 처리율 제한 | `createRedisRateLimiter`, `DistributedRateLimiter`, `RedisRateLimiterOptions` |
@@ -46,6 +47,7 @@ const { sql, close } = await createPgClient({
 // 2) 6개 코어 스토어를 한 번에 생성
 const store = createPgStoreProvider(sql);
 await store.conversation.append(/* ... 계약 시그니처대로 ... */);
+// AgentRunner durability에는 store.effectLedger를 주입한다.
 
 // 3) 종료
 await close();
@@ -72,6 +74,7 @@ const conversations = new ConversationStorePg(sql);
 ctx_read(path="packages/store-pg/src/index.ts",      mode="map")          # 전체 export 목록
 ctx_read(path="packages/store-pg/src/pg-client.ts",  mode="signatures")   # createPgClient / PgOptions / Sql
 ctx_read(path="packages/store-pg/src/conversation.ts", mode="signatures") # 한 스토어 구현 예시
+ctx_read(path="packages/store-pg/src/effect-ledger.ts", mode="signatures") # durable effects
 ```
 
 각 스토어가 만족하는 인터페이스(메서드 시그니처)의 정본은 `@dongkseo/contracts`의 store 타입이다:

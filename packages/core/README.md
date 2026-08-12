@@ -25,6 +25,7 @@ transport에 붙이는 `AgentRunner` / `bootstrapAgent`가 여기 있다.
 |------|------|-------------|
 | **LLM Provider** | LLM 호출 통합 어댑터(Anthropic·OpenAI·OpenRouter…) + 폴백 체인 | `PiAiProvider`, `FallbackLLMProvider`, `ThinkingLlmProvider` |
 | **Tool Executor** | 에이전트 도구 실행·인자 강제·결과 포맷·배치 호출 | `CoreToolExecutor`, `formatToolResult`, `coerceToolArgs` |
+| **Durable effects** | call id 기반 도구 결과 replay, 중단된 효과 감지, run lease/fencing | `DurableToolExecutor`, `MemoryEffectLedger` |
 | **Memory / Compaction** | 컨텍스트 토큰 추정·축소(2단계 컴팩터)·도구출력 정리 | `CoreMemoryProvider`, `TwoStageCompactor`, `estimateTokens`, `shouldCompact` |
 | **Middleware** | 실행/도구/LLM 호출 전후 훅 파이프라인 | `MiddlewarePipeline`, `loggingMiddleware`, `toolFilterMiddleware` |
 | **Runner / Bootstrap** | 한 에이전트를 조립해 transport에 붙여 구동 | `AgentRunner`, `bootstrapAgent`, `RunningAgent` |
@@ -72,6 +73,27 @@ const agent = await bootstrapAgent({
 폴백·예산 가드를 얹으려면 `FallbackLLMProvider`로 provider를 묶고 `createBudgetMiddleware`를 파이프라인에 추가한다.
 더 큰 예제: [`examples/auto-work-flow`](../../examples/auto-work-flow) (PM→Coder→Reviewer 멀티에이전트, suspend/재개 포함).
 
+도구 효과를 durable boundary로 실행하려면 runtime에 ledger와 안정적인 실행 id를 준다.
+완료된 `runId + callId`는 기록된 결과를 replay하고, `running` intent만 남은 호출은 외부 효과를
+중복 실행하지 않고 `IndeterminateEffectError`를 발생시킨다.
+
+```ts
+import { AgentRunner, MemoryEffectLedger } from '@dongkseo/core';
+
+const runtime = new AgentRunner({
+  architecture,
+  llm,
+  tools,
+  durability: {
+    ledger: new MemoryEffectLedger(), // 개발/테스트 전용; 운영에서는 durable EffectLedger 구현 주입
+    runId: envelope.id,
+  },
+});
+```
+
+한 batch는 모든 호출이 `isConcurrencySafe`를 명시한 경우에만 병렬 실행된다. call id가 없거나
+한 batch 안에서 중복되면 어떤 효과도 시작하기 전에 거부한다.
+
 ## API 표면 (소스 안 열고 타입만)
 
 `index.ts`는 도메인별로 그룹핑돼 있고 파일 맨 위에 **섹션 맵 주석**이 있다. 정확한 시그니처가 필요하면
@@ -83,6 +105,7 @@ ctx_read(path="packages/core/src/runner.ts",        mode="signatures")   # Agent
 ctx_read(path="packages/core/src/bootstrap.ts",     mode="signatures")   # bootstrapAgent
 ctx_read(path="packages/core/src/llm/index.ts",     mode="signatures")   # PiAiProvider, FallbackLLMProvider
 ctx_read(path="packages/core/src/tool-executor.ts", mode="signatures")   # CoreToolExecutor
+ctx_read(path="packages/core/src/durable-tool-executor.ts", mode="signatures") # durable effects
 ctx_read(path="packages/core/src/pi-headless.ts",   mode="signatures")   # drivePi
 ```
 

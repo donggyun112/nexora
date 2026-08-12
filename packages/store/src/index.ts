@@ -34,6 +34,8 @@ export type {
   ArtifactRef,
   ArtifactPublishOptions,
   WorkspaceStateStore,
+  EffectLedger,
+  EffectRecord,
 } from '@dongkseo/contracts';
 
 export { createStoreProvider, warnDevStores } from './factory.js';

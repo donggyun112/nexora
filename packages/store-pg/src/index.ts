@@ -13,6 +13,7 @@
 //   Audit          ./audit            AuditStorePg
 //   Tool context   ./tool-context     ToolContextStorePg
 //   Suspended turn ./suspended-turn   SuspendedTurnStorePg             (HITL 일시중단 턴)
+//   Effect ledger  ./effect-ledger    EffectLedgerPg                   (도구 intent/result + fenced lease)
 //   Artifact       ./artifact         ArtifactChannelPg                (에이전트 간 산출물 공유)
 //   Provider       ./index            PgStoreProvider, createPgStoreProvider (커넥션 1개로 전부 생성)
 //   Rate limiter   ./redis-rate-limiter  createRedisRateLimiter, DistributedRateLimiter (Redis 분산)
@@ -32,6 +33,7 @@ export { SuspendedTurnStorePg } from './suspended-turn.js';
 export { TreeConversationStorePg } from './session-tree.js';
 export { ArtifactChannelPg } from './artifact.js';
 export { WorkspaceStateStorePg } from './workspace-state.js';
+export { EffectLedgerPg } from './effect-ledger.js';
 
 export { createRedisRateLimiter } from './redis-rate-limiter.js';
 export type {
@@ -58,6 +60,7 @@ import { TranscriptStorePg } from './transcript.js';
 import { SuspendedTurnStorePg } from './suspended-turn.js';
 import { ArtifactChannelPg } from './artifact.js';
 import { WorkspaceStateStorePg } from './workspace-state.js';
+import { EffectLedgerPg } from './effect-ledger.js';
 
 export interface PgStoreProvider {
   conversation: ConversationStorePg;
@@ -70,6 +73,7 @@ export interface PgStoreProvider {
   suspendedTurn: SuspendedTurnStorePg;
   artifact: ArtifactChannelPg;
   workspaceState: WorkspaceStateStorePg;
+  effectLedger: EffectLedgerPg;
 }
 
 /** Create all core stores from a single Postgres connection. */
@@ -85,5 +89,6 @@ export function createPgStoreProvider(sql: Sql): PgStoreProvider {
     suspendedTurn: new SuspendedTurnStorePg(sql),
     artifact: new ArtifactChannelPg(sql),
     workspaceState: new WorkspaceStateStorePg(sql),
+    effectLedger: new EffectLedgerPg(sql),
   };
 }

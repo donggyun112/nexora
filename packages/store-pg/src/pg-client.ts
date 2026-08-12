@@ -98,6 +98,26 @@ async function migrate(sql: Sql): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS nexora_effect_leases (
+      run_id     TEXT PRIMARY KEY,
+      owner      TEXT NOT NULL,
+      token      BIGINT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS nexora_effect_steps (
+      run_id     TEXT NOT NULL,
+      effect_key TEXT NOT NULL,
+      status     TEXT NOT NULL CHECK (status IN ('running', 'done')),
+      value      JSONB,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (run_id, effect_key)
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS nexora_context (
       namespace TEXT NOT NULL,
       date TEXT NOT NULL,

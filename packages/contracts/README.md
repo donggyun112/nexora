@@ -26,6 +26,7 @@ Nexora 전체가 공유하는 **타입·인터페이스 정의 패키지**다. �
 | **Oracle** | 정책/제약 기반 런타임 결정 | `NexoraOracle`, `OracleDecision`, `OracleContext` |
 | **Worker / Runtime** | 워커 등록·실행·syscall 프로토콜 | `WorkerRegistry`, `RuntimeState`, `RetrySyscall` |
 | **Store / Transcript** | 영속화·대화 기록 백엔드 계약 | `StoreBackend`, `TranscriptStore`, `SessionTree` |
+| **Effect ledger** | 외부 효과의 실행 의도·완료 결과·run lease/fencing 계약 | `EffectLedger`, `EffectRecord` |
 | **Tenancy** | 멀티테넌트 스코프 | `createTenantAgentScope`, `DEFAULT_TENANT` |
 
 ## 사용 레시피
@@ -67,6 +68,7 @@ return suspendResult({ /* 재개 정보 */ });   // 일시중단(휴먼인더루
 ```
 ctx_read(path="packages/contracts/src/define.ts",  mode="signatures")
 ctx_read(path="packages/contracts/src/oracle.ts",  mode="signatures")
+ctx_read(path="packages/contracts/src/effect-ledger.ts", mode="signatures")
 ctx_read(path="packages/contracts/src/index.ts",   mode="map")   # 전체 export 목록
 ```
 

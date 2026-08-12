@@ -5,6 +5,7 @@
  * accounting, and steering. AgentRunner stays as the public facade.
  */
 
+import { randomUUID } from 'node:crypto';
 import type {
   AgentArchitecture,
   AgentEvent,
@@ -28,8 +29,13 @@ import type {
   WorkspaceAcquireOptions,
   WorkspaceProvider,
   WorkspaceSession,
+  EffectLedger,
 } from '@dongkseo/contracts';
-import { InMemoryBackgroundTaskRegistry, InMemoryTriggerHost } from '@dongkseo/contracts';
+import {
+  EffectWriteFencedError,
+  InMemoryBackgroundTaskRegistry,
+  InMemoryTriggerHost,
+} from '@dongkseo/contracts';
 import { TranscriptRecorder } from './transcript-recorder.js';
 import { bindFallbackContext, type FallbackSink } from './llm/index.js';
 import {
@@ -40,6 +46,22 @@ import {
   createIdleTimeout,
   IdleTimeoutError,
 } from './idle-timeout.js';
+import {
+  DurableExecutionError,
+  DurableToolExecutor,
+  RunLeaseContendedError,
+} from './durable-tool-executor.js';
+
+export interface DurableExecutionOptions {
+  /** Durable store for effect intent and results. */
+  ledger: EffectLedger;
+  /** Stable id for this execution attempt. Tool call ids are scoped underneath it. */
+  runId: string | ((input: AgentInput) => string);
+  /** Unique worker identity. Defaults to a fresh UUID for every execute() call. */
+  owner?: (input: AgentInput) => string;
+  /** Lease lifetime. The tool boundary renews it before every new effect. */
+  leaseTtlMs?: number;
+}
 
 export interface LocalExecutionHarnessOptions {
   /** 사고 패턴 */
@@ -85,6 +107,8 @@ export interface LocalExecutionHarnessOptions {
    * same-key writes across them serialize; leave undefined for a single agent.
    */
   resourceLock?: ResourceLock;
+  /** Opt-in durable tool execution. Existing non-durable callers remain unchanged. */
+  durability?: DurableExecutionOptions;
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 600_000;
@@ -114,6 +138,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly deliverResult?: (result: BackgroundTaskResult) => void | Promise<void>;
   private readonly triggers: TriggerHost;
   private readonly resourceLock?: ResourceLock;
+  private readonly durability?: DurableExecutionOptions;
   /**
    * Per-harness file-read history shared into the tool context so the read tool
    * can dedup unchanged re-reads. Lives for the harness lifetime (survives across
@@ -155,6 +180,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.deliverResult = options.deliverResult;
     this.triggers = options.triggers ?? new InMemoryTriggerHost();
     this.resourceLock = options.resourceLock;
+    this.durability = options.durability;
   }
 
   async *execute(input: AgentInput): AsyncGenerator<AgentEvent> {
@@ -168,10 +194,6 @@ export class LocalExecutionHarness implements ExecutionHarness {
       : null;
     this.activeRecorder = recorder;
     this.activeSteerWrites = [];
-    if (recorder && !input.resumeContext) {
-      try { await recorder.recordUserInput(input); } catch { /* best-effort */ }
-    }
-
     const collectedEvents: AgentEvent[] = [];
     const toolInputs = new Map<string, unknown>();
     let finalContent = '';
@@ -184,6 +206,7 @@ export class LocalExecutionHarness implements ExecutionHarness {
 
     let workspace: WorkspaceSession | undefined;
     let toolExecutor = this.tools;
+    let effectLease: { runId: string; owner: string; token: number } | undefined;
     let loopGen: AsyncGenerator<AgentEvent> | null = null;
     // Side channel for tool-emitted progress events (ctx.emitProgress). Merged
     // into the yielded stream so a tool can surface activity (e.g. a delegate
@@ -191,6 +214,26 @@ export class LocalExecutionHarness implements ExecutionHarness {
     const progress = createProgressChannel();
 
     try {
+      if (this.durability) {
+        const runId = typeof this.durability.runId === 'function'
+          ? this.durability.runId(input)
+          : this.durability.runId;
+        if (!runId) throw new Error('Durable execution runId must not be empty');
+        const owner = this.durability.owner?.(input) ?? randomUUID();
+        const token = await this.durability.ledger.acquire(
+          runId,
+          owner,
+          this.durability.leaseTtlMs ?? 60_000,
+        );
+        if (token === 0) throw new RunLeaseContendedError(runId);
+        effectLease = { runId, owner, token };
+      }
+
+      // A contending worker must not append transcript state before it owns the run.
+      if (recorder && !input.resumeContext) {
+        try { await recorder.recordUserInput(input); } catch { /* best-effort */ }
+      }
+
       const baseToolContext = this.tools.getContext?.();
       if (this.workspaceProvider) {
         if (!baseToolContext || !this.tools.withContext) {
@@ -219,6 +262,27 @@ export class LocalExecutionHarness implements ExecutionHarness {
           triggers: this.triggers,
           resourceLock: this.resourceLock,
           readFileState: baseToolContext.readFileState ?? this.readFileState,
+        });
+      }
+
+      if (this.durability && effectLease) {
+        const durability = this.durability;
+        const lease = effectLease;
+        toolExecutor = new DurableToolExecutor({
+          inner: toolExecutor,
+          ledger: durability.ledger,
+          runId: lease.runId,
+          fencingToken: lease.token,
+          renewLease: async () => {
+            const token = await durability.ledger.acquire(
+              lease.runId,
+              lease.owner,
+              durability.leaseTtlMs ?? 60_000,
+            );
+            if (token === 0) throw new RunLeaseContendedError(lease.runId);
+            lease.token = token;
+            return token;
+          },
         });
       }
 
@@ -292,6 +356,10 @@ export class LocalExecutionHarness implements ExecutionHarness {
         yield event;
       }
     } catch (err) {
+      if (err instanceof DurableExecutionError || err instanceof EffectWriteFencedError) {
+        executionError = err;
+        throw err;
+      }
       // AbortError thrown by raceAgainstAbort — distinguish timeout vs explicit abort.
       const reason = controller.signal.reason;
       if (reason instanceof IdleTimeoutError) {
@@ -339,6 +407,14 @@ export class LocalExecutionHarness implements ExecutionHarness {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           this.logger.warn('workspace.cleanup.failed', { error: message });
+        }
+      }
+      if (this.durability && effectLease) {
+        try {
+          await this.durability.ledger.release(effectLease.runId, effectLease.owner);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn('effect-lease.release.failed', { error: message });
         }
       }
       try {

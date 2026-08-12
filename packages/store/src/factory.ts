@@ -19,6 +19,7 @@ import type {
   DescribableStore,
   StoreBackendInfo,
   AgentLogger,
+  EffectLedger,
 } from '@dongkseo/contracts';
 
 export interface StoreProvider {
@@ -38,6 +39,8 @@ export interface StoreProvider {
   transcript?: TranscriptStore;
   /** 대화별 워크스페이스 snapshot 바인딩 (conversationId 키). Optional until all backends implement it. */
   workspaceState?: WorkspaceStateStore;
+  /** Durable tool-effect intent/results and run lease. Optional for legacy/custom backends. */
+  effectLedger?: EffectLedger;
 }
 
 /**
@@ -57,6 +60,7 @@ export function warnDevStores(
     ['toolContext', provider.toolContext],
     ['artifact', provider.artifact],
     ['workspaceState', provider.workspaceState],
+    ['effectLedger', provider.effectLedger],
   ];
   for (const [name, store] of stores) {
     if (isDescribable(store)) {

@@ -3,6 +3,7 @@
 // 섹션 맵 (에이전트용: 무엇이 어느 파일에 있는지 — 정확한 타입은 해당 파일을 signatures 모드로)
 //   LLM Provider   ./llm (./llm/pi-ai, ./llm/fallback)   PiAiProvider, FallbackLLMProvider
 //   Tool Executor  ./tool-executor   CoreToolExecutor, formatToolResult, coerceToolArgs
+//                  ./durable-tool-executor   DurableToolExecutor
 //   Memory         ./transcript-memory   TranscriptMemoryProvider
 //   Compaction     ./compaction      TwoStageCompactor, estimateTokens, shouldCompact
 //   Middleware     ./middleware      MiddlewarePipeline, loggingMiddleware, toolFilterMiddleware
@@ -29,6 +30,16 @@ export type {
   BatchToolCall,
   BatchToolResult,
 } from './tool-executor.js';
+export {
+  DurableToolExecutor,
+  DurableExecutionError,
+  IndeterminateEffectError,
+  RunLeaseContendedError,
+  EffectReplayMismatchError,
+  InvalidDurableToolCallError,
+} from './durable-tool-executor.js';
+export type { DurableToolExecutorOptions } from './durable-tool-executor.js';
+export { MemoryEffectLedger } from './memory-effect-ledger.js';
 
 export { TranscriptMemoryProvider } from './transcript-memory.js';
 export type { TranscriptMemoryProviderOptions } from './transcript-memory.js';
@@ -76,7 +87,7 @@ export { createIdleTimeout, IdleTimeoutError } from './idle-timeout.js';
 export type { IdleTimeout } from './idle-timeout.js';
 
 export { LocalExecutionHarness } from './execution-harness.js';
-export type { LocalExecutionHarnessOptions } from './execution-harness.js';
+export type { LocalExecutionHarnessOptions, DurableExecutionOptions } from './execution-harness.js';
 export { HostWorkspaceProvider } from './workspace-provider.js';
 export type { HostWorkspaceProviderOptions } from './workspace-provider.js';
 export { AsrtSandboxClient } from './asrt-sandbox-client.js';

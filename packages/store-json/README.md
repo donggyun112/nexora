@@ -31,6 +31,7 @@
 | **Knowledge / Schedule** | 지식 토픽·예약 작업 영속화 | `KnowledgeStoreJson`, `ScheduleStoreJson` |
 | **Context / Audit / Tool** | 컨텍스트·감사 로그·도구 컨텍스트 | `ContextStoreJson`, `AuditStoreJson`, `ToolContextStoreJson` |
 | **Suspended turn** | HITL(휴먼인더루프) 일시중단 턴 저장 | `SuspendedTurnStoreJson` |
+| **Effect ledger** | 도구 intent/result와 run lease/fencing 저장 | `EffectLedgerJson` |
 
 ## 사용 레시피
 
@@ -53,6 +54,7 @@ import { createJsonStoreProvider } from '@dongkseo/store-json';
 
 const provider = createJsonStoreProvider('./.data'); // dataDir 하위에 JSON 파일 생성
 await provider.conversation.appendMessage(conversationId, message);
+// AgentRunner durability에 provider.effectLedger를 주입할 수 있다.
 
 // 단일 store만 필요하면 클래스를 직접 쓴다
 import { TreeConversationStoreJson } from '@dongkseo/store-json';
@@ -69,6 +71,7 @@ const entryId = await tree.appendEntry(conversationId, entry);
 ctx_read(path="packages/store-json/src/index.ts",        mode="map")          # 전체 export 목록
 ctx_read(path="packages/store-json/src/conversation.ts", mode="signatures")
 ctx_read(path="packages/store-json/src/session-tree.ts", mode="signatures")
+ctx_read(path="packages/store-json/src/effect-ledger.ts", mode="signatures")
 ```
 
 어떤 파일에 뭐가 있는지는 `src/index.ts` 상단 주석 맵을 먼저 보면 된다.

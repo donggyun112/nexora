@@ -43,6 +43,8 @@ export type { DurableToolExecutorOptions } from './durable-tool-executor.js';
 export { MemoryEffectLedger } from './memory-effect-ledger.js';
 export { DurableLLMProvider } from './durable-llm-provider.js';
 export type { DurableLLMProviderOptions } from './durable-llm-provider.js';
+export { DurableInputController } from './durable-input-controller.js';
+export type { DurableInputControllerOptions } from './durable-input-controller.js';
 
 export { TranscriptMemoryProvider } from './transcript-memory.js';
 export type { TranscriptMemoryProviderOptions } from './transcript-memory.js';

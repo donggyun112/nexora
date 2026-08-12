@@ -25,7 +25,7 @@ transport에 붙이는 `AgentRunner` / `bootstrapAgent`가 여기 있다.
 |------|------|-------------|
 | **LLM Provider** | LLM 호출 통합 어댑터(Anthropic·OpenAI·OpenRouter…) + 폴백 체인 | `PiAiProvider`, `FallbackLLMProvider`, `ThinkingLlmProvider` |
 | **Tool Executor** | 에이전트 도구 실행·인자 강제·결과 포맷·배치 호출 | `CoreToolExecutor`, `formatToolResult`, `coerceToolArgs` |
-| **Durable effects** | 도구·모델 결과 replay, 중단된 효과 감지, run lease/fencing | `DurableToolExecutor`, `DurableLLMProvider`, `MemoryEffectLedger` |
+| **Durable execution** | 도구·모델 replay, input admission, 중단 감지, run lease/fencing | `DurableToolExecutor`, `DurableLLMProvider`, `DurableInputController`, `MemoryEffectLedger` |
 | **Memory / Compaction** | 컨텍스트 토큰 추정·축소(2단계 컴팩터)·도구출력 정리 | `CoreMemoryProvider`, `TwoStageCompactor`, `estimateTokens`, `shouldCompact` |
 | **Middleware** | 실행/도구/LLM 호출 전후 훅 파이프라인 | `MiddlewarePipeline`, `loggingMiddleware`, `toolFilterMiddleware` |
 | **Runner / Bootstrap** | 한 에이전트를 조립해 transport에 붙여 구동 | `AgentRunner`, `bootstrapAgent`, `RunningAgent` |
@@ -113,6 +113,7 @@ ctx_read(path="packages/core/src/llm/index.ts",     mode="signatures")   # PiAiP
 ctx_read(path="packages/core/src/tool-executor.ts", mode="signatures")   # CoreToolExecutor
 ctx_read(path="packages/core/src/durable-tool-executor.ts", mode="signatures") # durable effects
 ctx_read(path="packages/core/src/durable-llm-provider.ts", mode="signatures")  # durable model calls
+ctx_read(path="packages/core/src/durable-input-controller.ts", mode="signatures") # input admission
 ctx_read(path="packages/core/src/pi-headless.ts",   mode="signatures")   # drivePi
 ```
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { createReactArchitecture } from '../react.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
 import type { AgentEvent, PendingRuntimeInput, RuntimeServices, LLMMessage, ToolDefinition, ToolResult } from '@dongkseo/contracts';
-import { suspendResult } from '@dongkseo/contracts';
+import { OrchestrationControlError, suspendResult } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -236,6 +236,19 @@ describe('ReactArchitecture', () => {
     const err = events.find(e => e.type === 'error');
     expect(err).toBeDefined();
     if (err?.type === 'error') expect(err.message).toContain('llm fail');
+  });
+
+  it('does not convert an orchestration control signal into an agent error event', async () => {
+    const control = new OrchestrationControlError('model effect is indeterminate');
+    const llm = new MockLLMProvider([{ text: '' }]);
+    llm.stream = async function* () { throw control; };
+    const services = makeServices(llm, new Map());
+    const arch = createReactArchitecture();
+
+    await expect(collect(arch.loop(
+      services as unknown as RuntimeServices,
+      { prompt: 'x' },
+    ))).rejects.toBe(control);
   });
 
   it('respects maxIterations', async () => {

@@ -20,6 +20,7 @@ import type {
   LLMMessage,
   LLMResponse,
 } from '@dongkseo/contracts';
+import { OrchestrationControlError } from '@dongkseo/contracts';
 import {
   executeToolCalls,
   absorbRuntimeInputs,
@@ -130,6 +131,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
             options.model ?? '',
           );
         } catch (err) {
+          if (err instanceof OrchestrationControlError) throw err;
           if (services.signal.aborted) return;
           const message = err instanceof Error ? err.message : String(err);
           yield { type: 'error', message };

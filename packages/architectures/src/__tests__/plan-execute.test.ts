@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createPlanExecuteArchitecture } from '../plan-execute.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
 import type { AgentEvent, PendingRuntimeInput, RuntimeServices, ToolDefinition } from '@dongkseo/contracts';
+import { OrchestrationControlError } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -20,6 +21,16 @@ function servicesWithToolList(llm: MockLLMProvider, tools: Map<string, (i: unkno
 }
 
 describe('PlanExecuteArchitecture — plan-mode gating', () => {
+  it('does not convert an orchestration control signal into an agent error event', async () => {
+    const control = new OrchestrationControlError('model effect is indeterminate');
+    const llm = new MockLLMProvider([{ text: '' }]);
+    llm.stream = async function* () { throw control; };
+    const services = servicesWithToolList(llm, new Map(), ['submit_research_plan']);
+    const arch = createPlanExecuteArchitecture({ exitPlanTool: 'submit_research_plan' });
+
+    await expect(collect(arch.loop(services, { prompt: 'go' }))).rejects.toBe(control);
+  });
+
   it('applies the PLAN prompt while admitting an orchestrated initial input', async () => {
     const llm = new MockLLMProvider([{ text: 'planning' }]);
     const services = servicesWithToolList(llm, new Map(), ['submit_research_plan']);

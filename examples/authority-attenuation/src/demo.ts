@@ -15,7 +15,8 @@
 
 import {
   createDelegateTool,
-  createApprovalGateMiddleware,
+  createApprovalGate,
+  gateTool,
   createEscalationGuard,
   InMemoryApprovalPolicyStore,
 } from '@dongkseo/tools';
@@ -91,19 +92,19 @@ export async function runAuthorityDemo(): Promise<DemoResult> {
       const inherited = env.metadata.inheritedAuthority;
       inheritedByChild = inherited;
 
-      const gate = createApprovalGateMiddleware({
-        transport,
+      const tools = [
+        groupedTool('docs_read', 'docs.read'),
+        groupedTool('docs_write', 'docs.write'),
+      ];
+      const { preToolUse } = createApprovalGate({
         store,
         resolveGroupAction: createEscalationGuard(inherited),
+        // Policy groups live on the ToolDefinition; a gate stage only sees the call.
+        resolveTool: (name) => tools.find((t) => t.name === name),
       });
-      const gated = (tool: ToolDefinition): ToolDefinition => {
-        const wrapper = { tools: [tool] };
-        gate.beforeExecution(wrapper);
-        return wrapper.tools[0];
-      };
 
-      for (const tool of [groupedTool('docs_read', 'docs.read'), groupedTool('docs_write', 'docs.write')]) {
-        const res = await gated(tool).execute('call', {}, ctx);
+      for (const tool of tools) {
+        const res = await gateTool(tool, preToolUse).execute('call', {}, ctx);
         outcomes.push({
           tool: tool.name,
           group: tool.policyGroups![0],

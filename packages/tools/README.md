@@ -24,7 +24,7 @@
 | **웹/이미지** | 검색·페치 도구 + 백엔드 | `createWebSearchTool`, `createWebFetchTool`, `createBraveBackend`, `createImageSearchTool` |
 | **에이전트 협업** | 위임·발행·HITL 도구 | `createDelegateTool`, `createHandraiseTool`, `createPublishTopicTool` |
 | **레지스트리** | 도구 등록/필터/그룹·프로파일 조립 | `ToolRegistry`, `TOOL_GROUPS`, `TOOL_PROFILES`, `resolveToolNames`, `assembleToolsWithPolicy` |
-| **Handraise (HITL)** | 사람에게 질문·승인 받는 프리미티브 | `HandraiseInbox`, `HandraisePolicy`, `InMemoryApprovalPolicyStore`, `createApprovalGateMiddleware` |
+| **Handraise (HITL)** | 사람에게 질문·승인 받는 프리미티브 | `HandraiseInbox`, `HandraisePolicy`, `InMemoryApprovalPolicyStore`, `createApprovalGate` |
 | **MCP 브리지** | 외부 MCP↔내부 도구 양방향 변환 | `mcpClientToTools`, `createMcpServerBridge` |
 | **Reporter** | 도구 활동을 typed 이벤트로 발행 | `createReporterMiddleware`, `reportTopic` |
 
@@ -73,9 +73,12 @@ const { tools } = assembleToolsWithPolicy(registry, {
 정책 그룹 기반 승인 게이트:
 
 ```ts
-createApprovalGateMiddleware({
-  transport,
+// 승인은 도구를 감싸지 않는다 — PreToolUse/OnResume 한 쌍이다.
+// 사람에게 물어야 하면 "무엇을 물을지"만 돌려주고 턴을 suspend한다(타임아웃 대기 없음).
+// 발행은 런타임이 파킹을 기록한 뒤에 한다 — 게이트는 아무것도 publish하지 않는다.
+const { preToolUse, onResume } = createApprovalGate({
   store,
+  resolveTool: (name) => tools.find((t) => t.name === name), // 정책 그룹은 ToolDefinition에 있다
   resolveGroupAction: ({ policyGroup, channel }) => {
     if (policyGroup === 'requires_review' && channel === 'multica') return 'skip';
     if (policyGroup === 'requires_review') return 'ask';
@@ -83,6 +86,8 @@ createApprovalGateMiddleware({
     return 'skip';
   },
 });
+// → 런타임에 그대로 배선한다. 도구 하나만 감싸야 하면 `gateTool(tool, preToolUse, transport)`
+//   (도구 경로는 스스로 발행해야 하므로 transport가 필요하다).
 ```
 
 더 큰 예제: [`examples/auto-work-flow`](../../examples/auto-work-flow) (PM→Coder→Reviewer + handraise),

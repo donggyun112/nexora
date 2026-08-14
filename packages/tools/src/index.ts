@@ -6,7 +6,7 @@
 //   내장 도구     ./builtin            create{Read,Grep,Write,Edit,Exec,Knowledge}Tool
 //   웹/이미지     ./builtin            create{WebSearch,WebFetch,ImageSearch}Tool, createBraveBackend
 //   협업/HITL     ./builtin            create{Delegate,Handraise,PublishTopic}Tool
-//   Handraise     ./handraise          HandraiseInbox, HandraisePolicy, approval(승인) 정책·미들웨어
+//   Handraise     ./handraise          HandraiseInbox, HandraisePolicy, approval(승인) 게이트(PreToolUse/OnResume)
 //   MCP 브리지    ./mcp                mcpClientToTools(외부→도구), createMcpServerBridge(도구→외부)
 //   Reporter      ./reporter           createReporterMiddleware, reportTopic (도구 활동 이벤트)
 //

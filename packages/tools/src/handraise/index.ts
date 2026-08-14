@@ -30,9 +30,10 @@ export type {
   ApprovalRecord,
 } from './approval-store.js';
 
-export { createApprovalGateMiddleware } from './approval-middleware.js';
+export { createApprovalGate, gateTool } from './approval-middleware.js';
 export type {
   ApprovalGateOptions,
+  ApprovalGateSpec,
   ApprovalGatePredicate,
   ApprovalGatePolicyAction,
   ApprovalGatePolicyContext,

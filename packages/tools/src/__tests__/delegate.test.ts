@@ -373,7 +373,6 @@ describe('delegate tool', () => {
       transport,
       registry,
       approvalGate: {
-        transport,
         store,
         // Gate on every delegate call — the caller's policy decides risk.
         predicate: (_toolName, input) => {
@@ -417,7 +416,6 @@ describe('delegate tool', () => {
       transport,
       registry,
       approvalGate: {
-        transport,
         store,
         predicate: (_toolName, input) => {
           const cap = (input as { capability?: string } | undefined)?.capability;

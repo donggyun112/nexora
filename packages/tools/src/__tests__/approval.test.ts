@@ -2,33 +2,39 @@ import { describe, it, expect } from 'vitest';
 import {
   HandraiseInbox,
   InMemoryApprovalPolicyStore,
-  createApprovalGateMiddleware,
+  createApprovalGate,
   createEscalationGuard,
   isApprovalRequest,
   defaultShellHardlineRule,
 } from '../index.js';
 import type {
-  ApprovalRequest,
+  ApprovalGateOptions,
   ApprovalReply,
   ApprovalMode,
   ToolDefinition,
   ToolContext,
+  ToolLogger,
 } from '../index.js';
 import type {
   EventTransport,
   MessageEnvelope,
   RequestOptions,
+  ResumeAnswer,
   Subscription,
+  ToolDecision,
+  ToolGateInfo,
   TopicString,
   TransportDescription,
   WorkspaceSession,
 } from '@dongkseo/contracts';
-import { matchTopic, messageId, textResult } from '@dongkseo/contracts';
+import { matchTopic, messageId, suspendEnvelope, textResult } from '@dongkseo/contracts';
 
 class FakeTransport implements EventTransport {
   private readonly subs = new Map<number, { pattern: string; handler: (e: MessageEnvelope) => Promise<void> }>();
   private nextId = 0;
   public readonly published: MessageEnvelope[] = [];
+  /** The whole point of the suspension rewrite: this must stay 0. */
+  public requestCalls = 0;
 
   describe(): TransportDescription {
     return { kind: 'fake', deliveryGuarantee: 'at-most-once', durable: false, supportsConsumerGroups: false };
@@ -46,6 +52,7 @@ class FakeTransport implements EventTransport {
     return { unsubscribe: () => { this.subs.delete(id); } };
   }
   async request(topic: TopicString, payload: unknown, options?: RequestOptions): Promise<MessageEnvelope> {
+    this.requestCalls += 1;
     const requestId = messageId();
     const timeoutMs = options?.timeoutMs ?? 30_000;
     return new Promise((resolve, reject) => {
@@ -83,6 +90,16 @@ class FakeTransport implements EventTransport {
   async close(): Promise<void> { this.subs.clear(); }
 }
 
+interface LogLine {
+  event: string;
+  data?: unknown;
+}
+
+function recordingLogger(sink: LogLine[]): ToolLogger {
+  const push = (event: string, data?: unknown) => { sink.push({ event, data }); };
+  return { info: push, warn: push, error: push };
+}
+
 function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
     tenantId: 'tenant-A',
@@ -93,16 +110,104 @@ function makeCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   };
 }
 
-function makeTool(name: string, calls: { input: unknown }[]): ToolDefinition {
+function makeTool(name: string, groups?: readonly string[]): ToolDefinition {
   return {
     name,
     description: '',
     parameters: { type: 'object', properties: {} },
-    execute: async (_id, input) => {
-      calls.push({ input });
-      return textResult(`${name} ran`);
-    },
+    ...(groups ? { policyGroups: groups } : {}),
+    execute: async () => textResult(`${name} ran`),
   };
+}
+
+/** The call a gate stage is handed — `{callId, name, input}` plus context. */
+function callInfo(
+  name: string,
+  input: unknown = {},
+  ctx: ToolContext = makeCtx(),
+  callId = 'c1',
+): ToolGateInfo {
+  return { call: { callId, name, input }, context: ctx };
+}
+
+function resumeInfo(
+  info: ToolGateInfo,
+  answer: unknown,
+  pendingId = 'pending-1',
+): ToolGateInfo & { resume: ResumeAnswer } {
+  return { ...info, resume: { pendingId, answer } };
+}
+
+const APPROVED_ONCE: ApprovalReply = { choice: 'once', userId: 'u1', displayName: 'Alice' };
+
+function expectDeny(decision: ToolDecision): string {
+  expect(decision.kind).toBe('deny');
+  if (decision.kind !== 'deny') throw new Error('not a deny');
+  expect(decision.result.type).toBe('error');
+  return decision.result.type === 'error' ? decision.result.message : '';
+}
+
+function questions(transport: FakeTransport, channel = 'default'): MessageEnvelope[] {
+  return transport.published.filter((e) => e.topic === `handraise.human.${channel}`);
+}
+
+/**
+ * The gate never publishes any more, so a test that wants to see the question on
+ * the wire has to do what the runtime does: mint the pendingId, publish under
+ * it, and only then treat the turn as parked.
+ */
+async function publishAsRuntimeWould(
+  transport: FakeTransport,
+  decision: ToolDecision,
+  tenantId = 'tenant-A',
+): Promise<string> {
+  if (decision.kind !== 'suspend') throw new Error('expected suspend');
+  const pendingId = messageId();
+  await transport.publish(suspendEnvelope(pendingId, decision.request, tenantId));
+  return pendingId;
+}
+
+/** Gate over a single tool named 'risky', gated by the default predicate. */
+function setupGate(opts: {
+  transport: FakeTransport;
+  store: InMemoryApprovalPolicyStore;
+  sessionKey?: string;
+  mode?: ApprovalMode;
+  resolveMode?: ApprovalGateOptions['resolveMode'];
+  hardline?: ApprovalGateOptions['hardline'];
+  predicate?: ApprovalGateOptions['predicate'];
+}) {
+  return createApprovalGate({
+    store: opts.store,
+    channel: 'default',
+    predicate:
+      opts.predicate ??
+      ((tool) =>
+        tool === 'risky'
+          ? { approvalKey: 'risky-key', command: 'rm -rf /tmp/x', reason: 'cleanup' }
+          : null),
+    resolveSessionKey: () => opts.sessionKey ?? 'session-1',
+    mode: opts.mode,
+    resolveMode: opts.resolveMode,
+    hardline: opts.hardline,
+  });
+}
+
+/** Gate over a policy-group-declaring tool, on the 'multica' channel. */
+function setupGroupGate(
+  opts: Pick<ApprovalGateOptions, 'resolveGroupAction' | 'mode' | 'predicate' | 'resolveTool'>,
+  tool: ToolDefinition,
+  transport = new FakeTransport(),
+  store = new InMemoryApprovalPolicyStore(),
+) {
+  const gate = createApprovalGate({
+    store,
+    channel: 'multica',
+    resolveSessionKey: () => 'session-1',
+    resolveTool: (name) => (name === tool.name ? tool : undefined),
+    ...opts,
+  });
+  return { gate, transport, store };
 }
 
 describe('InMemoryApprovalPolicyStore', () => {
@@ -140,127 +245,100 @@ describe('InMemoryApprovalPolicyStore', () => {
   });
 });
 
-describe('approvalGateMiddleware', () => {
-  const baseCtx = {
-    input: { tenantId: 'tenant-A' } as unknown as Parameters<NonNullable<ToolDefinition['execute']>>[1],
-    tools: [] as ToolDefinition[],
-    systemPrompt: '',
-  };
-
-  function setupGate(opts: {
-    transport: FakeTransport;
-    store: InMemoryApprovalPolicyStore;
-    sessionKey?: string;
-    mode?: ApprovalMode;
-    resolveMode?: (ctx: { tenantId: string; toolName: string; sessionKey: string }) => ApprovalMode | undefined;
-    hardline?: Parameters<typeof createApprovalGateMiddleware>[0]['hardline'];
-    predicate?: Parameters<typeof createApprovalGateMiddleware>[0]['predicate'];
-  }) {
-    return createApprovalGateMiddleware({
-      transport: opts.transport,
-      store: opts.store,
-      channel: 'default',
-      predicate:
-        opts.predicate ??
-        ((tool) =>
-          tool === 'risky'
-            ? { approvalKey: 'risky-key', command: 'rm -rf /tmp/x', reason: 'cleanup' }
-            : null),
-      resolveSessionKey: () => opts.sessionKey ?? 'session-1',
-      mode: opts.mode,
-      resolveMode: opts.resolveMode,
-      hardline: opts.hardline,
-    });
-  }
-
-  function autoRespond(
-    transport: FakeTransport,
-    choice: 'once' | 'session' | 'always' | 'deny',
-    channel = 'default',
-  ) {
-    // Auto-respond to any handraise request on the selected channel.
-    transport.subscribe(`handraise.human.${channel}`, async (env) => {
-      const payload = env.payload as { context?: unknown };
-      if (!isApprovalRequest(payload.context)) return;
-      const reply: ApprovalReply = { choice, userId: 'u1', displayName: 'Alice' };
-      await transport.publish({
-        id: messageId(),
-        topic: `handraise.human.${channel}.answered`,
-        type: 'result',
-        payload: { answer: reply },
-        metadata: {
-          ...env.metadata,
-          replyTo: env.id,
-          timestamp: Date.now(),
-        },
-      });
-    });
-  }
-
-  function wrap(mw: ReturnType<typeof setupGate>, tool: ToolDefinition): ToolDefinition {
-    const ctx = { tools: [tool], input: baseCtx.input, systemPrompt: '' };
-    mw.beforeExecution(ctx);
-    return ctx.tools[0];
-  }
-
-  function wrapPolicyGroupTool(
-    opts: Pick<Parameters<typeof createApprovalGateMiddleware>[0], 'resolveGroupAction' | 'mode' | 'predicate'>,
-    tool: ToolDefinition,
-    transport = new FakeTransport(),
-    store = new InMemoryApprovalPolicyStore(),
-  ): { wrapped: ToolDefinition; transport: FakeTransport; store: InMemoryApprovalPolicyStore } {
-    const mw = createApprovalGateMiddleware({
-      transport,
-      store,
-      channel: 'multica',
-      resolveSessionKey: () => 'session-1',
-      ...opts,
-    });
-    const ctx = { tools: [tool], input: baseCtx.input, systemPrompt: '' };
-    mw.beforeExecution(ctx);
-    return { wrapped: ctx.tools[0], transport, store };
-  }
-
-  it('passes through non-risky tools', async () => {
+/**
+ * preToolUse decision order. Each step of the documented order gets its own
+ * test, including the ones that only matter because of where they sit
+ * (hardline before everything, cached deny before mode).
+ */
+describe('createApprovalGate — preToolUse decision order', () => {
+  it('step 1: hardline floor beats mode off, a cached allow, and a skipping predicate', async () => {
     const transport = new FakeTransport();
     const store = new InMemoryApprovalPolicyStore();
-    const mw = setupGate({ transport, store });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('safe', calls));
-    const result = await wrapped.execute('c1', { x: 1 }, makeCtx());
-    expect(result.type).toBe('text');
-    expect(calls).toHaveLength(1);
-    const requests = transport.published.filter((e) => e.topic === 'handraise.human.default');
-    expect(requests).toHaveLength(0);
+    await store.rememberAlways('tenant-A', 'shell-key');
+    const logs: LogLine[] = [];
+    const { preToolUse } = setupGate({
+      transport,
+      store,
+      mode: 'off',
+      hardline: defaultShellHardlineRule,
+      predicate: () => null, // predicate would skip approval — hardline must still fire
+    });
+
+    const decision = await preToolUse(
+      callInfo('shell', { command: 'rm -rf /' }, makeCtx({ logger: recordingLogger(logs) })),
+    );
+
+    const message = expectDeny(decision);
+    expect(message).toContain('hardline');
+    expect(message).toContain('rm_root');
+    expect(message).toContain('do not retry');
+    expect(logs.map((l) => l.event)).toContain('approval.hardline.block');
+    expect(questions(transport)).toHaveLength(0);
   });
 
-  it('policy group action=skip bypasses the explicit gate for that group', async () => {
-    const calls: { input: unknown }[] = [];
-    const tool: ToolDefinition = {
-      ...makeTool('outline_create_document', calls),
-      policyGroups: ['outline.write', 'requires_review'],
-    };
-    const { wrapped, transport } = wrapPolicyGroupTool({
+  it('hardline floor lets safe commands pass through', async () => {
+    const transport = new FakeTransport();
+    const { preToolUse } = setupGate({
+      transport,
+      store: new InMemoryApprovalPolicyStore(),
+      mode: 'off',
+      hardline: defaultShellHardlineRule,
+      predicate: () => null,
+    });
+
+    const decision = await preToolUse(callInfo('shell', { command: 'ls /tmp' }));
+
+    expect(decision.kind).toBe('continue');
+  });
+
+  it('step 2: policy group deny short-circuits without prompting', async () => {
+    const tool = makeTool('outline_get_document');
+    tool.permissionGroups = ['outline.collection.out_of_scope'];
+    const logs: LogLine[] = [];
+    const { gate, transport } = setupGroupGate({
       resolveGroupAction: ({ policyGroup }) =>
-        policyGroup === 'requires_review' ? 'skip' : null,
+        policyGroup === 'outline.collection.out_of_scope'
+          ? { action: 'deny', reason: 'collection not allowed' }
+          : null,
     }, tool);
 
-    const result = await wrapped.execute('c1', { title: 'doc' }, makeCtx());
+    const decision = await gate.preToolUse(
+      callInfo(tool.name, { id: 'x' }, makeCtx({ logger: recordingLogger(logs) })),
+    );
 
-    expect(result.type).toBe('text');
-    expect(calls).toHaveLength(1);
-    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+    expect(expectDeny(decision)).toContain('DENIED');
+    expect(logs.map((l) => l.event)).toContain('approval.policy_group.deny');
+    expect(transport.published).toHaveLength(0);
   });
 
-  it('policy group action=ask uses the normal approval flow', async () => {
-    const transport = new FakeTransport();
-    autoRespond(transport, 'once', 'multica');
-    const calls: { input: unknown }[] = [];
-    const tool: ToolDefinition = {
-      ...makeTool('outline_create_document', calls),
-      policyGroups: ['requires_review'],
-    };
-    const { wrapped } = wrapPolicyGroupTool({
+  it('step 2: policy group block short-circuits without prompting', async () => {
+    const tool = makeTool('deploy_production', ['release.freeze']);
+    const { gate, transport } = setupGroupGate({
+      resolveGroupAction: ({ policyGroup }) =>
+        policyGroup === 'release.freeze' ? { action: 'block', reason: 'release freeze' } : null,
+    }, tool);
+
+    const decision = await gate.preToolUse(callInfo(tool.name));
+
+    expect(expectDeny(decision)).toContain('BLOCKED');
+    expect(transport.published).toHaveLength(0);
+  });
+
+  it('policy group skip leaves the call to the predicate', async () => {
+    const tool = makeTool('outline_create_document', ['outline.write', 'requires_review']);
+    const { gate, transport } = setupGroupGate({
+      resolveGroupAction: ({ policyGroup }) => (policyGroup === 'requires_review' ? 'skip' : null),
+    }, tool);
+
+    const decision = await gate.preToolUse(callInfo(tool.name, { title: 'doc' }));
+
+    expect(decision.kind).toBe('continue');
+    expect(transport.published).toHaveLength(0);
+  });
+
+  it('policy group ask builds the spec and takes the normal ask path', async () => {
+    const tool = makeTool('outline_create_document', ['requires_review']);
+    const { gate, transport } = setupGroupGate({
       resolveGroupAction: ({ policyGroup, channel }) =>
         policyGroup === 'requires_review' && channel === 'multica'
           ? {
@@ -272,28 +350,24 @@ describe('approvalGateMiddleware', () => {
               review: 'preview body',
             }
           : 'skip',
-    }, tool, transport);
+    }, tool);
 
-    const result = await wrapped.execute('c1', { title: 'doc' }, makeCtx());
+    const decision = await gate.preToolUse(callInfo(tool.name, { title: 'doc' }));
 
-    expect(result.type).toBe('text');
-    expect(calls).toHaveLength(1);
-    const requests = transport.published.filter((e) => e.topic === 'handraise.human.multica');
-    expect(requests).toHaveLength(1);
-    const payload = requests[0].payload as { context?: unknown };
+    if (decision.kind !== 'suspend') throw new Error('expected suspend');
+    expect(transport.published).toHaveLength(0);
+    expect(decision.request.topic).toBe('handraise.human.multica');
+    const payload = decision.request.payload as { context?: unknown };
     expect(isApprovalRequest(payload.context)).toBe(true);
     if (isApprovalRequest(payload.context)) {
       expect(payload.context.approvalKey).toBe('outline-review');
       expect(payload.context.review).toBe('preview body');
+      expect(payload.context.choices).toEqual(['once', 'deny']);
     }
   });
 
-  it('threads toolCtx.workspace through to the policy-group resolver', async () => {
-    const calls: { input: unknown }[] = [];
-    const tool: ToolDefinition = {
-      ...makeTool('outline_create_document', calls),
-      policyGroups: ['requires_review'],
-    };
+  it('threads context.workspace through to the policy-group resolver', async () => {
+    const tool = makeTool('outline_create_document', ['requires_review']);
     const stubWorkspace = {
       id: 'ws-1',
       root: '/workspace',
@@ -305,164 +379,383 @@ describe('approvalGateMiddleware', () => {
       cleanup: async () => {},
     } as unknown as WorkspaceSession;
     let receivedWorkspace: WorkspaceSession | undefined;
-    const { wrapped } = wrapPolicyGroupTool({
+    const { gate } = setupGroupGate({
       resolveGroupAction: (ctx) => {
         receivedWorkspace = ctx.workspace;
         return 'skip';
       },
     }, tool);
 
-    await wrapped.execute('c1', { title: 'doc' }, makeCtx({ workspace: stubWorkspace }));
+    await gate.preToolUse(
+      callInfo(tool.name, { title: 'doc' }, makeCtx({ workspace: stubWorkspace })),
+    );
 
     expect(receivedWorkspace).toBe(stubWorkspace);
   });
 
-  it('policy group action=block short-circuits without prompting', async () => {
-    const calls: { input: unknown }[] = [];
-    const tool: ToolDefinition = {
-      ...makeTool('deploy_production', calls),
-      policyGroups: ['release.freeze'],
-    };
-    const { wrapped, transport } = wrapPolicyGroupTool({
-      resolveGroupAction: ({ policyGroup }) =>
-        policyGroup === 'release.freeze'
-          ? { action: 'block', reason: 'release freeze' }
-          : null,
+  it('denies when group policy is configured but the tool cannot be resolved', async () => {
+    // "no tool found" must not read as "declares no groups" — that would let a
+    // lookup miss walk straight past an escalation guard.
+    const tool = makeTool('privileged_op', ['B']);
+    const { gate } = setupGroupGate({
+      resolveGroupAction: createEscalationGuard(['A']),
+      resolveTool: () => undefined,
     }, tool);
 
-    const result = await wrapped.execute('c1', {}, makeCtx());
+    const decision = await gate.preToolUse(callInfo(tool.name));
 
-    expect(result.type).toBe('error');
-    if (result.type === 'error') expect(result.message).toContain('BLOCKED');
-    expect(calls).toHaveLength(0);
-    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
-  });
-
-  it('policy group action=deny hard-denies without prompting', async () => {
-    const calls: { input: unknown }[] = [];
-    const tool: ToolDefinition = {
-      ...makeTool('outline_get_document', calls),
-      permissionGroups: ['outline.collection.out_of_scope'],
-    };
-    const { wrapped, transport } = wrapPolicyGroupTool({
-      resolveGroupAction: ({ policyGroup }) =>
-        policyGroup === 'outline.collection.out_of_scope'
-          ? { action: 'deny', reason: 'collection not allowed' }
-          : null,
-    }, tool);
-
-    const result = await wrapped.execute('c1', { id: 'x' }, makeCtx());
-
-    expect(result.type).toBe('error');
-    if (result.type === 'error') expect(result.message).toContain('DENIED');
-    expect(calls).toHaveLength(0);
-    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+    expect(expectDeny(decision)).toContain('could not resolve tool');
   });
 
   it('denies a delegated tool whose group escalates beyond inherited authority', async () => {
-    const calls: { input: unknown }[] = [];
-    // Parent was granted only {A}; a delegatee tool declaring group B is escalation.
-    const escalating: ToolDefinition = {
-      ...makeTool('privileged_op', calls),
-      permissionGroups: ['B'],
-    };
-    const { wrapped, transport } = wrapPolicyGroupTool({
+    const tool = makeTool('privileged_op');
+    tool.permissionGroups = ['B'];
+    const { gate, transport } = setupGroupGate({
       resolveGroupAction: createEscalationGuard(['A']),
-    }, escalating);
+    }, tool);
 
-    const result = await wrapped.execute('c1', {}, makeCtx());
+    const decision = await gate.preToolUse(callInfo(tool.name));
 
-    expect(result.type).toBe('error');
-    if (result.type === 'error') expect(result.message).toContain('DENIED');
-    expect(calls).toHaveLength(0);
-    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
+    expect(expectDeny(decision)).toContain('DENIED');
+    expect(transport.published).toHaveLength(0);
   });
 
   it('allows a delegated tool whose group is within inherited authority', async () => {
-    const calls: { input: unknown }[] = [];
-    const inScope: ToolDefinition = {
-      ...makeTool('granted_op', calls),
-      permissionGroups: ['A'],
-    };
-    const { wrapped } = wrapPolicyGroupTool({
+    const tool = makeTool('granted_op');
+    tool.permissionGroups = ['A'];
+    const { gate } = setupGroupGate({
       resolveGroupAction: createEscalationGuard(['A']),
-    }, inScope);
+    }, tool);
 
-    const result = await wrapped.execute('c1', {}, makeCtx());
-
-    expect(result.type).toBe('text');
-    expect(calls).toHaveLength(1);
+    expect((await gate.preToolUse(callInfo(tool.name))).kind).toBe('continue');
   });
 
-  it('grants once: runs tool, does not cache', async () => {
+  it('step 3: a call with no spec continues without a prompt', async () => {
+    const transport = new FakeTransport();
+    const { preToolUse } = setupGate({ transport, store: new InMemoryApprovalPolicyStore() });
+
+    const decision = await preToolUse(callInfo('safe', { x: 1 }));
+
+    expect(decision.kind).toBe('continue');
+    expect(transport.published).toHaveLength(0);
+  });
+
+  it("step 5: a cached deny binds even under mode='off'", async () => {
     const transport = new FakeTransport();
     const store = new InMemoryApprovalPolicyStore();
-    autoRespond(transport, 'once');
-    const mw = setupGate({ transport, store });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
+    await store.rememberDeny('tenant-A', 'session-1', 'risky-key', 'Carol');
+    const logs: LogLine[] = [];
+    const { preToolUse } = setupGate({ transport, store, mode: 'off' });
 
-    await wrapped.execute('c1', {}, makeCtx());
-    expect(calls).toHaveLength(1);
+    const decision = await preToolUse(
+      callInfo('risky', {}, makeCtx({ logger: recordingLogger(logs) })),
+    );
+
+    expect(expectDeny(decision)).toContain('prior policy');
+    expect(logs.map((l) => l.event)).toContain('approval.cached.deny');
+  });
+
+  it("step 6: mode='block' denies without prompting", async () => {
+    const transport = new FakeTransport();
+    const logs: LogLine[] = [];
+    const { preToolUse } = setupGate({
+      transport,
+      store: new InMemoryApprovalPolicyStore(),
+      mode: 'block',
+    });
+
+    const decision = await preToolUse(
+      callInfo('risky', {}, makeCtx({ logger: recordingLogger(logs) })),
+    );
+
+    expect(expectDeny(decision)).toContain("mode='block'");
+    expect(logs.map((l) => l.event)).toContain('approval.mode.block');
+    expect(questions(transport)).toHaveLength(0);
+  });
+
+  it("step 7: mode='off' continues without prompting", async () => {
+    const transport = new FakeTransport();
+    const logs: LogLine[] = [];
+    const { preToolUse } = setupGate({
+      transport,
+      store: new InMemoryApprovalPolicyStore(),
+      mode: 'off',
+    });
+
+    const decision = await preToolUse(
+      callInfo('risky', {}, makeCtx({ logger: recordingLogger(logs) })),
+    );
+
+    expect(decision.kind).toBe('continue');
+    expect(logs.map((l) => l.event)).toContain('approval.mode.off');
+    expect(transport.published).toHaveLength(0);
+  });
+
+  it('step 8: a cached allow continues without prompting', async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    await store.rememberSession('tenant-A', 'session-1', 'risky-key', 'session');
+    const logs: LogLine[] = [];
+    const { preToolUse } = setupGate({ transport, store });
+
+    const decision = await preToolUse(
+      callInfo('risky', {}, makeCtx({ logger: recordingLogger(logs) })),
+    );
+
+    expect(decision.kind).toBe('continue');
+    expect(logs.map((l) => l.event)).toContain('approval.cached.allow');
+    expect(questions(transport)).toHaveLength(0);
+  });
+
+  it('resolveMode overrides the static mode per call', async () => {
+    const transport = new FakeTransport();
+    const { preToolUse } = setupGate({
+      transport,
+      store: new InMemoryApprovalPolicyStore(),
+      mode: 'ask',
+      resolveMode: () => 'off',
+    });
+
+    expect((await preToolUse(callInfo('risky'))).kind).toBe('continue');
+    expect(transport.published).toHaveLength(0);
+  });
+
+  it('step 9: asks by RETURNING the question — it publishes nothing at all', async () => {
+    const transport = new FakeTransport();
+    const logs: LogLine[] = [];
+    const { preToolUse } = setupGate({ transport, store: new InMemoryApprovalPolicyStore() });
+
+    const decision = await preToolUse(
+      callInfo('risky', { x: 1 }, makeCtx({ logger: recordingLogger(logs) })),
+    );
+
+    expect(decision.kind).toBe('suspend');
+    // The whole point: deciding is pure. Publishing is the runtime's job, and it
+    // happens only after the park is recorded — so re-running this stage during
+    // recovery cannot put a second question on the wire.
+    expect(transport.published).toHaveLength(0);
+    // The old gate blocked here on a wall-clock deadline. It must not any more.
+    expect(transport.requestCalls).toBe(0);
+    expect(logs.map((l) => l.event)).toContain('approval.request');
+  });
+
+  it('step 9: the returned request carries the topic and the approval payload', async () => {
+    const transport = new FakeTransport();
+    const { preToolUse } = createApprovalGate({
+      store: new InMemoryApprovalPolicyStore(),
+      predicate: () => ({ approvalKey: 'risky-key', command: 'rm -rf /tmp/x', reason: 'cleanup' }),
+      resolveSessionKey: () => 'session-1',
+      resolveRoute: () => ({ channelId: 'chan-9', threadId: 'thread-9' }),
+    });
+
+    const decision = await preToolUse(callInfo('risky', {}, makeCtx(), 'call-77'));
+
+    if (decision.kind !== 'suspend') throw new Error('expected suspend');
+    expect(decision.request.topic).toBe('handraise.human.default');
+    const payload = decision.request.payload as {
+      question: string;
+      callId: string;
+      pendingId?: string;
+      context?: unknown;
+    };
+    expect(payload.question).toBe('Approve: rm -rf /tmp/x');
+    expect(payload.callId).toBe('call-77');
+    // The gate does not mint the correlation id — the runtime does.
+    expect(payload.pendingId).toBeUndefined();
+    expect(isApprovalRequest(payload.context)).toBe(true);
+    if (isApprovalRequest(payload.context)) {
+      expect(payload.context.sessionKey).toBe('session-1');
+      expect(payload.context.channelId).toBe('chan-9');
+      expect(payload.context.threadId).toBe('thread-9');
+    }
+
+    // And once the runtime publishes it, the wire format is what it always was:
+    // envelope id == pendingId, because a reply correlates by replyTo.
+    const pendingId = await publishAsRuntimeWould(transport, decision);
+    const asked = questions(transport);
+    expect(asked).toHaveLength(1);
+    expect(asked[0].id).toBe(pendingId);
+    expect(asked[0].metadata.tenantId).toBe('tenant-A');
+    expect((asked[0].payload as { pendingId?: string }).pendingId).toBe(pendingId);
+  });
+});
+
+/** Steps 10-11: applying the answer. */
+describe('createApprovalGate — onResume', () => {
+  it("step 10 'once': continues and caches nothing", async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    const { onResume } = setupGate({ transport, store });
+
+    const decision = await onResume(resumeInfo(callInfo('risky'), APPROVED_ONCE));
+
+    expect(decision.kind).toBe('continue');
     expect(await store.lookup('tenant-A', 'session-1', 'risky-key')).toBe('unknown');
-    const requests = transport.published.filter((e) => e.topic === 'handraise.human.default');
-    expect(requests).toHaveLength(1);
   });
 
-  it('grants session: caches for this session, bypasses prompt on second call', async () => {
+  it("step 10 'session': caches for this session only, and the next call stops asking", async () => {
     const transport = new FakeTransport();
     const store = new InMemoryApprovalPolicyStore();
-    autoRespond(transport, 'session');
-    const mw = setupGate({ transport, store });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
+    const gate = setupGate({ transport, store });
+    const reply: ApprovalReply = { choice: 'session', displayName: 'Alice' };
 
-    await wrapped.execute('c1', {}, makeCtx());
-    await wrapped.execute('c2', {}, makeCtx());
-    expect(calls).toHaveLength(2);
-    const requests = transport.published.filter((e) => e.topic === 'handraise.human.default');
-    expect(requests).toHaveLength(1);
+    expect((await gate.onResume(resumeInfo(callInfo('risky'), reply))).kind).toBe('continue');
+    expect(await store.lookup('tenant-A', 'session-1', 'risky-key')).toBe('allow');
+    expect(await store.lookup('tenant-A', 'session-2', 'risky-key')).toBe('unknown');
+
+    const second = await gate.preToolUse(callInfo('risky', {}, makeCtx(), 'c2'));
+    expect(second.kind).toBe('continue');
+    expect(questions(transport)).toHaveLength(0);
   });
 
-  it('grants always: persists across sessions', async () => {
+  it("step 10 'always': caches for the tenant across sessions", async () => {
     const transport = new FakeTransport();
     const store = new InMemoryApprovalPolicyStore();
-    autoRespond(transport, 'always');
-    const mw1 = setupGate({ transport, store, sessionKey: 'session-1' });
-    const calls: { input: unknown }[] = [];
-    const wrapped1 = wrap(mw1, makeTool('risky', calls));
-    await wrapped1.execute('c1', {}, makeCtx());
+    const first = setupGate({ transport, store, sessionKey: 'session-1' });
+    const reply: ApprovalReply = { choice: 'always', displayName: 'Alice' };
 
-    const mw2 = setupGate({ transport, store, sessionKey: 'session-2' });
-    const wrapped2 = wrap(mw2, makeTool('risky', calls));
-    await wrapped2.execute('c2', {}, makeCtx());
+    await first.onResume(resumeInfo(callInfo('risky'), reply));
 
-    expect(calls).toHaveLength(2);
-    const requests = transport.published.filter((e) => e.topic === 'handraise.human.default');
-    expect(requests).toHaveLength(1);
+    const other = setupGate({ transport, store, sessionKey: 'session-2' });
+    expect((await other.preToolUse(callInfo('risky'))).kind).toBe('continue');
+    expect(questions(transport)).toHaveLength(0);
   });
 
-  it('denies: returns errorResult and remembers session-scope deny', async () => {
+  it("step 10 'deny': denies and remembers a session-scope deny", async () => {
     const transport = new FakeTransport();
     const store = new InMemoryApprovalPolicyStore();
-    autoRespond(transport, 'deny');
-    const mw = setupGate({ transport, store });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
+    const gate = setupGate({ transport, store });
+    const reply: ApprovalReply = { choice: 'deny', displayName: 'Alice' };
 
-    const result = await wrapped.execute('c1', {}, makeCtx());
-    expect(result.type).toBe('error');
-    expect(calls).toHaveLength(0);
+    const decision = await gate.onResume(resumeInfo(callInfo('risky'), reply));
+
+    expect(expectDeny(decision)).toContain('Approval denied by Alice');
     expect(await store.lookup('tenant-A', 'session-1', 'risky-key')).toBe('deny');
-
-    const result2 = await wrapped.execute('c2', {}, makeCtx());
-    expect(result2.type).toBe('error');
-    const requests = transport.published.filter((e) => e.topic === 'handraise.human.default');
-    expect(requests).toHaveLength(1);
+    // And the deny now binds the next call without a new question.
+    const second = await gate.preToolUse(callInfo('risky', {}, makeCtx(), 'c2'));
+    expect(expectDeny(second)).toContain('prior policy');
+    expect(questions(transport)).toHaveLength(0);
   });
 
-  it('uses end-to-end inbox round-trip when wired together', async () => {
+  it('denies an answer that carries no choice', async () => {
+    const { onResume } = setupGate({
+      transport: new FakeTransport(),
+      store: new InMemoryApprovalPolicyStore(),
+    });
+
+    const decision = await onResume(resumeInfo(callInfo('risky'), { userId: 'u1' }));
+
+    expect(expectDeny(decision)).toContain('missing a choice');
+  });
+
+  it('step 11: the audit trail is the approval.granted log (choice + decidedBy)', async () => {
+    const logs: LogLine[] = [];
+    const { onResume } = setupGate({
+      transport: new FakeTransport(),
+      store: new InMemoryApprovalPolicyStore(),
+    });
+
+    await onResume(
+      resumeInfo(callInfo('risky', {}, makeCtx({ logger: recordingLogger(logs) })), APPROVED_ONCE),
+    );
+
+    const granted = logs.find((l) => l.event === 'approval.granted');
+    expect(granted?.data).toMatchObject({ tool: 'risky', choice: 'once', decidedBy: 'Alice' });
+  });
+});
+
+/**
+ * Blocking applied the decision the instant it was made, so policy could not
+ * move underneath it. Parking opens that window, so onResume re-runs steps 1-8
+ * before the answer counts.
+ */
+describe('createApprovalGate — revalidation while parked', () => {
+  it('a hardline rule added while parked overturns a human approval', async () => {
+    let hardlineActive = false;
+    const { preToolUse, onResume } = setupGate({
+      transport: new FakeTransport(),
+      store: new InMemoryApprovalPolicyStore(),
+      hardline: (name, input) => (hardlineActive ? defaultShellHardlineRule(name, input) : null),
+      predicate: () => ({ approvalKey: 'shell-key', command: 'rm -rf /', reason: 'cleanup' }),
+    });
+    const info = callInfo('shell', { command: 'rm -rf /' });
+    expect((await preToolUse(info)).kind).toBe('suspend');
+
+    hardlineActive = true;
+    const decision = await onResume(resumeInfo(info, APPROVED_ONCE));
+
+    expect(expectDeny(decision)).toContain('hardline');
+  });
+
+  it('a policy group flipped to deny while parked overturns a human approval', async () => {
+    const tool = makeTool('outline_create_document', ['requires_review']);
+    let action: 'ask' | 'deny' = 'ask';
+    const { gate } = setupGroupGate({
+      resolveGroupAction: () =>
+        action === 'ask'
+          ? { action: 'ask', approvalKey: 'outline-review', command: tool.name, reason: 'review' }
+          : { action: 'deny', reason: 'collection revoked' },
+    }, tool);
+    const info = callInfo(tool.name, { title: 'doc' });
+    expect((await gate.preToolUse(info)).kind).toBe('suspend');
+
+    action = 'deny';
+    const decision = await gate.onResume(resumeInfo(info, APPROVED_ONCE));
+
+    expect(expectDeny(decision)).toContain('DENIED');
+  });
+
+  it('a deny cached while parked overturns a human approval', async () => {
+    const store = new InMemoryApprovalPolicyStore();
+    const { preToolUse, onResume } = setupGate({ transport: new FakeTransport(), store });
+    const info = callInfo('risky');
+    expect((await preToolUse(info)).kind).toBe('suspend');
+
+    // Someone else denied the same action while this one sat parked.
+    await store.rememberDeny('tenant-A', 'session-1', 'risky-key', 'Dave');
+    const decision = await onResume(resumeInfo(info, APPROVED_ONCE));
+
+    expect(expectDeny(decision)).toContain('prior policy');
+  });
+
+  it('marks the overturning log line as coming from the resume, not the first gate', async () => {
+    const logs: LogLine[] = [];
+    const store = new InMemoryApprovalPolicyStore();
+    const { preToolUse, onResume } = setupGate({ transport: new FakeTransport(), store });
+    const info = callInfo('risky', {}, makeCtx({ logger: recordingLogger(logs) }));
+    expect((await preToolUse(info)).kind).toBe('suspend');
+
+    await store.rememberDeny('tenant-A', 'session-1', 'risky-key', 'Dave');
+    await onResume(resumeInfo(info, APPROVED_ONCE));
+
+    // The same event name fires from both gates. "A human approved and policy
+    // overturned it" is the one an operator has to be able to pick out.
+    const denied = logs.filter((l) => l.event === 'approval.cached.deny');
+    expect(denied).toHaveLength(1);
+    expect((denied[0].data as { source?: string }).source).toBe('on_resume');
+  });
+
+  it("mode flipped to 'block' while parked overturns a human approval", async () => {
+    let mode: ApprovalMode = 'ask';
+    const { preToolUse, onResume } = setupGate({
+      transport: new FakeTransport(),
+      store: new InMemoryApprovalPolicyStore(),
+      resolveMode: () => mode,
+    });
+    const info = callInfo('risky');
+    expect((await preToolUse(info)).kind).toBe('suspend');
+
+    mode = 'block';
+    const decision = await onResume(resumeInfo(info, APPROVED_ONCE));
+
+    expect(expectDeny(decision)).toContain("mode='block'");
+  });
+});
+
+describe('createApprovalGate — HandraiseInbox round trip', () => {
+  it('the inbox renders the parked question and its answer correlates by replyTo', async () => {
     const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
     const inbox = new HandraiseInbox({
       transport,
       channels: ['default'],
@@ -475,116 +768,28 @@ describe('approvalGateMiddleware', () => {
     });
     inbox.start();
 
-    const store = new InMemoryApprovalPolicyStore();
-    const mw = setupGate({ transport, store });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
+    const { preToolUse, onResume } = setupGate({ transport, store });
+    const info = callInfo('risky');
+    const decision = await preToolUse(info);
+    // The gate only decided; the runtime publishes after recording the park.
+    expect(transport.published).toHaveLength(0);
+    const pendingId = await publishAsRuntimeWould(transport, decision);
 
-    const result = await wrapped.execute('c1', {}, makeCtx());
-    expect(result.type).toBe('text');
-    if (result.type === 'text') expect(result.text).toContain('[approved-once by Bob]');
+    const answered = transport.published.find(
+      (e) => e.topic === 'handraise.human.default.answered',
+    );
+    expect(answered?.metadata.replyTo).toBe(pendingId);
+    expect(transport.requestCalls).toBe(0);
+
+    const payload = answered?.payload as { answer?: unknown };
+    const resumed = await onResume(resumeInfo(info, payload?.answer, pendingId));
+    expect(resumed.kind).toBe('continue');
     inbox.stop();
   });
+});
 
-  it("mode='off': skips prompt and runs the tool", async () => {
-    const transport = new FakeTransport();
-    const store = new InMemoryApprovalPolicyStore();
-    const mw = setupGate({ transport, store, mode: 'off' });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
-
-    const result = await wrapped.execute('c1', { x: 1 }, makeCtx());
-    expect(result.type).toBe('text');
-    expect(calls).toHaveLength(1);
-    // No prompt was published.
-    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
-  });
-
-  it("mode='off': prior 'deny' record still binds", async () => {
-    const transport = new FakeTransport();
-    const store = new InMemoryApprovalPolicyStore();
-    await store.rememberDeny('tenant-A', 'session-1', 'risky-key', 'Carol');
-    const mw = setupGate({ transport, store, mode: 'off' });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
-
-    const result = await wrapped.execute('c1', {}, makeCtx());
-    expect(result.type).toBe('error');
-    expect(calls).toHaveLength(0);
-  });
-
-  it("mode='block': short-circuits without prompting", async () => {
-    const transport = new FakeTransport();
-    const store = new InMemoryApprovalPolicyStore();
-    const mw = setupGate({ transport, store, mode: 'block' });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
-
-    const result = await wrapped.execute('c1', {}, makeCtx());
-    expect(result.type).toBe('error');
-    if (result.type === 'error') expect(result.message).toContain("mode='block'");
-    expect(calls).toHaveLength(0);
-    expect(transport.published.some((m) => m.type === 'request')).toBe(false);
-  });
-
-  it("resolveMode overrides static mode per call", async () => {
-    const transport = new FakeTransport();
-    const store = new InMemoryApprovalPolicyStore();
-    const mw = setupGate({
-      transport,
-      store,
-      mode: 'ask',
-      resolveMode: () => 'off',
-    });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('risky', calls));
-
-    const result = await wrapped.execute('c1', {}, makeCtx());
-    expect(result.type).toBe('text');
-    expect(calls).toHaveLength(1);
-  });
-
-  it('hardline floor blocks even when mode=off', async () => {
-    const transport = new FakeTransport();
-    const store = new InMemoryApprovalPolicyStore();
-    const mw = setupGate({
-      transport,
-      store,
-      mode: 'off',
-      hardline: defaultShellHardlineRule,
-      predicate: () => null, // predicate would skip approval — hardline must still fire
-    });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('shell', calls));
-
-    const result = await wrapped.execute('c1', { command: 'rm -rf /' }, makeCtx());
-    expect(result.type).toBe('error');
-    if (result.type === 'error') {
-      expect(result.message).toContain('hardline');
-      expect(result.message).toContain('rm_root');
-    }
-    expect(calls).toHaveLength(0);
-  });
-
-  it('hardline floor lets safe commands pass through', async () => {
-    const transport = new FakeTransport();
-    const store = new InMemoryApprovalPolicyStore();
-    const mw = setupGate({
-      transport,
-      store,
-      mode: 'off',
-      hardline: defaultShellHardlineRule,
-      predicate: () => null,
-    });
-    const calls: { input: unknown }[] = [];
-    const wrapped = wrap(mw, makeTool('shell', calls));
-
-    const result = await wrapped.execute('c1', { command: 'ls /tmp' }, makeCtx());
-    expect(result.type).toBe('text');
-    expect(calls).toHaveLength(1);
-  });
-
-  it('hardline shell rules catch rm flag variants and avoid non-recursive chmod false positives', () => {
+describe('hardline shell rules', () => {
+  it('catches rm flag variants and avoids non-recursive chmod false positives', () => {
     expect(defaultShellHardlineRule('shell', { command: 'rm -f -r /Users' })?.ruleId)
       .toBe('hardline.rm_root');
     expect(defaultShellHardlineRule('shell', { command: 'rm -rf --no-preserve-root /' })?.ruleId)

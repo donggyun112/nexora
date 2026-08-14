@@ -34,7 +34,7 @@ import {
   spanId,
   conversationId,
 } from '@dongkseo/contracts';
-import { createApprovalGateMiddleware } from '../handraise/approval-middleware.js';
+import { createApprovalGate, gateTool } from '../handraise/approval-middleware.js';
 import type { ApprovalGateOptions } from '../handraise/approval-middleware.js';
 import { attenuate } from '../handraise/authority.js';
 import { InMemoryBackgroundTaskRegistry } from '@dongkseo/contracts';
@@ -147,11 +147,15 @@ export interface DelegateToolOptions {
    */
   onSubagentEvent?: (subagentName: string, event: AgentEvent) => void;
   /**
-   * Optional approval gate. When supplied, the returned tool definition is
-   * wrapped with `createApprovalGateMiddleware`. The predicate receives the
-   * raw delegate input (`{ capability, input, ... }`) and decides per-call
-   * whether the hop needs human approval. Hardline rules (if any) fire
+   * Optional approval gate. When supplied, the returned tool definition runs
+   * `createApprovalGate`'s `preToolUse` before delegating. The predicate
+   * receives the raw delegate input (`{ capability, input, ... }`) and decides
+   * per-call whether the hop needs human approval. Hardline rules (if any) fire
    * before the predicate and cannot be bypassed by mode='off'.
+   *
+   * A hop that needs a human returns `suspendResult(pendingId)` — the turn
+   * parks instead of blocking. Applying the eventual answer is the runtime's
+   * job (`createApprovalGate().onResume`); a tool wrapper cannot do that half.
    *
    * Typical use: gate when `capability` falls into a tenant-defined "risky"
    * set (e.g. anything touching billing or production), or when the
@@ -625,13 +629,13 @@ export function createDelegateTool(options: DelegateToolOptions): ToolDefinition
 
   if (!approvalGate) return toolDef;
 
-  // Run the tool definition through the approval gate middleware.
-  // The middleware's beforeExecution mutates the tools array in place,
-  // returning a wrapped clone in slot 0.
-  const gate = createApprovalGateMiddleware(approvalGate);
-  const wrapper: { tools: ToolDefinition[] } = { tools: [toolDef] };
-  gate.beforeExecution(wrapper);
-  return wrapper.tools[0];
+  // Only this one tool can be behind the gate here, so the group resolver's
+  // tool lookup is a constant.
+  const { preToolUse } = createApprovalGate({
+    ...approvalGate,
+    resolveTool: approvalGate.resolveTool ?? (() => toolDef),
+  });
+  return gateTool(toolDef, preToolUse, transport);
 }
 
 // ─── Subagent execution ─────────────────────────────────────────────────

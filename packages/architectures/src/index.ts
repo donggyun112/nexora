@@ -5,8 +5,6 @@
  *
  *   react          ./react         createReactArchitecture, ReactOptions
  *                                  → ReAct (Reasoning + Acting) 루프. 가장 일반적인 도구 호출 루프.
- *   plan-execute   ./plan-execute  createPlanExecuteArchitecture, PlanExecuteOptions
- *                                  → PLAN phase(도구 게이팅으로 계획 강제) → EXECUTE phase. plan mode 공식화.
  *   loop helpers   ./loop-helpers  LoopCompactionOptions
  *                                  → 한 턴 내부 history 압축(컨텍스트 윈도우 프루닝) 옵션.
  *   registry       ./resolve       resolveArchitecture, isSupportedArchitecture, SUPPORTED_ARCHITECTURES,
@@ -19,8 +17,6 @@
 export { createReactArchitecture } from './react.js';
 export type { ReactOptions } from './react.js';
 export type { LoopCompactionOptions } from './loop-helpers.js';
-export { createPlanExecuteArchitecture } from './plan-execute.js';
-export type { PlanExecuteOptions } from './plan-execute.js';
 
 export { resolveArchitecture, isSupportedArchitecture, SUPPORTED_ARCHITECTURES } from './resolve.js';
 export type { SupportedArchitecture, ArchitectureBuildContext } from './resolve.js';

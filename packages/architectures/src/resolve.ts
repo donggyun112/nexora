@@ -6,18 +6,19 @@
  * 통해 적절한 architecture instance 를 받는다. 미지원 architecture 는 명시적 throw —
  * 카드 오타나 미구현 architecture 선언이 silent 하게 react 로 fall back 되는 일을 막는다.
  *
- * loop architecture 는 `shouldStop` runtime callback 이 필요해 카드 선언만으로
- * 인스턴스화 불가 — 의도적으로 미지원.
+ * 지금 지원하는 건 react 하나뿐이다. plan-execute 가 있었지만 그건 아키텍처가 아니라
+ * 권한 정책이었다 — Claude Code 의 plan mode 는 `toolPermissionContext.mode` 값 하나이고
+ * 게이팅은 단일 권한 게이트에서 일어난다. 두 번째 플래너로 만든 게 설계 오류였고,
+ * 같은 것이 필요해지면 `RuntimeServices.preToolUse` 스테이지로 돌아온다.
  *
  * Nexora 'Architecture pluggable' 컨셉 적용 (philosophy.md §4).
  */
 
 import { createReactArchitecture } from './react.js';
-import { createPlanExecuteArchitecture } from './plan-execute.js';
 import type { LoopCompactionOptions } from './loop-helpers.js';
 import type { AgentArchitecture } from '@dongkseo/contracts';
 
-export const SUPPORTED_ARCHITECTURES = ['react', 'plan-execute'] as const;
+export const SUPPORTED_ARCHITECTURES = ['react'] as const;
 export type SupportedArchitecture = (typeof SUPPORTED_ARCHITECTURES)[number];
 
 export interface ArchitectureBuildContext {
@@ -30,17 +31,10 @@ export interface ArchitectureBuildContext {
   /** card-news 같이 long-running pipeline 인 경우 iteration 상한 override. */
   readonly maxIterations?: number;
   /**
-   * plan-execute 의 EXECUTE phase 에서만 노출할 도구 (PLAN phase 에선 숨김). caller 가
-   * card.tools ∩ submit 화이트리스트로 파생해 넘긴다 (에이전트명 하드코딩 없이).
-   */
-  readonly executePhaseTools?: readonly string[];
-  /**
    * 한 턴 내부 history 압축 설정. 카드가 `withinTurnCompaction` 을 선언하면 caller 가
    * 넘긴다(기본 임계값이면 빈 객체). 미지정이면 react 루프 내 프루닝 비활성.
    */
   readonly compaction?: LoopCompactionOptions;
-  /** plan-execute 의 PLAN→EXECUTE 전이를 신호하는 도구명. plan-execute 선택 시 필수. */
-  readonly exitPlanTool?: string;
 }
 
 /**
@@ -61,23 +55,6 @@ export function resolveArchitecture(
           maxTokens: buildCtx.maxTokens,
           ...(buildCtx.maxIterations !== undefined ? { maxIterations: buildCtx.maxIterations } : {}),
           ...(buildCtx.compaction !== undefined ? { compaction: buildCtx.compaction } : {}),
-        }),
-      );
-    case 'plan-execute':
-      if (!buildCtx.exitPlanTool) {
-        throw new Error(
-          "Architecture 'plan-execute' requires buildCtx.exitPlanTool " +
-            '(PLAN→EXECUTE 전이를 신호하는 도구명). 호출자가 명시적으로 주입해야 함.',
-        );
-      }
-      return withThinkingLifecycle(
-        createPlanExecuteArchitecture({
-          systemPrompt: buildCtx.systemPrompt,
-          model: buildCtx.model,
-          maxTokens: buildCtx.maxTokens,
-          ...(buildCtx.maxIterations !== undefined ? { maxIterations: buildCtx.maxIterations } : {}),
-          exitPlanTool: buildCtx.exitPlanTool,
-          executePhaseTools: [...(buildCtx.executePhaseTools ?? [])],
         }),
       );
     default:

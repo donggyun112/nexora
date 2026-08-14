@@ -147,19 +147,6 @@ export type {
   SafeSkillWriterOptions,
 } from './self-improve.js';
 
-// Verification Loop (grader/judge) — wrap a runtime factory with a retry-on-fail grader.
-export {
-  createVerifiedRuntime,
-  createRubricGrader,
-  createLlmJudgeGrader,
-} from './verification.js';
-export type {
-  Grader,
-  GradeResult,
-  LlmJudgeOptions,
-  VerifiedRuntimeOptions,
-} from './verification.js';
-
 // --- lifted from in7-marketing-poc (generic runtime primitives) ---
 export { KeyedSerializer } from './keyed-serializer.js';
 export { RotatingKeyProvider } from './rotating-key-provider.js';

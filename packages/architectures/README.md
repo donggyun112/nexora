@@ -9,14 +9,14 @@ pnpm add @dongkseo/architectures
 ## 무엇인가 / 무엇이 아닌가
 
 에이전트의 **사고·실행 루프(agent architecture)** 를 구현한다. agent card 의 `architecture` 필드가
-선언한 패턴(`'react'`, `'plan-execute'`)을, runner 가 돌리는 실제 `AgentArchitecture` 인스턴스로
-만들어 준다. LLM 한 턴이 도구를 어떻게 부르고 언제 멈추는지가 여기 있다.
+선언한 패턴(`'react'`)을, runner 가 돌리는 실제 `AgentArchitecture` 인스턴스로 만들어 준다.
+LLM 한 턴이 도구를 어떻게 부르고 언제 멈추는지가 여기 있다.
 
 의존 방향: `@dongkseo/architectures` → `@dongkseo/contracts` (타입만). 이 패키지는 계약을 **구현**하는
 쪽이고, contracts 는 구현을 모른다.
 
-- ✅ 담는 것: ReAct 루프, plan→execute 2-phase 루프(도구 게이팅으로 plan mode 강제), 카드 선언
-  문자열을 인스턴스로 변환하는 dispatch table, 한 턴 내부 history 압축(컨텍스트 윈도우 프루닝).
+- ✅ 담는 것: ReAct 루프, 카드 선언 문자열을 인스턴스로 변환하는 dispatch table,
+  control point 배선(`loop-helpers`), 한 턴 내부 history 압축(컨텍스트 윈도우 프루닝).
 - ❌ 안 담는 것: LLM 클라이언트/어댑터(`@dongkseo/adapters`), 도구 구현, 워커·런타임 오케스트레이션,
   영속화. `RuntimeServices`(LLM·도구·signal)는 caller 가 주입한다.
 
@@ -25,7 +25,6 @@ pnpm add @dongkseo/architectures
 | 개념 | 무엇 | 대표 export |
 |------|------|-------------|
 | **ReAct** | Reasoning + Acting 루프. 가장 일반적인 도구 호출 에이전트 | `createReactArchitecture`, `ReactOptions` |
-| **Plan-Execute** | PLAN phase(마무리 도구를 숨겨 계획을 먼저 강제) → EXECUTE phase. plan mode 공식화 | `createPlanExecuteArchitecture`, `PlanExecuteOptions` |
 | **Architecture registry** | 카드의 `architecture` 문자열 → factory 호출 단일 dispatch | `resolveArchitecture`, `isSupportedArchitecture`, `SUPPORTED_ARCHITECTURES` |
 | **Build context** | registry 가 인스턴스를 만들 때 받는 입력(system prompt·model·도구 게이팅) | `ArchitectureBuildContext`, `SupportedArchitecture` |
 | **Loop compaction** | 한 턴 내부 history 의 오래된 큰 tool_result 를 결정적으로 프루닝 | `LoopCompactionOptions` |
@@ -67,20 +66,13 @@ const architecture = resolveArchitecture(card.architecture, {
   systemPrompt,
   model: limits.model,
   maxTokens: limits.maxTokens,
-  // plan-execute 선택 시 exitPlanTool 필수
 });
 ```
 
-plan-execute 는 PLAN→EXECUTE 전이 도구를 반드시 지정한다:
-
-```ts
-import { createPlanExecuteArchitecture } from '@dongkseo/architectures';
-
-createPlanExecuteArchitecture({
-  exitPlanTool: 'submit_research_plan',            // PLAN phase 를 닫는 도구 (필수, 실제 등록된 도구명)
-  executePhaseTools: ['submit_keywords'],          // EXECUTE phase 에서만 노출 (PLAN 에선 숨김)
-});
-```
+한때 `plan-execute` 아키텍처가 있었다. plan mode 를 두 phase 로 나눠 PLAN 에선 마무리 도구를
+숨기는 방식이었는데, 레퍼런스(Claude Code)를 다시 보니 plan mode 는 아키텍처가 아니라
+`toolPermissionContext.mode` 값 하나였고 게이팅은 단일 권한 게이트에서 일어난다. 같은 것이
+필요해지면 `RuntimeServices.preToolUse` 스테이지로 돌아온다 — 플래너를 늘리지 않는다.
 
 더 큰 예제: [`examples/auto-work-flow`](../../examples/auto-work-flow), [`examples/helpdesk`](../../examples/helpdesk).
 
@@ -91,7 +83,7 @@ createPlanExecuteArchitecture({
 
 ```
 ctx_read(path="packages/architectures/src/react.ts",         mode="signatures")
-ctx_read(path="packages/architectures/src/plan-execute.ts",  mode="signatures")
+ctx_read(path="packages/architectures/src/loop-helpers.ts",  mode="signatures")
 ctx_read(path="packages/architectures/src/resolve.ts",       mode="signatures")
 ctx_read(path="packages/architectures/src/index.ts",         mode="map")   # 전체 export 목록
 ```

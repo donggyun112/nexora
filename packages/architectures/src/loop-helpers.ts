@@ -1,8 +1,10 @@
 /**
  * loop-helpers — ReAct 계열 아키텍처가 공유하는 도구 실행 / history 위생 헬퍼.
  *
- * react.ts 와 deep-research.ts 가 동일한 도구 호출 처리·tool-pair sanitize 로직을
- * 공유한다. 한 곳에서 고치면 두 아키텍처 모두 반영된다.
+ * 도구 호출 처리·tool-pair sanitize·control point 배선을 한 곳에 모은다. 아키텍처가
+ * 여럿이던 시절의 공유 지점이었고, react 하나만 남은 지금도 루프 본문과 배선을 갈라
+ * 두는 값은 그대로다 — 배선 순서가 python `engines/plain/loop.py` 와 맞는지 볼 때
+ * 읽을 곳이 한 파일이다.
  */
 
 import { Buffer } from 'node:buffer';
@@ -87,8 +89,9 @@ export function contextMessagesFromResult(result: unknown): LLMMessage[] {
 }
 
 // ── 턴 단위 control point ────────────────────────────────────────────────────
-// react.ts 와 plan-execute.ts 가 같은 규약을 공유한다. 배선 순서의 원본은 python
-// `engines/plain/loop.py` 의 `react_loop` / `_admit_turn_inputs` / `_decide_finish`.
+// 배선 순서의 원본은 python `engines/plain/loop.py` 의 `react_loop` /
+// `_admit_turn_inputs` / `_decide_finish`. 루프 본문이 아니라 여기 모아두는 이유는
+// 그 대조를 한 파일에서 할 수 있게 하기 위해서다.
 
 /**
  * 정책이 보는 실행 스냅샷 — python `_control_ctx` 와 같은 것을 담는다.
@@ -392,8 +395,7 @@ export function suspendHistorySnapshot(
 }
 
 /**
- * 재개 진입부 — 파킹됐던 호출의 결과를 history 에 합류시킨다. react.ts 와
- * plan-execute.ts 가 같은 규약을 공유하므로 여기 한 곳에 둔다.
+ * 재개 진입부 — 파킹됐던 호출의 결과를 history 에 합류시킨다.
  *
  * `services.onResume` 이 설정돼 있고 체크포인트에 원본 호출(`resumedCall`)과 포장 전
  * 답변(`resumeAnswer`)이 실려 있으면 현재 정책으로 재검증한다:

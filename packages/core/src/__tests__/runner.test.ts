@@ -626,7 +626,7 @@ describe('AgentRunner', () => {
     const seen: { turn: number; reason: StopReason }[] = [];
 
     // 아키텍처는 끝나기 직전에 훅에 물어보고, halt 면 그 reason 으로 끝낸다 —
-    // react/plan-execute 가 하는 것과 같은 규약.
+    // react 가 하는 것과 같은 규약.
     const askArch: AgentArchitecture = {
       name: 'ask-arch',
       async *loop(services: RuntimeServices): AsyncGenerator<AgentEvent> {

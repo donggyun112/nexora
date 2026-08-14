@@ -154,9 +154,9 @@ export interface DrivePiOptions {
   appendSession?: (line: string) => void;
   /**
    * Model id configured for this runtime (from the daemon's `--model`). Used as
-   * the fallback when an AgentEvent does not carry `model` (e.g. the
-   * plan-execute architecture, or the defensive terminal turn_end), so every
-   * `turn_end` reports a model and Multica never records usage as "unknown".
+   * the fallback when an AgentEvent does not carry `model` (e.g. the defensive
+   * terminal turn_end), so every `turn_end` reports a model and Multica never
+   * records usage as "unknown".
    */
   model?: string;
 }

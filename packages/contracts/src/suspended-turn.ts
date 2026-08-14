@@ -30,6 +30,15 @@ export interface SuspendedTurnState {
   /** Tool results that completed in the suspending batch, excluding the suspended call. */
   completedResults?: Array<Extract<LLMContentBlock, { type: 'tool_result' }>>;
   /**
+   * The parked call's name and input. Becomes `resumeContext.resumedCall`, which
+   * is what an `onResume` gate needs to re-judge the call and — when it answers
+   * `continue` — to actually run it. The name/input are also inside
+   * `architectureHistory`, but digging them back out of a message array is
+   * brittle, so they are stored explicitly. Optional: checkpoints written before
+   * this field existed resume with the old behavior (answer injected as result).
+   */
+  call?: { name: string; input: unknown };
+  /**
    * The original incoming envelope. Re-run rebuilds the AgentInput from this
    * via the agent's own `toAgentInput`, so no agent-specific input shape leaks
    * into the store.

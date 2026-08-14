@@ -1,4 +1,5 @@
 import type { ToolDefinition, ToolContext, ToolResult } from './tool.js';
+import type { OnResume, PreToolUse, ResumeAnswer, SuspendRequest } from './controls.js';
 import type { OutboundArtifact } from './adapter.js';
 
 /**
@@ -38,6 +39,24 @@ export interface AgentInput {
     completedResults?: Array<Extract<LLMContentBlock, { type: 'tool_result' }>>;
     resumedCallId: string;
     toolResult: ToolResult;
+    /**
+     * The parked call's name and input, carried through the checkpoint
+     * (`SuspendedTurnState.call`).
+     *
+     * Needed because `onResume` may answer `continue`, which means "run that
+     * tool now" — and running it takes the name and input, not just the id.
+     * Optional so every existing caller (and every resume that predates the
+     * hook) keeps working; absent → `onResume` is not consulted and the answer
+     * is injected as the result, exactly as before.
+     */
+    resumedCall?: { name: string; input: unknown };
+    /**
+     * The reply as it arrived, before anyone formatted it into `toolResult`.
+     * `onResume` has to read whether the human approved or refused, which
+     * `textResult(...)` has already thrown away. Optional for the same reason
+     * as `resumedCall`.
+     */
+    resumeAnswer?: ResumeAnswer;
   };
 }
 
@@ -178,6 +197,31 @@ export interface RuntimeServices {
   }) => boolean | Promise<boolean>;
 
   /**
+   * 모델이 도구를 호출하려는 순간, 실행 전에 "이걸 실행해도 되나?"를 앱 정책에 묻는다.
+   * 배치의 각 호출마다 한 번씩, executor 를 건드리기 전에 호출된다.
+   *
+   * `continue` 면 그대로 실행, `deny` 면 실행하지 않고 그 결과를 모델에 준다,
+   * `suspend` 면 그 호출을 파킹한다 — 게이트는 무엇을 물을지(`SuspendRequest`)만
+   * 돌려주고 publish 하지 않는다. pendingId 민팅도 발행도 런타임 몫이다
+   * (`ToolDecision` 참고). 사람의 답을 타임아웃으로 기다리지 않고 턴을 중단하는
+   * 자리이므로, 승인 게이트는 여기 꽂힌다.
+   *
+   * 미설정이면 게이팅 없이 실행된다.
+   */
+  preToolUse?: PreToolUse;
+
+  /**
+   * 파킹된 호출의 답이 도착했을 때, 현재 정책으로 그 호출과 답을 재검증한다.
+   * 파킹 중에 정책이 바뀔 수 있으므로 답만으로 결정하지 않는다.
+   *
+   * `answer` 는 포장되지 않은 원본 payload 다 — 승인/거부를 읽어야 하기 때문이다.
+   * 반환값의 의미는 `OnResume` TSDoc 참고.
+   *
+   * 미설정이면 재개는 현재 동작을 유지한다(답변을 그대로 그 호출의 결과로 주입).
+   */
+  onResume?: OnResume;
+
+  /**
    * Architecture-level hook invoked when a tool returns ToolResult.suspend.
    * Receives the architecture history snapshot so the caller can persist it.
    * If not provided, the architecture still emits a `suspended` event but no
@@ -188,6 +232,23 @@ export interface RuntimeServices {
     toolCallId: string;
     architectureHistory: LLMMessage[];
     completedResults: Array<Extract<LLMContentBlock, { type: 'tool_result' }>>;
+    /**
+     * The parked call itself. Persisted into `SuspendedTurnState.call` so the
+     * resume path can hand it to `onResume` and, on `continue`, actually run it.
+     * Optional: architectures that predate the tool-decision contract still call
+     * this hook without it, and a checkpoint without it just falls back to
+     * injecting the answer as the result.
+     */
+    call?: { name: string; input: unknown };
+    /**
+     * The question to publish for this park, when a gate asked for one. The
+     * handler publishes it AFTER persisting the park — see the `suspend` branch
+     * of `ToolDecision`.
+     *
+     * Optional: a tool that suspended on its own (the human branch of the
+     * handraise tool) already published its question, so there is nothing here.
+     */
+    request?: SuspendRequest;
   }) => Promise<void>;
 }
 

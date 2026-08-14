@@ -10,6 +10,7 @@
 //   Oracle        ./oracle      NexoraOracle, OracleDecision, OracleContext
 //   Messaging     ./message     메시지 타입        ./topic       topic, matchTopic, Topics
 //   Tools         ./tool        textResult, errorResult, suspendResult
+//   Tool 게이트   ./controls    ToolDecision, PreToolUse, OnResume, composePreToolUse
 //   Workflow      ./workflow, ./workflow-state, ./suspended-turn
 //   Store         ./store, ./store-backend, ./context   StoreBackend
 //   Effects       ./effect-ledger   EffectLedger, EffectRecord
@@ -150,6 +151,22 @@ export type {
   FileReadState,
 } from './tool.js';
 export { textResult, errorResult, contentResult, suspendResult, getToolPolicyGroups } from './tool.js';
+
+export type {
+  ToolDecision,
+  ToolGateInfo,
+  PreToolUse,
+  ResumeAnswer,
+  OnResume,
+  SuspendRequest,
+} from './controls.js';
+export {
+  continueDecision,
+  denyDecision,
+  suspendDecision,
+  suspendEnvelope,
+  composePreToolUse,
+} from './controls.js';
 
 export type {
   BackgroundTaskStatus,

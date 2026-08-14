@@ -7,13 +7,24 @@
 
 import { Buffer } from 'node:buffer';
 import type {
+  AgentEvent,
   AgentInput,
   LLMContentBlock,
   LLMMessage,
   LLMResponse,
   PendingRuntimeInput,
   RuntimeServices,
+  SuspendRequest,
   ToolBatchResult,
+  ToolDecision,
+  ToolResult,
+} from '@dongkseo/contracts';
+import {
+  denyDecision,
+  errorResult,
+  imageBlocksFromResult,
+  messageId,
+  suspendResult,
 } from '@dongkseo/contracts';
 
 export { imageResultForLLM, imageBlocksFromResult, sanitizeToolPairsInPlace } from '@dongkseo/contracts';
@@ -70,10 +81,89 @@ export function contextMessagesFromResult(result: unknown): LLMMessage[] {
   });
 }
 
+export type ToolCallOutcome = {
+  tc: ToolCall;
+  result: unknown;
+  isError: boolean;
+  /**
+   * 게이트가 파킹하며 넘긴 질문. 아키텍처가 `onSuspend` 로 실어보내면 런타임이
+   * 파킹을 기록한 뒤 발행한다. 도구가 스스로 suspend 한 경우엔 없다.
+   */
+  suspendRequest?: SuspendRequest;
+};
+
+/**
+ * 모델이 요청한 배치를 실행한다. `services.preToolUse` 가 설정돼 있으면 각 호출마다
+ * executor 를 건드리기 전에 먼저 묻는다.
+ *
+ * 게이트 답에 따라:
+ *   - `continue` → executor 로 (배치 정책 그대로).
+ *   - `deny`     → executor 에 보내지 않고 게이트가 준 결과를 그 호출의 결과로 합류.
+ *   - `suspend`  → 여기서 `pendingId` 를 만들고 `suspendResult(pendingId)` 를 그 호출의
+ *                  결과로 만든다. 게이트가 준 질문(`request`)은 outcome 에 실어 보내
+ *                  `onSuspend` 까지 간다 — 발행은 파킹이 기록된 뒤 런타임이 한다
+ *                  (ToolDecision 참고). 아키텍처의 기존 suspend 감지 경로가 그대로
+ *                  처리한다(새 경로를 만들지 않는다).
+ *
+ * 게이트가 suspend 를 내면 tool.ts 의 "If it suspends, the remaining calls must not
+ * start" 규약대로 남은 호출은 시작하지 않는다 — 게이트에 *묻지도* 않는다. 파킹되는 건
+ * 한 호출뿐이라 나머지 질문은 어차피 답 받을 곳이 없다. 이미 통과한 앞선 호출은 그대로
+ * 실행하고 결과를 보존한다(호출자가 completedResults 로 체크포인트한다).
+ *
+ * 미설정이면 게이트 왕복 없이 예전 경로 그대로다.
+ */
 export async function executeToolCalls(
   services: RuntimeServices,
   toolCalls: ToolCall[],
-): Promise<{ tc: ToolCall; result: unknown; isError: boolean }[]> {
+): Promise<ToolCallOutcome[]> {
+  const gate = services.preToolUse;
+  if (!gate) return runToolCalls(services, toolCalls);
+
+  const context = services.tools.getContext?.();
+  const decided: { tc: ToolCall; decision: ToolDecision }[] = [];
+  for (const tc of toolCalls) {
+    const decision = await gate({
+      call: { callId: tc.id, name: tc.name, input: tc.arguments },
+      ...(context ? { context } : {}),
+    });
+    decided.push({ tc, decision });
+    if (decision.kind === 'suspend') break;
+  }
+
+  const allowed = decided.filter(d => d.decision.kind === 'continue').map(d => d.tc);
+  const executed = new Map(
+    (allowed.length > 0 ? await runToolCalls(services, allowed) : []).map(out => [out.tc.id, out]),
+  );
+
+  const results: ToolCallOutcome[] = [];
+  for (const { tc, decision } of decided) {
+    if (decision.kind === 'deny') {
+      // 거부는 모델에게 실패로 보여야 한다 — 도구가 돌지 않았고, terminatesLoop 같은
+      // 성공 전용 판정도 타지 않아야 한다.
+      results.push({ tc, result: decision.result, isError: true });
+      continue;
+    }
+    if (decision.kind === 'suspend') {
+      results.push({
+        tc,
+        result: suspendResult(messageId()),
+        isError: false,
+        suspendRequest: decision.request,
+      });
+      continue;
+    }
+    // executor 가 중간에 멈춘(abort / 배치 내 suspend) 호출은 결과가 없다 — 기존
+    // runToolCalls 와 동일하게 결과 없이 빠진다.
+    const out = executed.get(tc.id);
+    if (out) results.push(out);
+  }
+  return results;
+}
+
+async function runToolCalls(
+  services: RuntimeServices,
+  toolCalls: ToolCall[],
+): Promise<ToolCallOutcome[]> {
   if (services.tools.executeBatch) {
     const batchResults = await services.tools.executeBatch(
       toolCalls.map(tc => ({ callId: tc.id, name: tc.name, input: tc.arguments })),
@@ -82,7 +172,7 @@ export async function executeToolCalls(
     return mergeBatchResults(toolCalls, batchResults);
   }
 
-  const results: { tc: ToolCall; result: unknown; isError: boolean }[] = [];
+  const results: ToolCallOutcome[] = [];
   for (const tc of toolCalls) {
     if (services.signal.aborted) break;
     const result = await services.tools.execute(tc.name, tc.id, tc.arguments, services.signal);
@@ -95,7 +185,7 @@ export async function executeToolCalls(
 function mergeBatchResults(
   toolCalls: ToolCall[],
   batchResults: ToolBatchResult[],
-): { tc: ToolCall; result: unknown; isError: boolean }[] {
+): ToolCallOutcome[] {
   const byId = new Map(batchResults.map(result => [result.callId, result]));
   const completedCalls = batchResults.some(result => result.result.type === 'suspend')
     ? toolCalls.filter(tc => byId.has(tc.id))
@@ -111,6 +201,35 @@ function mergeBatchResults(
     }
     return { tc, result: result.result, isError: result.isError };
   });
+}
+
+/**
+ * 파킹을 런타임에 알린다.
+ *
+ * 게이트가 낸 질문(`request`)이 있는데 `onSuspend` 가 없으면 그 질문은 아무 데도 가지
+ * 않는다 — 파킹도 기록되지 않고 발행도 되지 않는다. 승인 게이트를 달면서 suspended-turn
+ * 저장소를 안 붙인 전형적인 오설정이고, 조용히 넘어가면 "승인이 영영 안 온다"의 이유를
+ * 아무도 못 찾는다. 도구가 스스로 낸 suspend(`request` 없음)는 예전부터 같은 상태였으므로
+ * 여기서 새로 시끄럽게 하지 않는다.
+ */
+export async function announceSuspend(
+  services: RuntimeServices,
+  info: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0],
+): Promise<void> {
+  if (!services.onSuspend) {
+    if (info.request) {
+      services.logger.error('suspend.unhandled', {
+        pendingId: info.pendingId,
+        toolCallId: info.toolCallId,
+        topic: info.request.topic,
+        reason:
+          'a gate parked this call, but no onSuspend is wired — the question was ' +
+          'neither persisted nor published, so no answer can ever arrive',
+      });
+    }
+    return;
+  }
+  await services.onSuspend(info);
 }
 
 export function suspendHistorySnapshot(
@@ -142,6 +261,126 @@ export function suspendHistorySnapshot(
       : [...message.content];
     return { ...message, content };
   });
+}
+
+/**
+ * 재개 진입부 — 파킹됐던 호출의 결과를 history 에 합류시킨다. react.ts 와
+ * plan-execute.ts 가 같은 규약을 공유하므로 여기 한 곳에 둔다.
+ *
+ * `services.onResume` 이 설정돼 있고 체크포인트에 원본 호출(`resumedCall`)과 포장 전
+ * 답변(`resumeAnswer`)이 실려 있으면 현재 정책으로 재검증한다:
+ *   - `continue` → 그 도구를 *지금* 실행하고 그 결과를 재개된 호출의 결과로 쓴다.
+ *                  (재실행은 preToolUse 를 다시 타지 않는다 — onResume 이 그 재검증이다.
+ *                   다시 물으면 승인 게이트가 영원히 재파킹한다.)
+ *   - `deny`     → 그 결과를 쓴다. 도구는 실행하지 않는다.
+ *   - `suspend`  → 다시 파킹한다(기존 suspend 경로 재사용).
+ *
+ * 답변 자체가 error 결과면 정책을 묻지 않고 그대로 거부한다 — 아래 주석 참고.
+ *
+ * 훅이 미설정이거나 체크포인트에 원본이 없으면 예전 동작 그대로 — 답변을 그 호출의
+ * 결과로 주입한다.
+ *
+ * 반환값 false = 턴이 다시 파킹됐다. 호출자는 즉시 return 해야 한다.
+ */
+export async function* injectResumedToolResult(
+  services: RuntimeServices,
+  resume: NonNullable<AgentInput['resumeContext']>,
+  history: LLMMessage[],
+): AsyncGenerator<AgentEvent, boolean> {
+  history.push(...resume.architectureHistory);
+  const completedResults = resume.completedResults ?? [];
+
+  const call = resume.resumedCall;
+  const context = services.tools.getContext?.();
+  // 답변 자체가 실패인 경우(승인 채널·어댑터 장애, 잘못된 응답)는 정책에 묻지 않고 그
+  // 실패를 그대로 결과로 쓴다. 게이트에 넘기면 "choice 가 없다"로 읽혀 인프라 장애가
+  // 프로토콜 실수처럼 보고된다. python `Orchestrator.resume_effect` 가 같은 자리에서
+  // 같은 단축을 한다.
+  const decision: ToolDecision | undefined = (services.onResume && call && resume.resumeAnswer)
+    ? isErrorResult(resume.resumeAnswer.answer)
+      ? denyDecision(resume.resumeAnswer.answer as ToolResult)
+      : await services.onResume({
+        call: { callId: resume.resumedCallId, name: call.name, input: call.input },
+        ...(context ? { context } : {}),
+        resume: resume.resumeAnswer,
+      })
+    : undefined;
+
+  let result: unknown = resume.toolResult;
+  let isError = isErrorResult(resume.toolResult);
+  let ran = false;
+  // 재파킹도 첫 파킹과 같다 — 여기서 pendingId 를 만들고, 질문은 onSuspend 로 넘겨
+  // 런타임이 새 파킹을 기록한 뒤 발행한다.
+  let suspendRequest: SuspendRequest | undefined;
+
+  if (decision?.kind === 'deny') {
+    result = decision.result;
+    isError = true;
+  } else if (decision?.kind === 'suspend') {
+    result = suspendResult(messageId());
+    isError = false;
+    suspendRequest = decision.request;
+  } else if (decision?.kind === 'continue') {
+    // 원래 turn 에서 이미 tool_call 을 방출했지만 이 실행은 새 프로세스일 수 있다 —
+    // 정상 경로와 같은 tool_call → tool_result 쌍을 방출해 미들웨어/트랜스크립트가
+    // 짝을 볼 수 있게 한다.
+    yield { type: 'tool_call', id: resume.resumedCallId, name: call!.name, input: call!.input };
+    const [out] = await runToolCalls(services, [
+      { id: resume.resumedCallId, name: call!.name, arguments: call!.input },
+    ]);
+    result = out ? out.result : errorResult(`Resumed tool call did not run: ${resume.resumedCallId}`);
+    isError = out ? out.isError : true;
+    ran = true;
+    yield { type: 'tool_result', id: resume.resumedCallId, name: call!.name, result, isError };
+  }
+
+  if (isSuspendResult(result)) {
+    const pendingId = (result as { pendingId: string }).pendingId;
+    yield { type: 'suspended', pendingId, toolCallId: resume.resumedCallId };
+    await announceSuspend(services, {
+      pendingId,
+      toolCallId: resume.resumedCallId,
+      architectureHistory: suspendHistorySnapshot(history, completedResults, resume.resumedCallId),
+      completedResults,
+      ...(call ? { call } : {}),
+      ...(suspendRequest ? { request: suspendRequest } : {}),
+    });
+    return false;
+  }
+
+  history.push({
+    role: 'tool_result',
+    content: [
+      ...completedResults,
+      {
+        type: 'tool_result',
+        id: resume.resumedCallId,
+        content: formatResultForLLM(result),
+        isError,
+      },
+    ],
+  });
+
+  // 도구가 실제로 돈 경우만 부가 컨텍스트를 합류시킨다 — 주입 경로(훅 미설정)의
+  // history 는 예전과 한 글자도 달라지지 않아야 한다.
+  if (ran) {
+    const images = imageBlocksFromResult(result);
+    if (images.length > 0) {
+      history.push({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Tool ${call!.name} returned ${images.length === 1 ? 'an image' : `${images.length} images`} for call ${resume.resumedCallId}. Use ${images.length === 1 ? 'this image' : 'these images'} as visual context for the current task.`,
+          },
+          ...images,
+        ],
+      });
+    }
+    history.push(...contextMessagesFromResult(result));
+  }
+
+  return true;
 }
 
 function isSuspendResult(result: unknown): boolean {

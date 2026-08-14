@@ -22,6 +22,7 @@ import type {
   RuntimeServices,
   LLMMessage,
   LLMResponse,
+  SuspendRequest,
 } from '@dongkseo/contracts';
 import { OrchestrationControlError } from '@dongkseo/contracts';
 import {
@@ -30,9 +31,10 @@ import {
   contextMessagesFromResult,
   formatResultForLLM,
   imageBlocksFromResult,
-  isErrorResult,
+  injectResumedToolResult,
   sanitizeToolPairsInPlace,
   selectToolCallsForExecution,
+  announceSuspend,
   suspendHistorySnapshot,
   toolTerminatesLoop,
   userContentForInput,
@@ -89,19 +91,9 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
       if (input.resumeContext) {
         phase = 'execute';
-        history.push(...input.resumeContext.architectureHistory);
-        history.push({
-          role: 'tool_result',
-          content: [
-            ...(input.resumeContext.completedResults ?? []),
-            {
-              type: 'tool_result',
-              id: input.resumeContext.resumedCallId,
-              content: formatResultForLLM(input.resumeContext.toolResult),
-              isError: isErrorResult(input.resumeContext.toolResult),
-            },
-          ],
-        });
+        // react.ts 와 같은 규약 — onResume 재검증까지 loop-helpers 가 처리한다.
+        // 재파킹했으면 여기서 턴이 끝난다.
+        if (!(yield* injectResumedToolResult(services, input.resumeContext, history))) return;
       } else {
         history.push(...await services.memory.getHistory());
         history.push(...(input.history ?? []));
@@ -202,14 +194,26 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         const toolResultBlocks: ToolResultBlock[] = [];
         const toolImageMessages: LLMMessage[] = [];
         const toolContextMessages: LLMMessage[] = [];
-        let suspended: { pendingId: string; toolCallId: string } | null = null;
+        // call 은 체크포인트에 남는다 — 재개 시 onResume 이 그 호출을 재검증한다.
+        let suspended: {
+          pendingId: string;
+          toolCallId: string;
+          call: { name: string; input: unknown };
+          // 게이트가 파킹한 경우의 질문. 런타임이 파킹을 기록한 뒤 발행한다.
+          request?: SuspendRequest;
+        } | null = null;
         let planSubmitted = false;
 
-        for (const { tc, result, isError } of toolResults) {
+        for (const { tc, result, isError, suspendRequest } of toolResults) {
           yield { type: 'tool_result', id: tc.id, name: tc.name, result, isError };
 
           if (result && typeof result === 'object' && (result as { type?: string }).type === 'suspend') {
-            suspended ??= { pendingId: (result as { pendingId: string }).pendingId, toolCallId: tc.id };
+            suspended ??= {
+              pendingId: (result as { pendingId: string }).pendingId,
+              toolCallId: tc.id,
+              call: { name: tc.name, input: tc.arguments },
+              ...(suspendRequest ? { request: suspendRequest } : {}),
+            };
             continue;
           }
 
@@ -231,7 +235,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         if (suspended) {
           yield { type: 'suspended', pendingId: suspended.pendingId, toolCallId: suspended.toolCallId };
-          await services.onSuspend?.({
+          await announceSuspend(services, {
             pendingId: suspended.pendingId,
             toolCallId: suspended.toolCallId,
             architectureHistory: suspendHistorySnapshot(
@@ -240,6 +244,8 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
               suspended.toolCallId,
             ),
             completedResults: toolResultBlocks,
+            call: suspended.call,
+            ...(suspended.request ? { request: suspended.request } : {}),
           });
           return;
         }

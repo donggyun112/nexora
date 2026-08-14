@@ -30,7 +30,14 @@ import type {
   SuspendedTurnStore,
   SuspendedTurnState,
 } from '@dongkseo/contracts';
-import { messageId, spanId, matchTopic, DEFAULT_TENANT, textResult } from '@dongkseo/contracts';
+import {
+  messageId,
+  spanId,
+  matchTopic,
+  suspendEnvelope,
+  DEFAULT_TENANT,
+  textResult,
+} from '@dongkseo/contracts';
 import { createSchemaValidator, SchemaValidationError } from './schema.js';
 import { enforceLint } from './lint.js';
 
@@ -378,18 +385,24 @@ async function handleMessage(args: {
     // it can be resumed once the human answers. architectureHistory flows ONLY
     // through onSuspend (not the event stream), so capture it here.
     const onSuspend: RuntimeServices['onSuspend'] | undefined = args.suspendedTurnStore
-      ? async ({ pendingId, toolCallId, architectureHistory, completedResults }) => {
+      ? async ({ pendingId, toolCallId, architectureHistory, completedResults, call, request }) => {
           await args.suspendedTurnStore!.save({
             pendingId,
             toolCallId,
             architectureHistory,
             completedResults,
+            // 재개 시 onResume 이 이 호출을 재검증하고, continue 면 실제로 실행한다.
+            ...(call ? { call } : {}),
             envelope,
             resultTopic,
             tenantId,
             createdAt: Date.now(),
             status: 'awaiting',
           });
+          // 저장이 먼저, 발행이 나중 — 이 순서가 계약이다. 반대로 하면 질문은 나갔는데
+          // 파킹 기록이 없는 창이 생기고, 그 사이 죽으면 답이 갈 곳이 없다. 이 순서면
+          // 최악이 "저장됐지만 발행 못 한 파킹"이고, 그건 다시 물어보면 된다.
+          if (request) await args.transport.publish(suspendEnvelope(pendingId, request, tenantId));
         }
       : undefined;
 
@@ -582,7 +595,19 @@ async function resumeHandraiseTurn(args: {
       architectureHistory: state.architectureHistory,
       completedResults: state.completedResults ?? [],
       resumedCallId: state.toolCallId,
+      // Formatted answer, kept for the no-onResume path (plain handraise): the
+      // answer IS that tool's result there.
       toolResult,
+      // Unformatted reply + the parked call, for an `onResume` gate. An approval
+      // decision has to read yes/no, which `textResult(...)` above has already
+      // flattened into prose. Both travel; the runtime picks by whether the hook
+      // is set. `call` is absent on checkpoints written before it was recorded.
+      ...(state.call ? { resumedCall: state.call } : {}),
+      resumeAnswer: {
+        pendingId,
+        answer,
+        ...(replyPayload.rationale ? { rationale: replyPayload.rationale } : {}),
+      },
     };
 
     const context = await contextLoader.load(state.tenantId, card.name);
@@ -594,18 +619,25 @@ async function resumeHandraiseTurn(args: {
       toolCallId,
       architectureHistory,
       completedResults,
+      call,
+      request,
     }) => {
       await store.save({
         pendingId: nextId,
         toolCallId,
         architectureHistory,
         completedResults,
+        ...(call ? { call } : {}),
         envelope: state.envelope,
         resultTopic: state.resultTopic,
         tenantId: state.tenantId,
         createdAt: Date.now(),
         status: 'awaiting',
       });
+      // Persist first, publish second — same ordering contract as the first park.
+      if (request) {
+        await transport.publish(suspendEnvelope(nextId, request, state.tenantId));
+      }
       nextPendingId = nextId;
     };
 

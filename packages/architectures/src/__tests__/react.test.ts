@@ -1,8 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createReactArchitecture } from '../react.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, PendingRuntimeInput, RuntimeServices, LLMMessage, ToolDefinition, ToolResult } from '@dongkseo/contracts';
-import { OrchestrationControlError, suspendResult } from '@dongkseo/contracts';
+import type { AgentEvent, PendingRuntimeInput, RuntimeServices, LLMMessage, SuspendRequest, ToolContext, ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import {
+  OrchestrationControlError,
+  continueDecision,
+  denyDecision,
+  errorResult,
+  suspendDecision,
+  suspendResult,
+} from '@dongkseo/contracts';
+
+/** 게이트가 돌려주는 질문. 데이터일 뿐 — 아무것도 발행되지 않는다. */
+const ASK: SuspendRequest = {
+  topic: 'handraise.human.default',
+  payload: { question: 'Approve: rm -rf /tmp/x' },
+};
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -588,6 +601,414 @@ describe('ReAct resume', () => {
     expect(seenHistories.length).toBe(2);                                       // 2번째 LLM 호출 발생
     // 2번째 호출 history 에 주입된 메시지가 합류해 있어야 한다.
     expect(seenHistories[1].some(m => m.role === 'user' && m.content === 'keep going')).toBe(true);
+  });
+});
+
+describe('ReAct preToolUse', () => {
+  const twoCallLLM = () => new MockLLMProvider([
+    { text: '', toolCalls: [
+      { id: 'call-1', name: 'echo', arguments: { msg: 'a' } },
+      { id: 'call-2', name: 'echo', arguments: { msg: 'b' } },
+    ]},
+    { text: 'wrapped up' },
+  ]);
+  const countingTools = (ran: string[]) => new Map<string, (input: unknown) => Promise<unknown>>([
+    ['echo', async (input) => {
+      ran.push((input as { msg: string }).msg);
+      return { type: 'text' as const, text: 'ok' };
+    }],
+  ]);
+
+  it('runs every call untouched when the gate is unset', async () => {
+    const ran: string[] = [];
+    const services = makeServices(twoCallLLM(), countingTools(ran));
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(ran).toEqual(['a', 'b']);
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(2);
+  });
+
+  it('is asked once per call with the executor context', async () => {
+    const ran: string[] = [];
+    const context = { tenantId: 't1' } as unknown as ToolContext;
+    const seen: { name: string; callId: string; tenantId?: string }[] = [];
+    const services = makeServices(twoCallLLM(), countingTools(ran), {
+      preToolUse: async ({ call, context: ctx }) => {
+        seen.push({ name: call.name, callId: call.callId, tenantId: ctx?.tenantId });
+        return continueDecision();
+      },
+    }) as unknown as RuntimeServices;
+    services.tools.getContext = () => context;
+
+    await collect(createReactArchitecture().loop(services, { prompt: 'go' }));
+
+    expect(seen).toEqual([
+      { name: 'echo', callId: 'call-1', tenantId: 't1' },
+      { name: 'echo', callId: 'call-2', tenantId: 't1' },
+    ]);
+    expect(ran).toEqual(['a', 'b']);
+  });
+
+  it('denies without touching the executor and shows the model the denial', async () => {
+    const ran: string[] = [];
+    const llm = twoCallLLM();
+    const services = makeServices(llm, countingTools(ran), {
+      preToolUse: async ({ call }) => call.callId === 'call-1'
+        ? denyDecision(errorResult('denied by policy'))
+        : continueDecision(),
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(ran).toEqual(['b']); // call-1 never reached the executor
+    expect(events.filter(e => e.type === 'tool_result').map(e => ({ id: e.id, isError: e.isError }))).toEqual([
+      { id: 'call-1', isError: true },
+      { id: 'call-2', isError: false },
+    ]);
+    // 거부 결과가 다음 LLM 턴의 tool_result 로 모델에 보인다.
+    const resultBlocks = llm.callLog[1].messages
+      .filter(m => m.role === 'tool_result')
+      .flatMap(m => m.content as { id: string; content: string }[]);
+    expect(resultBlocks).toContainEqual({
+      type: 'tool_result',
+      id: 'call-1',
+      content: '[ERROR] denied by policy',
+      isError: true,
+    });
+  });
+
+  it('does not let a denied terminating tool end the run', async () => {
+    const llm = new MockLLMProvider([
+      { text: 'submitting', toolCalls: [{ id: 't1', name: 'submit', arguments: {} }] },
+      { text: 'recovered after denial' },
+    ]);
+    const services = makeServices(llm, new Map(), {
+      preToolUse: async () => denyDecision(errorResult('not allowed')),
+    }) as unknown as RuntimeServices;
+    services.tools.get = () => ({
+      name: 'submit',
+      description: 'submit',
+      parameters: {},
+      terminatesLoop: true,
+      execute: async () => ({ type: 'text', text: 'submitted' }),
+    } as ToolDefinition);
+
+    const events = await collect(createReactArchitecture().loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(2);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('recovered after denial');
+  });
+
+  it('mints the pendingId itself and hands the gate request to onSuspend', async () => {
+    const ran: string[] = [];
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'call-1', name: 'echo', arguments: { msg: 'a' } }] },
+    ]);
+    let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+    const services = makeServices(llm, countingTools(ran), {
+      preToolUse: async () => suspendDecision(ASK),
+      onSuspend: async (info) => { checkpoint = info; },
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(ran).toEqual([]);
+    const suspended = events.find(e => e.type === 'suspended');
+    // 게이트는 id 를 만들지 않는다 — 루프가 만들고, 이벤트/체크포인트가 같은 값을 쓴다.
+    expect(suspended).toMatchObject({ type: 'suspended', toolCallId: 'call-1' });
+    const pendingId = (suspended as { pendingId: string }).pendingId;
+    expect(pendingId).toBeTruthy();
+    expect(events.some(e => e.type === 'done')).toBe(false);
+    expect(checkpoint).toMatchObject({
+      pendingId,
+      toolCallId: 'call-1',
+      call: { name: 'echo', input: { msg: 'a' } },
+      // 발행은 파킹이 기록된 뒤 런타임 몫이므로 질문이 여기까지 실려온다.
+      request: ASK,
+    });
+  });
+
+  it('logs loudly when a gate parks but nothing is wired to persist or publish it', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'call-1', name: 'echo', arguments: { msg: 'a' } }] },
+    ]);
+    const errors: { event: string; data?: unknown }[] = [];
+    const services = makeServices(llm, countingTools([]), {
+      preToolUse: async () => suspendDecision(ASK),
+      // onSuspend 없음 — 승인 게이트를 달고 suspended-turn 저장소를 안 붙인 오설정.
+      logger: {
+        info: () => {}, warn: () => {}, debug: () => {},
+        error: (event: string, data?: unknown) => { errors.push({ event, data }); },
+      },
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    // 조용히 넘어가면 "승인이 영영 안 온다"의 이유를 아무도 못 찾는다.
+    expect(errors).toHaveLength(1);
+    expect(errors[0].event).toBe('suspend.unhandled');
+    expect(errors[0].data).toMatchObject({ toolCallId: 'call-1', topic: ASK.topic });
+  });
+
+  it('stays quiet when a tool suspended itself and nothing is wired', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'call-1', name: 'ask', arguments: {} }] },
+    ]);
+    const errors: unknown[] = [];
+    const services = makeServices(llm, new Map([['ask', async () => suspendResult('tool-p1')]]), {
+      logger: {
+        info: () => {}, warn: () => {}, debug: () => {},
+        error: (event: string) => { errors.push(event); },
+      },
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    // 도구가 스스로 낸 suspend 는 질문을 이미 보냈다 — 예전부터 같은 상태였고 새 소음이 아니다.
+    expect(errors).toEqual([]);
+  });
+
+  it('leaves request unset when the tool suspended itself', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'call-1', name: 'ask', arguments: {} }] },
+    ]);
+    let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+    const services = makeServices(llm, new Map([['ask', async () => suspendResult('tool-p1')]]), {
+      onSuspend: async (info) => { checkpoint = info; },
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    // 도구가 스스로 발행하고 낸 pendingId 라 런타임이 발행할 게 없다.
+    expect(checkpoint?.pendingId).toBe('tool-p1');
+    expect(checkpoint?.request).toBeUndefined();
+  });
+
+  it('does not start the calls after a gate suspend, and keeps the completed ones', async () => {
+    const ran: string[] = [];
+    const gated: string[] = [];
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [
+        { id: 'call-1', name: 'echo', arguments: { msg: 'a' } },
+        { id: 'call-2', name: 'echo', arguments: { msg: 'b' } },
+        { id: 'call-3', name: 'echo', arguments: { msg: 'c' } },
+      ]},
+    ]);
+    let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+    const services = makeServices(llm, countingTools(ran), {
+      preToolUse: async ({ call }) => {
+        gated.push(call.callId);
+        return call.callId === 'call-2' ? suspendDecision(ASK) : continueDecision();
+      },
+      onSuspend: async (info) => { checkpoint = info; },
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(gated).toEqual(['call-1', 'call-2']); // call-3 은 묻지도 않는다
+    expect(ran).toEqual(['a']);                  // call-3 은 시작되지 않는다
+    expect(checkpoint?.request).toEqual(ASK);
+    expect(events.find(e => e.type === 'suspended')).toMatchObject({
+      toolCallId: 'call-2',
+      pendingId: checkpoint!.pendingId,
+    });
+    // 이미 완료된 결과는 체크포인트에 보존된다.
+    expect(checkpoint?.completedResults).toEqual([
+      { type: 'tool_result', id: 'call-1', content: 'ok', isError: false },
+    ]);
+  });
+});
+
+describe('ReAct onResume', () => {
+  const savedHistory = (): LLMMessage[] => [
+    { role: 'user', content: 'delete the file' },
+    {
+      role: 'assistant',
+      content: [{ type: 'tool_call', id: 'call-1', name: 'rm', arguments: { path: 'a.txt' } }],
+    },
+  ];
+  const resumeContext = () => ({
+    architectureHistory: savedHistory(),
+    resumedCallId: 'call-1',
+    toolResult: { type: 'text' as const, text: 'approve' },
+    resumedCall: { name: 'rm', input: { path: 'a.txt' } },
+    resumeAnswer: { pendingId: 'p1', answer: 'approve' },
+  });
+  const rmTools = (ran: unknown[]) => new Map<string, (input: unknown) => Promise<unknown>>([
+    ['rm', async (input) => {
+      ran.push(input);
+      return { type: 'text' as const, text: 'removed a.txt' };
+    }],
+  ]);
+
+  it('injects the answer as the result when the hook is unset', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'done' }]);
+    const services = makeServices(llm, rmTools(ran));
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: resumeContext(),
+    }));
+
+    expect(ran).toEqual([]); // 도구 재실행 없음 — 기존 동작
+    const blocks = llm.callLog[0].messages
+      .filter(m => m.role === 'tool_result')
+      .flatMap(m => m.content as { id: string; content: string }[]);
+    expect(blocks).toEqual([
+      { type: 'tool_result', id: 'call-1', content: 'approve', isError: false },
+    ]);
+  });
+
+  it('runs the parked tool on continue and uses its result', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'file removed' }]);
+    const seen: { name: string; answer: unknown }[] = [];
+    const services = makeServices(llm, rmTools(ran), {
+      onResume: async ({ call, resume }) => {
+        seen.push({ name: call.name, answer: resume.answer });
+        return continueDecision();
+      },
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: resumeContext(),
+    }));
+
+    expect(seen).toEqual([{ name: 'rm', answer: 'approve' }]);
+    expect(ran).toEqual([{ path: 'a.txt' }]);
+    expect(events.filter(e => e.type === 'tool_result')).toEqual([
+      { type: 'tool_result', id: 'call-1', name: 'rm', result: { type: 'text', text: 'removed a.txt' }, isError: false },
+    ]);
+    const blocks = llm.callLog[0].messages
+      .filter(m => m.role === 'tool_result')
+      .flatMap(m => m.content as { id: string; content: string }[]);
+    expect(blocks).toEqual([
+      { type: 'tool_result', id: 'call-1', content: 'removed a.txt', isError: false },
+    ]);
+  });
+
+  it('denies with the answer itself when the answer is an error, without asking policy', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'understood' }]);
+    let asked = false;
+    const services = makeServices(llm, rmTools(ran), {
+      onResume: async () => {
+        asked = true;
+        return continueDecision();
+      },
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: {
+        ...resumeContext(),
+        resumeAnswer: { pendingId: 'p1', answer: errorResult('approval channel unavailable') },
+      },
+    }));
+
+    // 승인 채널이 죽은 것은 정책 판단 대상이 아니다. 게이트에 넘기면 "choice 가 없다"로
+    // 읽혀 인프라 장애가 프로토콜 실수로 보고된다.
+    expect(asked).toBe(false);
+    expect(ran).toEqual([]);
+    const blocks = llm.callLog[0].messages
+      .filter(m => m.role === 'tool_result')
+      .flatMap(m => m.content as { id: string; content: string; isError: boolean }[]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].isError).toBe(true);
+    expect(blocks[0].content).toContain('approval channel unavailable');
+  });
+
+  it('does not run the parked tool on deny and shows the denial instead', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'understood' }]);
+    const services = makeServices(llm, rmTools(ran), {
+      onResume: async () => denyDecision(errorResult('human refused')),
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: resumeContext(),
+    }));
+
+    expect(ran).toEqual([]);
+    const blocks = llm.callLog[0].messages
+      .filter(m => m.role === 'tool_result')
+      .flatMap(m => m.content as { id: string; content: string }[]);
+    expect(blocks).toEqual([
+      { type: 'tool_result', id: 'call-1', content: '[ERROR] human refused', isError: true },
+    ]);
+  });
+
+  it('re-parks on suspend through the existing suspend path', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'never reached' }]);
+    let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+    const services = makeServices(llm, rmTools(ran), {
+      onResume: async () => suspendDecision(ASK),
+      onSuspend: async (info) => { checkpoint = info; },
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: { ...resumeContext(), completedResults: [
+        { type: 'tool_result', id: 'call-0', content: 'earlier', isError: false },
+      ] },
+    }));
+
+    expect(ran).toEqual([]);
+    expect(llm.callLog).toHaveLength(0); // 다음 LLM 턴 없이 다시 파킹
+    // 재파킹도 같다 — 루프가 새 pendingId 를 만들고, 질문은 체크포인트에 실려 나간다.
+    expect(checkpoint).toMatchObject({ toolCallId: 'call-1', call: { name: 'rm' }, request: ASK });
+    expect(checkpoint!.pendingId).toBeTruthy();
+    expect(events.find(e => e.type === 'suspended')).toEqual({
+      type: 'suspended',
+      pendingId: checkpoint!.pendingId,
+      toolCallId: 'call-1',
+    });
+    expect(checkpoint?.completedResults).toEqual([
+      { type: 'tool_result', id: 'call-0', content: 'earlier', isError: false },
+    ]);
+  });
+
+  it('is not consulted when the checkpoint carries no original call', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'done' }]);
+    const hook = vi.fn(async () => continueDecision());
+    const services = makeServices(llm, rmTools(ran), { onResume: hook });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: {
+        architectureHistory: savedHistory(),
+        resumedCallId: 'call-1',
+        toolResult: { type: 'text', text: 'approve' },
+      },
+    }));
+
+    expect(hook).not.toHaveBeenCalled();
+    expect(ran).toEqual([]);
+  });
+
+  it('re-executes through the executor without re-asking preToolUse', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'file removed' }]);
+    const gate = vi.fn(async () => suspendDecision(ASK)); // 다시 물으면 영원히 재파킹
+    const services = makeServices(llm, rmTools(ran), {
+      onResume: async () => continueDecision(),
+      preToolUse: gate,
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, {
+      prompt: '',
+      resumeContext: resumeContext(),
+    }));
+
+    expect(gate).not.toHaveBeenCalled();
+    expect(ran).toEqual([{ path: 'a.txt' }]);
   });
 });
 

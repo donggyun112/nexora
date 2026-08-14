@@ -190,6 +190,130 @@ describe('bootstrap — handraise suspend/resume', () => {
     await agent.shutdown();
   });
 
+  it('checkpoints the parked call and hands resume both the formatted result and the raw answer', async () => {
+    const transport = new InlineTransport();
+    const store = new MapSuspendedTurnStore();
+    let seen: AgentInput['resumeContext'] | undefined;
+
+    const agent = await bootstrapAgent({
+      card,
+      contextLoader: loader,
+      transport,
+      suspendedTurnStore: store,
+      createRuntime: ({ onSuspend }): AgentRuntime => ({
+        async *execute(input: AgentInput) {
+          if (input.resumeContext) {
+            seen = input.resumeContext;
+            yield { type: 'done', content: 'resumed', toolCalls: [] };
+          } else {
+            await onSuspend?.({
+              pendingId: 'p1',
+              toolCallId: 'tc1',
+              architectureHistory: [{ role: 'assistant', content: 'asked the human' }],
+              completedResults: [],
+              call: { name: 'rm', input: { path: 'a.txt' } },
+            });
+            yield { type: 'suspended', pendingId: 'p1', toolCallId: 'tc1' };
+          }
+        },
+        abort() {},
+      }),
+      toAgentInput,
+    });
+
+    await transport.publish(makeRequest());
+    expect(store.turns.get('p1')?.call).toEqual({ name: 'rm', input: { path: 'a.txt' } });
+
+    await transport.publish({
+      id: 'ans-1',
+      topic: 'handraise.human.default.answered',
+      type: 'result',
+      payload: { answer: 'approve', rationale: 'looks safe' },
+      metadata: { traceId: 't', spanId: 's2', conversationId: 'c', replyTo: 'p1', tenantId: 'default', timestamp: 2 },
+    });
+
+    // The gate reads the raw answer; the no-gate path keeps using toolResult.
+    expect(seen?.resumedCall).toEqual({ name: 'rm', input: { path: 'a.txt' } });
+    expect(seen?.resumeAnswer).toEqual({ pendingId: 'p1', answer: 'approve', rationale: 'looks safe' });
+    expect(seen?.toolResult).toEqual({ type: 'text', text: 'approve\n\n[rationale] looks safe' });
+
+    await agent.shutdown();
+  });
+
+  it('publishes a gate question only AFTER the park is persisted', async () => {
+    const transport = new InlineTransport();
+    const store = new MapSuspendedTurnStore();
+    const order: string[] = [];
+    const save = store.save.bind(store);
+    store.save = async (s) => { order.push('save'); await save(s); };
+    const publish = transport.publish.bind(transport);
+    transport.publish = async (env) => {
+      if (env.topic === 'handraise.human.default') order.push('publish');
+      await publish(env);
+    };
+
+    const agent = await bootstrapAgent({
+      card,
+      contextLoader: loader,
+      transport,
+      suspendedTurnStore: store,
+      createRuntime: ({ onSuspend }): AgentRuntime => ({
+        async *execute() {
+          await onSuspend?.({
+            pendingId: 'p1',
+            toolCallId: 'tc1',
+            architectureHistory: [{ role: 'assistant', content: 'gated' }],
+            completedResults: [],
+            call: { name: 'rm', input: { path: 'a.txt' } },
+            request: {
+              topic: 'handraise.human.default',
+              payload: { question: 'Approve: rm a.txt', callId: 'tc1' },
+            },
+          });
+          yield { type: 'suspended', pendingId: 'p1', toolCallId: 'tc1' };
+        },
+        abort() {},
+      }),
+      toAgentInput,
+    });
+
+    await transport.publish(makeRequest());
+
+    // The order IS the fix: publishing first leaves an orphaned question behind
+    // whenever the process dies before the park is written.
+    expect(order).toEqual(['save', 'publish']);
+    const asked = transport.published.find(e => e.topic === 'handraise.human.default');
+    expect(asked).toBeDefined();
+    // The reply correlates by metadata.replyTo == this id, so it must be the pendingId.
+    expect(asked!.id).toBe('p1');
+    expect(asked!.payload).toEqual({ question: 'Approve: rm a.txt', callId: 'tc1', pendingId: 'p1' });
+    expect(asked!.metadata.tenantId).toBe('default');
+
+    await agent.shutdown();
+  });
+
+  it('publishes nothing extra when the tool suspended itself', async () => {
+    const transport = new InlineTransport();
+    const store = new MapSuspendedTurnStore();
+    const agent = await bootstrapAgent({
+      card,
+      contextLoader: loader,
+      transport,
+      suspendedTurnStore: store,
+      // makeCreateRuntime's onSuspend carries no `request` — the handraise tool
+      // already published its own question.
+      createRuntime: makeCreateRuntime(),
+      toAgentInput,
+    });
+
+    await transport.publish(makeRequest());
+
+    expect(store.turns.get('p1')).toBeDefined();
+    expect(transport.published.map(e => e.topic)).toEqual(['task.requested']);
+
+    await agent.shutdown();
+  });
+
   it('ignores a reply whose pendingId is unknown (duplicate / not ours)', async () => {
     const transport = new InlineTransport();
     const store = new MapSuspendedTurnStore();

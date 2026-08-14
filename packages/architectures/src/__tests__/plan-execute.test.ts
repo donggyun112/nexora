@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createPlanExecuteArchitecture } from '../plan-execute.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
 import type { AgentEvent, PendingRuntimeInput, RuntimeServices, ToolDefinition } from '@dongkseo/contracts';
-import { OrchestrationControlError } from '@dongkseo/contracts';
+import { OrchestrationControlError, continueDecision } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -152,6 +152,43 @@ describe('PlanExecuteArchitecture — plan-mode gating', () => {
 
     const toolNames = llm.callLog[0].options?.tools?.map((t: { name: string }) => t.name) ?? [];
     expect(toolNames).toContain('submit_keywords'); // execute phase on resume
+  });
+
+  it('runs the parked tool on an onResume continue (same contract as react)', async () => {
+    const ran: unknown[] = [];
+    const llm = new MockLLMProvider([{ text: 'resumed and done' }]);
+    const services = servicesWithToolList(
+      llm,
+      new Map([['rm', async (input: unknown) => {
+        ran.push(input);
+        return { type: 'text' as const, text: 'removed a.txt' };
+      }]]),
+      ['rm', 'submit_research_plan'],
+    );
+    services.onResume = async () => continueDecision();
+
+    const arch = createPlanExecuteArchitecture({ exitPlanTool: 'submit_research_plan' });
+    await collect(arch.loop(services, {
+      prompt: '',
+      resumeContext: {
+        architectureHistory: [
+          { role: 'user', content: 'delete it' },
+          { role: 'assistant', content: [{ type: 'tool_call', id: 'c1', name: 'rm', arguments: { path: 'a.txt' } }] },
+        ],
+        resumedCallId: 'c1',
+        toolResult: { type: 'text', text: 'approve' },
+        resumedCall: { name: 'rm', input: { path: 'a.txt' } },
+        resumeAnswer: { pendingId: 'p1', answer: 'approve' },
+      },
+    }));
+
+    expect(ran).toEqual([{ path: 'a.txt' }]);
+    const blocks = llm.callLog[0].messages
+      .filter(m => m.role === 'tool_result')
+      .flatMap(m => m.content as { id: string; content: string }[]);
+    expect(blocks).toEqual([
+      { type: 'tool_result', id: 'c1', content: 'removed a.txt', isError: false },
+    ]);
   });
 
   it('continuation turn (prior history present) starts in EXECUTE, not PLAN', async () => {

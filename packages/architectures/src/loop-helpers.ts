@@ -9,12 +9,16 @@ import { Buffer } from 'node:buffer';
 import type {
   AgentEvent,
   AgentInput,
+  ControlContext,
+  HaltDecision,
   LLMContentBlock,
   LLMMessage,
   LLMResponse,
   PendingRuntimeInput,
   RuntimeServices,
+  StopReason,
   SuspendRequest,
+  ToolBatchCall,
   ToolBatchResult,
   ToolDecision,
   ToolResult,
@@ -81,6 +85,66 @@ export function contextMessagesFromResult(result: unknown): LLMMessage[] {
   });
 }
 
+// ── 턴 단위 control point ────────────────────────────────────────────────────
+// react.ts 와 plan-execute.ts 가 같은 규약을 공유한다. 배선 순서의 원본은 python
+// `engines/plain/loop.py` 의 `react_loop` / `_admit_turn_inputs` / `_decide_finish`.
+
+/**
+ * 정책이 보는 실행 스냅샷 — python `_control_ctx` 와 같은 것을 담는다.
+ *
+ * `subject` 는 TS `RuntimeServices` 에 출처가 없어 빈 문자열이다. ControlContext TSDoc 이
+ * 정의한 "호스트가 말하지 않았다" 의 정직한 기본값 — 없는 이름을 여기서 지어내지 않는다.
+ */
+export function controlContext(
+  turn: number,
+  history: readonly LLMMessage[],
+  callsMade: readonly ToolBatchCall[],
+  text: string,
+): ControlContext {
+  return { turn, messages: [...history], callsMade: [...callsMade], text, subject: '' };
+}
+
+/**
+ * 매 LLM 호출 직전에 "지금 모델을 불러도 되나"를 묻는다 — python `_admit_turn_inputs` 의
+ * before_model 자리(입력 스크리닝 뒤, 모델 호출 앞).
+ *
+ * `proceed` 의 steers 는 호출 전에 history 에 합류하고, `halt` 면 그 결정을 돌려준다
+ * (호출자가 그 자리에서 끝낸다). 미설정이면 아무 일도 일어나지 않는다.
+ */
+export async function askBeforeModel(
+  services: RuntimeServices,
+  history: LLMMessage[],
+  ctx: ControlContext,
+): Promise<HaltDecision | undefined> {
+  if (!services.beforeModel) return undefined;
+  const decision = await services.beforeModel(ctx);
+  if (decision.kind === 'halt') return decision;
+  history.push(...decision.steers);
+  return undefined;
+}
+
+/**
+ * 종료 직전, 그 종료를 받아들일지 묻는다 — python `_decide_finish` 의 before_finish 자리.
+ *
+ *   - `halt`    → 게이트가 준 reason 그대로 돌려준다. 게이트가 이유를 바꾸지 않는 만큼
+ *                 루프도 바꾸지 않는다.
+ *   - `proceed` → 종료하지 않는다. steers 를 history 에 합류시키고 undefined 를 돌려주면
+ *                 호출자는 한 라운드 더 돈다(continuation 경로).
+ *   - 미설정    → 주어진 reason 그대로 종료(`createControlPlane` 의 기본값과 같다).
+ */
+export async function askBeforeFinish(
+  services: RuntimeServices,
+  history: LLMMessage[],
+  ctx: ControlContext,
+  reason: StopReason,
+): Promise<StopReason | undefined> {
+  if (!services.beforeFinish) return reason;
+  const decision = await services.beforeFinish(ctx, reason);
+  if (decision.kind === 'halt') return decision.reason;
+  history.push(...decision.steers);
+  return undefined;
+}
+
 export type ToolCallOutcome = {
   tc: ToolCall;
   result: unknown;
@@ -111,13 +175,19 @@ export type ToolCallOutcome = {
  * 실행하고 결과를 보존한다(호출자가 completedResults 로 체크포인트한다).
  *
  * 미설정이면 게이트 왕복 없이 예전 경로 그대로다.
+ *
+ * 실제로 실행된 호출은 `services.afterToolCall` 로 기록된다 — 정책이 대신 답한
+ * (deny/suspend) 호출은 기록하지 않는다. python `execute_calls` 가 `refused` 인 호출에
+ * `record_resolved` 를 부르지 않는 것과 같다("A policy result stands in for an effect;
+ * it must not claim that the tool ran").
  */
 export async function executeToolCalls(
   services: RuntimeServices,
   toolCalls: ToolCall[],
+  ctx: ControlContext,
 ): Promise<ToolCallOutcome[]> {
   const gate = services.preToolUse;
-  if (!gate) return runToolCalls(services, toolCalls);
+  if (!gate) return runToolCalls(services, toolCalls, ctx);
 
   const context = services.tools.getContext?.();
   const decided: { tc: ToolCall; decision: ToolDecision }[] = [];
@@ -132,7 +202,7 @@ export async function executeToolCalls(
 
   const allowed = decided.filter(d => d.decision.kind === 'continue').map(d => d.tc);
   const executed = new Map(
-    (allowed.length > 0 ? await runToolCalls(services, allowed) : []).map(out => [out.tc.id, out]),
+    (allowed.length > 0 ? await runToolCalls(services, allowed, ctx) : []).map(out => [out.tc.id, out]),
   );
 
   const results: ToolCallOutcome[] = [];
@@ -163,23 +233,40 @@ export async function executeToolCalls(
 async function runToolCalls(
   services: RuntimeServices,
   toolCalls: ToolCall[],
+  ctx: ControlContext,
 ): Promise<ToolCallOutcome[]> {
   if (services.tools.executeBatch) {
     const batchResults = await services.tools.executeBatch(
       toolCalls.map(tc => ({ callId: tc.id, name: tc.name, input: tc.arguments })),
       services.signal,
     );
-    return mergeBatchResults(toolCalls, batchResults);
+    const merged = mergeBatchResults(toolCalls, batchResults);
+    // 완료 순이 아니라 호출 순으로 기록한다 — python `_execute_batched` 와 같다.
+    for (const out of merged) await recordResolved(services, ctx, out.tc, out.result);
+    return merged;
   }
 
   const results: ToolCallOutcome[] = [];
   for (const tc of toolCalls) {
     if (services.signal.aborted) break;
     const result = await services.tools.execute(tc.name, tc.id, tc.arguments, services.signal);
+    // 합류 전에 기록한다 — 기록이 실패(throw)하면 그 호출은 미해결로 남는다.
+    await recordResolved(services, ctx, tc, result);
     results.push({ tc, result, isError: isErrorResult(result) });
     if (isSuspendResult(result)) break;
   }
   return results;
+}
+
+/** 도구가 실제로 돈 결과를 `afterToolCall` 에 넘긴다 — python `record_resolved`. */
+async function recordResolved(
+  services: RuntimeServices,
+  ctx: ControlContext,
+  tc: ToolCall,
+  result: unknown,
+): Promise<void> {
+  if (!services.afterToolCall) return;
+  await services.afterToolCall(ctx, { callId: tc.id, name: tc.name, input: tc.arguments }, result);
 }
 
 function mergeBatchResults(
@@ -325,9 +412,13 @@ export async function* injectResumedToolResult(
     // 정상 경로와 같은 tool_call → tool_result 쌍을 방출해 미들웨어/트랜스크립트가
     // 짝을 볼 수 있게 한다.
     yield { type: 'tool_call', id: resume.resumedCallId, name: call!.name, input: call!.input };
-    const [out] = await runToolCalls(services, [
-      { id: resume.resumedCallId, name: call!.name, arguments: call!.input },
-    ]);
+    // 재개된 실행도 기록 대상이다(python `Orchestrator.resume_effect` 도 `record_resolved`
+    // 를 부른다). 재개 시점엔 라운드 번호가 없어 turn 0 으로 둔다.
+    const [out] = await runToolCalls(
+      services,
+      [{ id: resume.resumedCallId, name: call!.name, arguments: call!.input }],
+      controlContext(0, history, [], ''),
+    );
     result = out ? out.result : errorResult(`Resumed tool call did not run: ${resume.resumedCallId}`);
     isError = out ? out.isError : true;
     ran = true;
@@ -482,22 +573,50 @@ export function userContentForInput(
 /**
  * Move one ordered input group across the runtime/planner admission boundary.
  * Falls back to the legacy synchronous steer queue when no orchestrator is attached.
+ *
+ * 합류 전에 `services.onInputs` 가 입력을 거른다 — python `_admit_turn_inputs` 의
+ * 스크리닝 자리. 돌려준 배열이 실제로 모델 컨텍스트에 들어가는 것이고(빈 배열도 정당한
+ * 답), `halt` 면 그 결정을 그대로 돌려준다. 걸러진 입력은 큐에 남기지 않고 버린다.
+ * 훅이 미설정이면 예전 경로 그대로다.
+ *
+ * 반환값: 합류한 입력 개수, 또는 정책이 실행을 끝내라고 하면 그 `halt`.
  */
 export async function absorbRuntimeInputs(
   services: RuntimeServices,
   history: LLMMessage[],
+  ctx: ControlContext,
   promptText: (input: AgentInput) => string = input => input.prompt,
-): Promise<number> {
+): Promise<number | HaltDecision> {
+  const screen = services.onInputs;
+
   if (!services.inputs) {
     const steers = services.drainSteers?.() ?? [];
-    history.push(...steers);
-    return steers.length;
+    if (!screen || steers.length === 0) {
+      history.push(...steers);
+      return steers.length;
+    }
+    // 큐(`drainSteers`)와 정책은 다른 것이지만, 모델 컨텍스트에 들어가는 건 같은
+    // 메시지다 — 스크리닝이 보는 형태로 감싸서 같은 관문을 지나게 한다.
+    const screened = await screen(ctx, steers.map(message => ({ kind: 'steer', message })));
+    if (!Array.isArray(screened)) return screened;
+    for (const input of screened) history.push(messageForRuntimeInput(input, promptText));
+    return screened.length;
   }
 
   const representedIds = new Set(
     history.flatMap(message => message.id ? [message.id] : []),
   );
-  const inputs = await services.inputs.claim(representedIds);
+  let inputs = await services.inputs.claim(representedIds);
+  if (screen && inputs.length > 0) {
+    const screened = await screen(ctx, inputs);
+    if (!Array.isArray(screened)) return screened;
+    const surviving = new Set(screened.flatMap(input => input.originId ? [input.originId] : []));
+    const discarded = inputs.filter(
+      input => input.originId !== undefined && !surviving.has(input.originId),
+    );
+    if (discarded.length > 0) await services.inputs.discard(discarded);
+    inputs = screened;
+  }
   for (const input of inputs) {
     history.push(messageForRuntimeInput(input, promptText));
   }

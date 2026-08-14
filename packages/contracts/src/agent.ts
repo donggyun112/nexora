@@ -1,5 +1,14 @@
 import type { ToolDefinition, ToolContext, ToolResult } from './tool.js';
-import type { OnResume, PreToolUse, ResumeAnswer, SuspendRequest } from './controls.js';
+import type {
+  AfterToolCall,
+  BeforeFinish,
+  BeforeModel,
+  OnInputs,
+  OnResume,
+  PreToolUse,
+  ResumeAnswer,
+  SuspendRequest,
+} from './controls.js';
 import type { OutboundArtifact } from './adapter.js';
 
 /**
@@ -178,23 +187,36 @@ export interface RuntimeServices {
   drainSteers?: () => LLMMessage[];
 
   /**
-   * 한 도구 라운드가 끝난 뒤 "여기서 멈출까?"를 앱 정책에 묻는다. true 면 아키텍처는
-   * 다음 LLM 호출 없이 done 을 방출하고 끝낸다(budget/verification gate 가 꽂히는 자리).
-   *
-   * 도구 호출이 없던 턴은 어차피 그 자리에서 done 으로 끝나므로 호출되지 않는다.
-   * 대기 중인 steer 보다 우선한다 — 멈추기로 했으면 주입 메시지로 되살리지 않는다.
-   * 미설정이면 아키텍처의 maxIterations 까지 계속한다.
-   *
-   * 아직 react/plan-execute 아키텍처만 이 훅을 존중한다.
+   * 큐에서 꺼낸 입력이 모델 컨텍스트에 들어가기 전에 걸러진다. 반환된 배열이
+   * 실제로 합류하는 입력이고, 빈 배열도 정당한 답이다(전부 걸러냄). `halt` 면
+   * 그 자리에서 실행이 끝난다. 미설정이면 입력은 그대로 통과한다.
    */
-  shouldStopAfterTurn?: (info: {
-    /** 방금 끝난 라운드 index (0-based). */
-    iteration: number;
-    /** 그 라운드의 assistant 텍스트. 도구만 호출했으면 빈 문자열. */
-    content: string;
-    /** 그 라운드에서 실제 실행된 도구 호출. */
-    toolCalls: { name: string; input: unknown }[];
-  }) => boolean | Promise<boolean>;
+  onInputs?: OnInputs;
+
+  /**
+   * 매 LLM 호출 직전에 "지금 모델을 불러도 되나"를 정책에 묻는다. `proceed` 의
+   * steers 는 호출 전에 history 에 합류한다. `drainSteers` 와 자리가 겹쳐 보이지만
+   * 다른 것이다 — 저것은 하네스가 받아둔 steer 를 꺼내는 큐(서비스)고, 이것은
+   * 정책이다. 미설정이면 steering 없이 진행한다.
+   */
+  beforeModel?: BeforeModel;
+
+  /**
+   * 도구 결과가 나온 직후 기록·검증한다. 반환값이 없으므로 이의는 throw 로
+   * 표현하고, 그건 모델에게 보이는 도구 실패가 아니라 시도 중단이 된다.
+   */
+  afterToolCall?: AfterToolCall;
+
+  /**
+   * 실행이 끝나려는 순간, 그 종료를 받아들일지 묻는다. `halt` 면 그 reason 으로
+   * 끝나고, `proceed` 면 종료를 거부하고 steers 를 주입해 한 라운드 더 돈다 —
+   * budget/verification gate 가 꽂히는 자리다.
+   *
+   * boolean 훅(구 `shouldStopAfterTurn`)이 표현하지 못하던 것이 이 continuation
+   * 이다. "아직"만 말할 수 있었지 "무엇이 빠졌는지"는 말할 수 없었다.
+   * 미설정이면 주어진 reason 그대로 종료한다(`createControlPlane` 기본값).
+   */
+  beforeFinish?: BeforeFinish;
 
   /**
    * 모델이 도구를 호출하려는 순간, 실행 전에 "이걸 실행해도 되나?"를 앱 정책에 묻는다.

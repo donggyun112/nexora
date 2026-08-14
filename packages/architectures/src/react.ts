@@ -20,9 +20,13 @@ import type {
   LLMMessage,
   LLMResponse,
   SuspendRequest,
+  ToolBatchCall,
 } from '@dongkseo/contracts';
 import { OrchestrationControlError } from '@dongkseo/contracts';
 import {
+  askBeforeFinish,
+  askBeforeModel,
+  controlContext,
   executeToolCalls,
   absorbRuntimeInputs,
   contextMessagesFromResult,
@@ -93,7 +97,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         }
       }
 
-      const allToolCalls: { name: string; input: unknown }[] = [];
+      const callsMade: ToolBatchCall[] = [];
       let lastContent = '';
       // 턴 전체 토큰 usage 누적 — done 이벤트로 표면화한다(pi 드라이버·Multica
       // usage 회계가 provider 실 토큰을 받게). provider 가 usage 를 안 주면 undefined.
@@ -102,13 +106,35 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 
       // 실행 중 주입(steer)된 user 메시지를 history 에 도착순으로 합류시킨다.
       // tool_result 뒤 user 메시지는 toolImageMessages 와 동일한 시퀀스라 안전.
-      const absorbInputs = (): Promise<number> => absorbRuntimeInputs(services, history);
+      // onInputs 가 설정돼 있으면 합류 전에 걸러진다.
+      const absorbInputs = (turn: number, text: string) =>
+        absorbRuntimeInputs(services, history, controlContext(turn, history, callsMade, text));
+      // 종료 이벤트는 어느 경로로 끝나든 같은 모양이다.
+      const done = (content: string): AgentEvent => ({
+        type: 'done',
+        content,
+        toolCalls: callsMade.map(({ name, input }) => ({ name, input })),
+        usage: sawUsage ? turnUsage : undefined,
+        model: options.model,
+      });
 
       // 3. ReAct 루프
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         if (services.signal.aborted) return;
         // 직전 LLM/도구 실행 동안 주입된 steer 를 다음 LLM 호출 전에 합류.
-        await absorbInputs();
+        if (typeof await absorbInputs(iteration, lastContent) !== 'number') {
+          yield done(lastContent);
+          return;
+        }
+        // 모델을 부르기 직전의 마지막 관문 — python `_admit_turn_inputs` 의 before_model.
+        if (await askBeforeModel(
+          services,
+          history,
+          controlContext(iteration, history, callsMade, lastContent),
+        )) {
+          yield done(lastContent);
+          return;
+        }
         await services.tools.prepare?.(history);
 
         let response: LLMResponse;
@@ -146,16 +172,23 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         // 도구 호출이 없으면 종료 — 단, 종료 직전 주입된 steer 가 있으면 끝내지 않고 이어간다.
         if (!response.toolCalls || response.toolCalls.length === 0) {
           history.push({ role: 'assistant', content: response.content });
-          if ((await absorbInputs()) > 0) {
-            continue;
+          const late = await absorbInputs(iteration, response.content);
+          if (typeof late !== 'number') {
+            yield done(response.content);
+            return;
           }
-          yield {
-            type: 'done',
-            content: response.content,
-            toolCalls: allToolCalls,
-            usage: sawUsage ? turnUsage : undefined,
-            model: options.model,
-          };
+          if (late > 0) continue;
+          // 마지막 한마디 — python `_decide_finish` 의 before_finish 자리. `proceed` 면
+          // 종료가 거부된 것이므로 steers 를 안고 한 라운드 더 돈다. 게이트가 준 reason 은
+          // 바꾸지 않는다(다만 AgentEvent 'done' 에 이유를 실을 필드가 없어 표면화되진 않는다).
+          const reason = await askBeforeFinish(
+            services,
+            history,
+            controlContext(iteration, history, callsMade, response.content),
+            'completed',
+          );
+          if (reason === undefined) continue;
+          yield done(response.content);
           return;
         }
 
@@ -177,12 +210,16 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
 
         // tool_call 이벤트는 실행 시작 전에 emit
         for (const tc of toolCalls) {
-          allToolCalls.push({ name: tc.name, input: tc.arguments });
+          callsMade.push({ callId: tc.id, name: tc.name, input: tc.arguments });
           yield { type: 'tool_call', id: tc.id, name: tc.name, input: tc.arguments };
         }
 
         // 도구 병렬 실행 (Promise.all 안에서 yield 불가하므로 결과 모은 후 일괄 emit)
-        const toolResults = await executeToolCalls(services, toolCalls);
+        const toolResults = await executeToolCalls(
+          services,
+          toolCalls,
+          controlContext(iteration, history, callsMade, response.content),
+        );
 
         if (services.signal.aborted) return;
 
@@ -269,37 +306,25 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         sanitizeToolPairsInPlace(history);
 
         // 라운드 종료 판정. 결과·이벤트·history 는 이미 다 반영된 뒤라, 멈춰도 다음 LLM
-        // 턴만 생략된다. 두 경로:
-        //   - 도구 주도(submit/finish): 성공한 terminatesLoop 호출. error 는 회복 기회를 준다.
-        //   - 정책 주도: shouldStopAfterTurn 훅. 도구가 끝냈어도 훅에는 알린다(회계용).
+        // 턴만 생략된다. 도구 주도(submit/finish) 종료 — 성공한 terminatesLoop 호출.
+        // error 는 회복 기회를 준다.
+        //
+        // 이 경로는 `beforeFinish` 를 타지 않는다: python `_tool_round_stop_reason` 이
+        // `ended_by_tool` 을 그대로 종료 사유로 돌려주고, `_decide_finish`(= before_finish
+        // 를 묻는 유일한 자리)는 도구 없는 라운드에서만 불린다.
         const stopByTool = toolResults.some(
           ({ tc, isError }) => !isError && toolTerminatesLoop(services, tc),
         );
-        const stopByPolicy = await services.shouldStopAfterTurn?.({
-          iteration,
-          content: response.content,
-          toolCalls: toolCalls.map(tc => ({ name: tc.name, input: tc.arguments })),
-        }) === true;
-        if (stopByTool || stopByPolicy) {
-          yield {
-            type: 'done',
-            content: lastContent || (stopByTool ? '(tool ended the run)' : '(stopped after turn)'),
-            toolCalls: allToolCalls,
-            usage: sawUsage ? turnUsage : undefined,
-            model: options.model,
-          };
+        if (stopByTool) {
+          yield done(lastContent || '(tool ended the run)');
           return;
         }
       }
 
-      // max iterations 도달
-      yield {
-        type: 'done',
-        content: lastContent || '(max iterations reached)',
-        toolCalls: allToolCalls,
-        usage: sawUsage ? turnUsage : undefined,
-        model: options.model,
-      };
+      // max iterations 도달. 여기서는 `beforeFinish` 를 묻지 않는다 — 상한이 게이트보다
+      // 먼저다. 물으면 항상 veto 하는 게이트가 루프가 노출하는 유일한 반복 상한을 무한히
+      // 우회한다(python `_decide_finish` 가 turn cap 을 before_finish 앞에 두는 이유).
+      yield done(lastContent || '(max iterations reached)');
     },
   };
 }

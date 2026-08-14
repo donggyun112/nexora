@@ -1,12 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createReactArchitecture } from '../react.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, PendingRuntimeInput, RuntimeServices, LLMMessage, SuspendRequest, ToolContext, ToolDefinition, ToolResult } from '@dongkseo/contracts';
+import type { AgentEvent, PendingRuntimeInput, RuntimeServices, LLMMessage, StopReason, SuspendRequest, ToolBatchCall, ToolContext, ToolDefinition, ToolResult } from '@dongkseo/contracts';
 import {
   OrchestrationControlError,
   continueDecision,
   denyDecision,
   errorResult,
+  haltDecision,
+  proceedDecision,
   suspendDecision,
   suspendResult,
 } from '@dongkseo/contracts';
@@ -1051,7 +1053,7 @@ describe('ReAct within-turn compaction', () => {
   });
 });
 
-describe('ReAct shouldStopAfterTurn', () => {
+describe('ReAct turn-level controls', () => {
   /** 라운드 0: 도구 호출 → 라운드 1: 텍스트로 종료. 훅이 없으면 LLM 이 2번 불린다. */
   const twoRoundLLM = () => new MockLLMProvider([
     { text: 'first turn', toolCalls: [{ id: 't1', name: 'echo', arguments: { n: 1 } }] },
@@ -1061,65 +1063,176 @@ describe('ReAct shouldStopAfterTurn', () => {
     ['echo', async () => ({ type: 'text' as const, text: 'ok' })],
   ]);
 
-  it('ends the run after the tool round when the hook returns true', async () => {
+  it('훅이 전부 미설정이면 예전 동작 그대로다', async () => {
     const llm = twoRoundLLM();
-    const services = makeServices(llm, echoTools(), { shouldStopAfterTurn: () => true });
-
-    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
-
-    expect(llm.callLog).toHaveLength(1);
-    expect(events.some(e => e.type === 'tool_result')).toBe(true);
-    const done = events.find(e => e.type === 'done');
-    expect(done).toBeDefined();
-    if (done?.type === 'done') {
-      expect(done.content).toBe('first turn');
-      expect(done.toolCalls).toEqual([{ name: 'echo', input: { n: 1 } }]);
-    }
-  });
-
-  it('keeps looping when the hook returns false', async () => {
-    const llm = twoRoundLLM();
-    const services = makeServices(llm, echoTools(), { shouldStopAfterTurn: () => false });
+    const services = makeServices(llm, echoTools());
 
     const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
 
     expect(llm.callLog).toHaveLength(2);
     const done = events.find(e => e.type === 'done');
-    if (done?.type === 'done') expect(done.content).toBe('second turn');
+    if (done?.type === 'done') {
+      expect(done.content).toBe('second turn');
+      expect(done.toolCalls).toEqual([{ name: 'echo', input: { n: 1 } }]);
+    }
   });
 
-  it('receives the completed round index with that round\'s content and tool calls', async () => {
-    const seen: { iteration: number; content: string; names: string[] }[] = [];
+  it('beforeFinish 가 halt 면 종료하고 게이트가 받은 reason 은 바뀌지 않는다', async () => {
+    const seen: StopReason[] = [];
+    const llm = new MockLLMProvider([{ text: 'all done' }, { text: 'never reached' }]);
+    const services = makeServices(llm, new Map(), {
+      beforeFinish: async (_ctx, reason) => {
+        seen.push(reason);
+        return haltDecision(reason);
+      },
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    // 도구 없이 끝난 실행이므로 게이트가 판정하는 이유는 'completed' 다. 루프가 그 이유를
+    // 지어내지도, 게이트가 돌려준 것을 다시 쓰지도 않는다.
+    expect(seen).toEqual(['completed']);
+    expect(llm.callLog).toHaveLength(1);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('all done');
+  });
+
+  it('beforeFinish 가 proceed 면 종료하지 않고 steers 가 다음 LLM 호출에 보인다', async () => {
+    const llm = new MockLLMProvider([{ text: 'first answer' }, { text: 'second answer' }]);
+    let vetoed = false;
+    const services = makeServices(llm, new Map(), {
+      beforeFinish: async (_ctx, reason) => {
+        if (vetoed) return haltDecision(reason);
+        vetoed = true;
+        return proceedDecision([{ role: 'user', content: 'not done yet: check X' }]);
+      },
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(2);
+    expect(llm.callLog[1].messages).toContainEqual({ role: 'user', content: 'not done yet: check X' });
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('second answer');
+  });
+
+  it('maxIterations 소진은 beforeFinish 를 묻지 않는다 (항상 veto 해도 상한을 못 넘는다)', async () => {
+    const llm = new MockLLMProvider([{ text: 'r1' }, { text: 'r2' }]);
+    const gate = vi.fn(async () => proceedDecision([{ role: 'user' as const, content: 'again' }]));
+    const services = makeServices(llm, new Map(), { beforeFinish: gate });
+
+    const events = await collect(
+      createReactArchitecture({ maxIterations: 2 }).loop(services as unknown as RuntimeServices, { prompt: 'go' }),
+    );
+
+    // 라운드 0·1 에서만 묻는다 — 상한에 걸린 종료는 게이트를 타지 않으므로 세 번째 호출이 없다.
+    expect(gate).toHaveBeenCalledTimes(2);
+    expect(llm.callLog).toHaveLength(2);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('r2');
+  });
+
+  it('beforeModel 의 halt 는 LLM 호출 전에 끝낸다', async () => {
+    const llm = new MockLLMProvider([{ text: 'never reached' }]);
+    const services = makeServices(llm, new Map(), {
+      beforeModel: async () => haltDecision('policy'),
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(0);
+    expect(events.map(e => e.type)).toEqual(['done']);
+  });
+
+  it('beforeModel 의 steers 는 그 호출의 컨텍스트에 합류한다', async () => {
+    const llm = new MockLLMProvider([{ text: 'ok' }]);
+    const services = makeServices(llm, new Map(), {
+      beforeModel: async () => proceedDecision([{ role: 'user', content: 'steered before model' }]),
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(llm.callLog[0].messages).toContainEqual({ role: 'user', content: 'steered before model' });
+  });
+
+  it('ControlContext.turn 은 라운드마다 증가한다', async () => {
+    const turns: number[] = [];
     const llm = twoRoundLLM();
     const services = makeServices(llm, echoTools(), {
-      shouldStopAfterTurn: (info) => {
-        seen.push({ iteration: info.iteration, content: info.content, names: info.toolCalls.map(tc => tc.name) });
-        return false;
+      beforeModel: async (ctx) => {
+        turns.push(ctx.turn);
+        return proceedDecision();
       },
     });
 
     await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
 
-    expect(seen).toEqual([{ iteration: 0, content: 'first turn', names: ['echo'] }]);
+    expect(turns).toEqual([0, 1]);
   });
 
-  it('is not consulted when the assistant issued no tool calls', async () => {
-    const llm = new MockLLMProvider([{ text: 'no tools here' }]);
-    const hook = vi.fn(() => true);
-    const services = makeServices(llm, new Map(), { shouldStopAfterTurn: hook });
+  it('onInputs 가 걸러낸 입력은 모델에 보이지 않는다', async () => {
+    const llm = new MockLLMProvider([{ text: 'ok' }]);
+    const services = makeServices(llm, new Map()) as unknown as RuntimeServices;
+    const keep: PendingRuntimeInput = { kind: 'user_prompt', originId: 'keep', input: { prompt: 'keep me' } };
+    const drop: PendingRuntimeInput = { kind: 'user_prompt', originId: 'drop', input: { prompt: 'drop me' } };
+    let firstClaim = true;
+    const discarded: PendingRuntimeInput[] = [];
+    services.inputs = {
+      submit: async input => input,
+      claim: async () => firstClaim ? (firstClaim = false, [keep, drop]) : [],
+      admit: async () => {},
+      discard: async inputs => { discarded.push(...inputs); },
+    };
+    services.onInputs = async (_ctx, inputs) => inputs.filter(input => input.originId === 'keep');
+
+    await collect(createReactArchitecture().loop(services, { prompt: 'ignored' }));
+
+    const sent = JSON.stringify(llm.callLog[0].messages);
+    expect(sent).toContain('keep me');
+    expect(sent).not.toContain('drop me');
+    expect(discarded).toEqual([drop]);
+  });
+
+  it('onInputs 의 halt 는 LLM 호출 전에 끝낸다', async () => {
+    const llm = new MockLLMProvider([{ text: 'never reached' }]);
+    const services = makeServices(llm, new Map(), {
+      drainSteers: () => [{ role: 'user' as const, content: 'late steer' }],
+      onInputs: async () => haltDecision('policy'),
+    });
+
+    const events = await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(0);
+    expect(events.map(e => e.type)).toEqual(['done']);
+  });
+
+  it('afterToolCall 은 확정된 도구 결과와 함께 불린다', async () => {
+    const seen: { turn: number; call: ToolBatchCall; result: unknown }[] = [];
+    const llm = twoRoundLLM();
+    const services = makeServices(llm, echoTools(), {
+      afterToolCall: async (ctx, call, result) => { seen.push({ turn: ctx.turn, call, result }); },
+    });
+
+    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
+
+    expect(seen).toEqual([{
+      turn: 0,
+      call: { callId: 't1', name: 'echo', input: { n: 1 } },
+      result: { type: 'text', text: 'ok' },
+    }]);
+  });
+
+  it('preToolUse 가 거부한 호출은 afterToolCall 을 타지 않는다 (도구가 돌지 않았다)', async () => {
+    const llm = twoRoundLLM();
+    const hook = vi.fn(async () => {});
+    const services = makeServices(llm, echoTools(), {
+      preToolUse: async () => denyDecision(errorResult('nope')),
+      afterToolCall: hook,
+    });
 
     await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
 
     expect(hook).not.toHaveBeenCalled();
-  });
-
-  it('awaits an async hook', async () => {
-    const llm = twoRoundLLM();
-    const services = makeServices(llm, echoTools(), { shouldStopAfterTurn: async () => true });
-
-    await collect(createReactArchitecture().loop(services as unknown as RuntimeServices, { prompt: 'go' }));
-
-    expect(llm.callLog).toHaveLength(1);
   });
 });
 

@@ -14,8 +14,10 @@ import type {
   ToolExecutor,
   ToolResult,
   WorkspaceProvider,
+  ControlContext,
+  StopReason,
 } from '@dongkseo/contracts';
-import { suspendResult } from '@dongkseo/contracts';
+import { haltDecision, suspendResult } from '@dongkseo/contracts';
 import { MockLLMProvider } from './mock-llm.js';
 
 const mockContext: ToolContext = {
@@ -620,20 +622,27 @@ describe('AgentRunner', () => {
     expect(events.some(e => e.type === 'suspended')).toBe(true);
   });
 
-  it('AgentRunner forwards shouldStopAfterTurn to RuntimeServices', async () => {
-    const seen: { iteration: number }[] = [];
+  it('AgentRunner forwards beforeFinish to RuntimeServices', async () => {
+    const seen: { turn: number; reason: StopReason }[] = [];
 
-    // 아키텍처는 라운드가 끝나면 훅에 물어보고, true 면 그 자리에서 done 한다 —
+    // 아키텍처는 끝나기 직전에 훅에 물어보고, halt 면 그 reason 으로 끝낸다 —
     // react/plan-execute 가 하는 것과 같은 규약.
     const askArch: AgentArchitecture = {
       name: 'ask-arch',
       async *loop(services: RuntimeServices): AsyncGenerator<AgentEvent> {
-        const stop = await services.shouldStopAfterTurn?.({
-          iteration: 0,
-          content: 'round 0',
-          toolCalls: [{ name: 'noop', input: {} }],
-        });
-        yield { type: 'done', content: stop === true ? 'stopped' : 'continued', toolCalls: [] };
+        const ctx: ControlContext = {
+          turn: 0,
+          messages: [],
+          callsMade: [{ name: 'noop', input: {} }],
+          text: 'round 0',
+          subject: '',
+        };
+        const decision = await services.beforeFinish?.(ctx, 'completed');
+        yield {
+          type: 'done',
+          content: decision?.kind === 'halt' ? `stopped:${decision.reason}` : 'continued',
+          toolCalls: [],
+        };
       },
     };
 
@@ -641,17 +650,18 @@ describe('AgentRunner', () => {
       architecture: askArch,
       llm: new MockLLMProvider([]),
       tools: new CoreToolExecutor({ tools: [], context: mockContext }),
-      shouldStopAfterTurn: (info) => {
-        seen.push({ iteration: info.iteration });
-        return true;
+      // 종료를 받아들이는 게이트: 주어진 reason 을 그대로 돌려준다.
+      beforeFinish: async (ctx, reason) => {
+        seen.push({ turn: ctx.turn, reason });
+        return haltDecision(reason);
       },
     });
 
     const events: AgentEvent[] = [];
     for await (const ev of runner.execute({ prompt: 'go' })) events.push(ev);
 
-    expect(seen).toEqual([{ iteration: 0 }]);
+    expect(seen).toEqual([{ turn: 0, reason: 'completed' }]);
     const done = events.find(e => e.type === 'done');
-    if (done?.type === 'done') expect(done.content).toBe('stopped');
+    if (done?.type === 'done') expect(done.content).toBe('stopped:completed');
   });
 });

@@ -71,11 +71,26 @@ export interface LocalExecutionHarnessOptions {
   /** Optional architecture-level suspend hook. Forwarded to RuntimeServices. */
   onSuspend?: RuntimeServices['onSuspend'];
   /**
-   * Optional per-round stop policy. Forwarded to RuntimeServices — the architecture
-   * asks after each tool round whether to finish instead of taking another LLM turn
-   * (budget ceilings, verification gates, app-level turn limits).
+   * Optional input screen. Forwarded to RuntimeServices — runs on queued inputs
+   * before they join model context.
    */
-  shouldStopAfterTurn?: RuntimeServices['shouldStopAfterTurn'];
+  onInputs?: RuntimeServices['onInputs'];
+  /**
+   * Optional pre-model policy. Forwarded to RuntimeServices — steers or halts
+   * right before each LLM call.
+   */
+  beforeModel?: RuntimeServices['beforeModel'];
+  /**
+   * Optional tool-result writer. Forwarded to RuntimeServices — records/validates
+   * a result right after the call returns.
+   */
+  afterToolCall?: RuntimeServices['afterToolCall'];
+  /**
+   * Optional completion gate. Forwarded to RuntimeServices — the architecture asks
+   * before ending whether to accept the ending (`halt`) or veto it with steering for
+   * another round (`proceed`): budget ceilings, verification gates, turn limits.
+   */
+  beforeFinish?: RuntimeServices['beforeFinish'];
   /**
    * Optional per-call tool gate. Forwarded to RuntimeServices — the architecture asks
    * before touching the executor, and honors continue/deny/suspend (approval gates).
@@ -131,7 +146,10 @@ export class LocalExecutionHarness implements ExecutionHarness {
   private readonly pipeline: MiddlewarePipeline;
   private readonly idleTimeoutMs: number;
   private readonly onSuspend?: RuntimeServices['onSuspend'];
-  private readonly shouldStopAfterTurn?: RuntimeServices['shouldStopAfterTurn'];
+  private readonly onInputs?: RuntimeServices['onInputs'];
+  private readonly beforeModel?: RuntimeServices['beforeModel'];
+  private readonly afterToolCall?: RuntimeServices['afterToolCall'];
+  private readonly beforeFinish?: RuntimeServices['beforeFinish'];
   private readonly preToolUse?: RuntimeServices['preToolUse'];
   private readonly onResume?: RuntimeServices['onResume'];
   private readonly workspaceProvider?: WorkspaceProvider;
@@ -178,7 +196,10 @@ export class LocalExecutionHarness implements ExecutionHarness {
     this.pipeline = new MiddlewarePipeline(options.middlewares ?? []);
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.onSuspend = options.onSuspend;
-    this.shouldStopAfterTurn = options.shouldStopAfterTurn;
+    this.onInputs = options.onInputs;
+    this.beforeModel = options.beforeModel;
+    this.afterToolCall = options.afterToolCall;
+    this.beforeFinish = options.beforeFinish;
     this.preToolUse = options.preToolUse;
     this.onResume = options.onResume;
     this.workspaceProvider = options.workspaceProvider;
@@ -302,7 +323,10 @@ export class LocalExecutionHarness implements ExecutionHarness {
         } : undefined,
         drainSteers: () => (this.pendingSteers.length > 0 ? this.pendingSteers.splice(0) : []),
         onSuspend: this.onSuspend,
-        shouldStopAfterTurn: this.shouldStopAfterTurn,
+        onInputs: this.onInputs,
+        beforeModel: this.beforeModel,
+        afterToolCall: this.afterToolCall,
+        beforeFinish: this.beforeFinish,
         preToolUse: this.preToolUse,
         onResume: this.onResume,
       };

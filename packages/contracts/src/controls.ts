@@ -1,6 +1,9 @@
 /**
- * Tool-call decision contract — the control point between "the model wants this
- * tool" and "the executor runs it".
+ * Runtime control points — the places where the loop stops and asks policy
+ * before it acts, and the rules for composing several policies into one.
+ *
+ * The oldest of them is the tool gate: the control point between "the model
+ * wants this tool" and "the executor runs it".
  *
  * Observation and decision are different things. An event says what happened and
  * nobody waits on it; a control point returns something load-bearing that the
@@ -20,7 +23,7 @@
  * must be idempotent.
  */
 
-import type { ToolBatchCall } from './agent.js';
+import type { LLMMessage, PendingRuntimeInput, ToolBatchCall } from './agent.js';
 import { conversationId, spanId, traceId } from './id.js';
 import type { MessageEnvelope } from './message.js';
 import type { ToolContext, ToolResult } from './tool.js';
@@ -187,4 +190,239 @@ export function composePreToolUse(...stages: PreToolUse[]): PreToolUse {
     }
     return asked ?? continueDecision();
   };
+}
+
+// ── the turn-level control points ────────────────────────────────────────────
+
+/**
+ * Why a run ended, carried on the terminal `done` event.
+ *
+ * `aborted` matters most: a cancelled run must leave a record, not just a
+ * stream that stops.
+ */
+export type StopReason = 'completed' | 'aborted' | 'tool' | 'policy';
+
+/**
+ * Shared run context handed to every turn-level control point.
+ *
+ * This coexists with `ToolGateInfo` on purpose: the tool gate is asked about
+ * one call and its consumers want the *execution* context (tenant, workspace,
+ * logger) from `ToolExecutor.getContext()`, while a turn-level hook is asked
+ * about the run and wants the *conversation* so far. Neither is a superset of
+ * the other, and merging them would force every gate to carry a message log it
+ * never reads.
+ */
+export interface ControlContext {
+  /** Loop iteration this decision belongs to, 0-based. */
+  readonly turn: number;
+  /** The conversation as the runtime will send it. */
+  readonly messages: readonly LLMMessage[];
+  /** Tool calls already executed in this run. */
+  readonly callsMade: readonly ToolBatchCall[];
+  /** Assistant text accumulated in the current round. */
+  readonly text: string;
+  /**
+   * Who the run acts for, as the host names them. **Never interpreted here.**
+   *
+   * A user id, a service account, a tenant-scoped pair, whatever an external
+   * directory calls a principal — this runtime cannot know which, so it carries
+   * the string and reads nothing out of it. Empty means the host did not say,
+   * which is the honest default: a framework that invented a subject would be
+   * putting a name it made up into an audit record.
+   *
+   * It reaches the record two ways, and both matter. A stage may decide with it
+   * — a gate that asks a directory per call needs to know who is asking. And it
+   * is stamped onto every tool event and onto a suspension, so "who was this
+   * denied for" and "whose authority was this parked under" have answers that do
+   * not depend on correlating by run id afterwards.
+   */
+  readonly subject: string;
+}
+
+/**
+ * What a turn-level control point decides: keep going (optionally injecting
+ * steering messages first), or end the run with a terminal reason.
+ */
+export type TurnDecision =
+  | { readonly kind: 'proceed'; readonly steers: readonly LLMMessage[] }
+  | { readonly kind: 'halt'; readonly reason: StopReason };
+
+/** The halting half of `TurnDecision`, named because `OnInputs` returns only it. */
+export type HaltDecision = Extract<TurnDecision, { kind: 'halt' }>;
+
+/** Keep going, injecting `steers` (if any) before the next model call. */
+export function proceedDecision(steers: readonly LLMMessage[] = []): TurnDecision {
+  return { kind: 'proceed', steers };
+}
+
+/** End the run, recording why. */
+export function haltDecision(reason: StopReason): HaltDecision {
+  return { kind: 'halt', reason };
+}
+
+/**
+ * Rewrite, drop, or halt inputs before they enter model context. Returns the
+ * inputs that survive screening — an empty array is a legitimate answer
+ * ("nothing here is admissible"), distinct from halting the run.
+ */
+export type OnInputs = (
+  ctx: ControlContext,
+  inputs: PendingRuntimeInput[],
+) => Promise<PendingRuntimeInput[] | HaltDecision>;
+
+/** Return steering messages or halt before a model call. */
+export type BeforeModel = (ctx: ControlContext) => Promise<TurnDecision>;
+
+/**
+ * Record and validate a tool result, propagating failures. Returns nothing: a
+ * writer that objects does it by throwing, which stops the attempt rather than
+ * becoming a model-visible tool failure.
+ */
+export type AfterToolCall = (
+  ctx: ControlContext,
+  call: ToolBatchCall,
+  result: unknown,
+) => Promise<void>;
+
+/**
+ * Accept completion or veto it with steering for another round.
+ *
+ * This is what replaces a boolean "should I stop?": returning `halt` accepts the
+ * ending, and returning `proceed` refuses it — the steers are the reason the run
+ * gets another round, so a verification gate can say *what was missing* instead
+ * of only "not yet". `reason` is the ending being judged; a hook that accepts it
+ * should hand it back unchanged rather than substitute one of its own.
+ */
+export type BeforeFinish = (ctx: ControlContext, reason: StopReason) => Promise<TurnDecision>;
+
+/**
+ * Chain input screens so each sees the previous screen's output — a screen that
+ * rewrites inputs is visible to the ones after it. A `halt` short-circuits.
+ */
+export function composeOnInputs(...screens: OnInputs[]): OnInputs {
+  return async (ctx, inputs) => {
+    for (const screen of screens) {
+      const screened = await screen(ctx, inputs);
+      if (!Array.isArray(screened)) return screened;
+      inputs = screened;
+    }
+    return inputs;
+  };
+}
+
+/**
+ * Accumulate pre-model steering in order unless a source halts — the first
+ * `halt` wins immediately and the remaining sources are not asked.
+ *
+ * This is deliberately **asymmetric** with `composeBeforeFinish`, where a halt
+ * is the fallback and only an explicit `proceed` overrides it. The asymmetry is
+ * the point: refusing to *finish* keeps the loop running, so that side must
+ * require an explicit `proceed` from somebody or a silent stage could keep a run
+ * alive forever. Refusing to *start* a model call cannot loop, so the cheap rule
+ * is safe here.
+ */
+export function composeBeforeModel(...sources: BeforeModel[]): BeforeModel {
+  return async (ctx) => {
+    const steers: LLMMessage[] = [];
+    for (const source of sources) {
+      const action = await source(ctx);
+      if (action.kind === 'halt') return action;
+      steers.push(...action.steers);
+    }
+    return proceedDecision(steers);
+  };
+}
+
+/** Run result writers in order and propagate the first failure. */
+export function composeAfterToolCall(...writers: AfterToolCall[]): AfterToolCall {
+  return async (ctx, call, result) => {
+    for (const write of writers) await write(ctx, call, result);
+  };
+}
+
+/**
+ * Compose completion verifiers and accumulate steering from vetoes: every gate
+ * is asked, the steers of every `proceed` are concatenated in order, and the run
+ * continues if *any* gate vetoed. Anything other than `proceed` means "no
+ * objection" — a gate that halts is agreeing with the ending, not overriding it.
+ *
+ * When nobody vetoes, the result is `halt(reason)` with the **original** reason.
+ * That is what keeps `aborted` from being laundered into `completed` by a policy
+ * layer that merely had nothing to say.
+ *
+ * See `composeBeforeModel` for why the two turn-level composers are asymmetric.
+ */
+export function composeBeforeFinish(...gates: BeforeFinish[]): BeforeFinish {
+  return async (ctx, reason) => {
+    const steers: LLMMessage[] = [];
+    let vetoed = false;
+    for (const gate of gates) {
+      const decision = await gate(ctx, reason);
+      if (decision.kind !== 'proceed') continue;
+      vetoed = true;
+      steers.push(...decision.steers);
+    }
+    return vetoed ? proceedDecision(steers) : haltDecision(reason);
+  };
+}
+
+// ── the facade ───────────────────────────────────────────────────────────────
+
+/** Every control point, each optional. */
+export interface ControlPlaneHooks {
+  readonly onInputs?: OnInputs;
+  readonly beforeModel?: BeforeModel;
+  readonly preToolUse?: PreToolUse;
+  readonly afterToolCall?: AfterToolCall;
+  readonly beforeFinish?: BeforeFinish;
+  readonly onResume?: OnResume;
+}
+
+/** The same set, all present — what the runtime actually calls. */
+export type ControlPlane = Required<ControlPlaneHooks>;
+
+/**
+ * Fill in the unset control points with their permissive defaults, so the
+ * runtime calls the same six functions whether or not an app configured any.
+ * The result is spreadable into `RuntimeServices`.
+ *
+ * A factory rather than a class: these are plain async functions, and the
+ * runtime wants them as properties it can spread, not methods bound to an
+ * instance.
+ *
+ * "Permissive" has one exception, and it is the important one: an unset
+ * `beforeFinish` **halts** with the reason it was given. Nobody objected, so the
+ * run ends — the default for a completion gate is to accept the ending, not to
+ * keep going. `onResume` has the other one: an error answer is denied *before*
+ * the hook is consulted, because a hook cannot revalidate an answer that never
+ * arrived.
+ */
+export function createControlPlane(hooks: ControlPlaneHooks = {}): ControlPlane {
+  return {
+    onInputs: hooks.onInputs ?? (async (_ctx, inputs) => inputs),
+    beforeModel: hooks.beforeModel ?? (async () => proceedDecision()),
+    preToolUse: hooks.preToolUse ?? (async () => continueDecision()),
+    afterToolCall: hooks.afterToolCall ?? (async () => {}),
+    beforeFinish: hooks.beforeFinish ?? (async (_ctx, reason) => haltDecision(reason)),
+    onResume: async (info) => {
+      const answer = info.resume.answer;
+      if (isErrorAnswer(answer)) return denyDecision(answer);
+      if (hooks.onResume === undefined) return continueDecision();
+      return hooks.onResume(info);
+    },
+  };
+}
+
+/**
+ * An answer that is itself an error result. `ResumeAnswer.answer` is `unknown`
+ * on purpose (see its TSDoc), so the shape has to be checked rather than
+ * assumed.
+ */
+function isErrorAnswer(answer: unknown): answer is Extract<ToolResult, { type: 'error' }> {
+  return (
+    typeof answer === 'object'
+    && answer !== null
+    && (answer as { type?: unknown }).type === 'error'
+    && typeof (answer as { message?: unknown }).message === 'string'
+  );
 }

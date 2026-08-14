@@ -10,7 +10,9 @@
 //   Oracle        ./oracle      NexoraOracle, OracleDecision, OracleContext
 //   Messaging     ./message     메시지 타입        ./topic       topic, matchTopic, Topics
 //   Tools         ./tool        textResult, errorResult, suspendResult
-//   Tool 게이트   ./controls    ToolDecision, PreToolUse, OnResume, composePreToolUse
+//   Control plane ./controls    ToolDecision, PreToolUse, OnResume, TurnDecision,
+//                               BeforeModel/BeforeFinish/OnInputs/AfterToolCall,
+//                               compose*, createControlPlane
 //   Workflow      ./workflow, ./workflow-state, ./suspended-turn
 //   Store         ./store, ./store-backend, ./context   StoreBackend
 //   Effects       ./effect-ledger   EffectLedger, EffectRecord
@@ -159,6 +161,16 @@ export type {
   ResumeAnswer,
   OnResume,
   SuspendRequest,
+  StopReason,
+  ControlContext,
+  TurnDecision,
+  HaltDecision,
+  OnInputs,
+  BeforeModel,
+  AfterToolCall,
+  BeforeFinish,
+  ControlPlaneHooks,
+  ControlPlane,
 } from './controls.js';
 export {
   continueDecision,
@@ -166,6 +178,13 @@ export {
   suspendDecision,
   suspendEnvelope,
   composePreToolUse,
+  proceedDecision,
+  haltDecision,
+  composeOnInputs,
+  composeBeforeModel,
+  composeAfterToolCall,
+  composeBeforeFinish,
+  createControlPlane,
 } from './controls.js';
 
 export type {

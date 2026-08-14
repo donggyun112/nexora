@@ -38,6 +38,31 @@ export interface EffectLedger {
 
   /** Release a run lease held by `owner` without resetting its fencing token. */
   release(runId: string, owner: string): Promise<void>;
+
+  /**
+   * Atomically finish metadata steps and append idempotent inbox inputs.
+   *
+   * The atomicity is the whole point. Done as two calls — finish the steps, then
+   * enqueue the inputs — a crash in between leaves a state nothing can recover
+   * from: the counters say the transition happened and the inbox says the
+   * message never arrived. One transaction makes that gap unrepresentable.
+   *
+   * `inputs` are `[inputId, value]` pairs; the returned set holds the ids that
+   * were actually inserted, so a replay that re-presents an input it already
+   * committed can tell the difference between "I added this" and "it was already
+   * here" without a second read.
+   *
+   * Optional because it spans two contracts that TS keeps separate
+   * (`EffectLedger` for steps, `RuntimeInputQueue` for inputs) and only a backend
+   * that owns both can be atomic across them. A caller must check for it and fall
+   * back to the non-atomic pair — accepting the gap — when it is absent.
+   */
+  commitTransition?(
+    runId: string,
+    steps: Record<string, unknown>,
+    inputs: readonly (readonly [inputId: string, value: unknown])[],
+    fencingToken?: number,
+  ): Promise<Set<string>>;
 }
 
 /** A lease-protected write arrived after a newer worker took ownership. */

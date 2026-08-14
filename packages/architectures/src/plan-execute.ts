@@ -23,9 +23,13 @@ import type {
   LLMMessage,
   LLMResponse,
   SuspendRequest,
+  ToolBatchCall,
 } from '@dongkseo/contracts';
 import { OrchestrationControlError } from '@dongkseo/contracts';
 import {
+  askBeforeFinish,
+  askBeforeModel,
+  controlContext,
   executeToolCalls,
   absorbRuntimeInputs,
   contextMessagesFromResult,
@@ -111,22 +115,43 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         }
       }
 
-      const allToolCalls: { name: string; input: unknown }[] = [];
+      const callsMade: ToolBatchCall[] = [];
       let lastContent = '';
       const turnUsage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
       let sawUsage = false;
 
-      const absorbInputs = (): Promise<number> => absorbRuntimeInputs(
+      // onInputs 가 설정돼 있으면 합류 전에 걸러진다 — react.ts 와 같은 규약.
+      const absorbInputs = (turn: number, text: string) => absorbRuntimeInputs(
         services,
         history,
+        controlContext(turn, history, callsMade, text),
         queued => phase === 'plan' && planPrompt
           ? `${queued.prompt}\n\n${planPrompt}`
           : queued.prompt,
       );
+      const done = (content: string): AgentEvent => ({
+        type: 'done',
+        content,
+        toolCalls: callsMade.map(({ name, input }) => ({ name, input })),
+        usage: sawUsage ? turnUsage : undefined,
+        model: options.model,
+      });
 
       for (let iteration = 0; iteration < maxIterations; iteration++) {
         if (services.signal.aborted) return;
-        await absorbInputs();
+        if (typeof await absorbInputs(iteration, lastContent) !== 'number') {
+          yield done(lastContent);
+          return;
+        }
+        // 모델을 부르기 직전의 마지막 관문 — python `_admit_turn_inputs` 의 before_model.
+        if (await askBeforeModel(
+          services,
+          history,
+          controlContext(iteration, history, callsMade, lastContent),
+        )) {
+          yield done(lastContent);
+          return;
+        }
         await services.tools.prepare?.(history);
 
         let response: LLMResponse;
@@ -162,14 +187,22 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
           history.push({ role: 'assistant', content: response.content });
-          if ((await absorbInputs()) > 0) continue;
-          yield {
-            type: 'done',
-            content: response.content,
-            toolCalls: allToolCalls,
-            usage: sawUsage ? turnUsage : undefined,
-            model: options.model,
-          };
+          const late = await absorbInputs(iteration, response.content);
+          if (typeof late !== 'number') {
+            yield done(response.content);
+            return;
+          }
+          if (late > 0) continue;
+          // python `_decide_finish` 의 before_finish 자리 — `proceed` 면 종료가 거부된
+          // 것이므로 steers 를 안고 한 라운드 더 돈다.
+          const reason = await askBeforeFinish(
+            services,
+            history,
+            controlContext(iteration, history, callsMade, response.content),
+            'completed',
+          );
+          if (reason === undefined) continue;
+          yield done(response.content);
           return;
         }
 
@@ -184,11 +217,15 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         });
 
         for (const tc of toolCalls) {
-          allToolCalls.push({ name: tc.name, input: tc.arguments });
+          callsMade.push({ callId: tc.id, name: tc.name, input: tc.arguments });
           yield { type: 'tool_call', id: tc.id, name: tc.name, input: tc.arguments };
         }
 
-        const toolResults = await executeToolCalls(services, toolCalls);
+        const toolResults = await executeToolCalls(
+          services,
+          toolCalls,
+          controlContext(iteration, history, callsMade, response.content),
+        );
         if (services.signal.aborted) return;
 
         const toolResultBlocks: ToolResultBlock[] = [];
@@ -263,35 +300,20 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
         await services.memory.compact();
         sanitizeToolPairsInPlace(history);
 
-        // 라운드 종료 판정 — react.ts 와 동일 규약. PLAN→EXECUTE 전이 뒤에 오므로
-        // 계획 제출로 전이한 라운드도 정책이 멈출 수 있다.
+        // 라운드 종료 판정 — react.ts 와 동일 규약. 도구가 끝낸 라운드는 `beforeFinish` 를
+        // 타지 않는다(python `_tool_round_stop_reason`).
         const stopByTool = toolResults.some(
           ({ tc, isError }) => !isError && toolTerminatesLoop(services, tc),
         );
-        const stopByPolicy = await services.shouldStopAfterTurn?.({
-          iteration,
-          content: response.content,
-          toolCalls: toolCalls.map(tc => ({ name: tc.name, input: tc.arguments })),
-        }) === true;
-        if (stopByTool || stopByPolicy) {
-          yield {
-            type: 'done',
-            content: lastContent || (stopByTool ? '(tool ended the run)' : '(stopped after turn)'),
-            toolCalls: allToolCalls,
-            usage: sawUsage ? turnUsage : undefined,
-            model: options.model,
-          };
+        if (stopByTool) {
+          yield done(lastContent || '(tool ended the run)');
           return;
         }
       }
 
-      yield {
-        type: 'done',
-        content: lastContent || '(max iterations reached)',
-        toolCalls: allToolCalls,
-        usage: sawUsage ? turnUsage : undefined,
-        model: options.model,
-      };
+      // maxIterations 소진은 `beforeFinish` 를 묻지 않는다 — 상한이 게이트보다 먼저다.
+      // 물으면 항상 veto 하는 게이트가 유일한 반복 상한을 무한히 우회한다.
+      yield done(lastContent || '(max iterations reached)');
     },
   };
 }

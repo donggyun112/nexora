@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createPlanExecuteArchitecture } from '../plan-execute.js';
 import { MockLLMProvider, makeServices } from './mock-llm.js';
-import type { AgentEvent, PendingRuntimeInput, RuntimeServices, ToolDefinition } from '@dongkseo/contracts';
-import { OrchestrationControlError, continueDecision } from '@dongkseo/contracts';
+import type { AgentEvent, PendingRuntimeInput, RuntimeServices, StopReason, ToolBatchCall, ToolDefinition } from '@dongkseo/contracts';
+import { OrchestrationControlError, continueDecision, haltDecision, proceedDecision } from '@dongkseo/contracts';
 
 async function collect(gen: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -260,17 +260,92 @@ describe('PlanExecuteArchitecture — round-end termination', () => {
     ['web_search', async () => ({ type: 'text' as const, text: 'results' })],
   ]);
 
-  it('ends the run when shouldStopAfterTurn returns true', async () => {
+  it('훅이 미설정이면 도구 라운드 뒤에도 계속 돈다 (기존 동작)', async () => {
     const llm = researchLLM();
     const services = servicesWithToolList(llm, researchTools(), ['web_search']);
-    services.shouldStopAfterTurn = () => true;
 
     const events = await collect(createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan' }).loop(services, { prompt: 'go' }));
 
-    expect(llm.callLog).toHaveLength(1);
+    expect(llm.callLog).toHaveLength(2);
     const done = events.find(e => e.type === 'done');
-    expect(done).toBeDefined();
-    if (done?.type === 'done') expect(done.content).toBe('researching');
+    if (done?.type === 'done') expect(done.content).toBe('still going');
+  });
+
+  it('beforeFinish 가 halt 면 종료하고, 도구가 끝낸 라운드는 아예 묻지 않는다', async () => {
+    const seen: StopReason[] = [];
+    const llm = researchLLM();
+    const services = servicesWithToolList(llm, researchTools(), ['web_search']);
+    services.beforeFinish = async (_ctx, reason) => {
+      seen.push(reason);
+      return haltDecision(reason);
+    };
+
+    const events = await collect(createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan' }).loop(services, { prompt: 'go' }));
+
+    // 라운드 0 은 도구 라운드라 게이트를 타지 않고, 라운드 1(도구 없음)에서만 묻는다.
+    expect(seen).toEqual(['completed']);
+    expect(llm.callLog).toHaveLength(2);
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('still going');
+  });
+
+  it('beforeFinish 가 proceed 면 종료하지 않고 steers 가 다음 호출에 보인다', async () => {
+    const llm = new MockLLMProvider([{ text: 'draft' }, { text: 'final' }]);
+    const services = servicesWithToolList(llm, researchTools(), ['web_search']);
+    let vetoed = false;
+    services.beforeFinish = async (_ctx, reason) => {
+      if (vetoed) return haltDecision(reason);
+      vetoed = true;
+      return proceedDecision([{ role: 'user', content: 'keep going: verify sources' }]);
+    };
+
+    const events = await collect(createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan' }).loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(2);
+    expect(llm.callLog[1].messages).toContainEqual({ role: 'user', content: 'keep going: verify sources' });
+    const done = events.find(e => e.type === 'done');
+    if (done?.type === 'done') expect(done.content).toBe('final');
+  });
+
+  it('maxIterations 소진은 beforeFinish 를 묻지 않는다', async () => {
+    const llm = new MockLLMProvider([{ text: 'r1' }, { text: 'r2' }]);
+    const services = servicesWithToolList(llm, researchTools(), ['web_search']);
+    const gate = vi.fn(async () => proceedDecision([{ role: 'user' as const, content: 'again' }]));
+    services.beforeFinish = gate;
+
+    await collect(
+      createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan', maxIterations: 2 })
+        .loop(services, { prompt: 'go' }),
+    );
+
+    expect(gate).toHaveBeenCalledTimes(2);
+    expect(llm.callLog).toHaveLength(2);
+  });
+
+  it('beforeModel 의 halt 는 LLM 호출 전에 끝낸다', async () => {
+    const llm = new MockLLMProvider([{ text: 'never reached' }]);
+    const services = servicesWithToolList(llm, researchTools(), ['web_search']);
+    services.beforeModel = async () => haltDecision('policy');
+
+    const events = await collect(createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan' }).loop(services, { prompt: 'go' }));
+
+    expect(llm.callLog).toHaveLength(0);
+    expect(events.map(e => e.type)).toEqual(['done']);
+  });
+
+  it('afterToolCall 은 확정된 도구 결과와 함께 불린다', async () => {
+    const seen: { turn: number; call: ToolBatchCall; result: unknown }[] = [];
+    const llm = researchLLM();
+    const services = servicesWithToolList(llm, researchTools(), ['web_search']);
+    services.afterToolCall = async (ctx, call, result) => { seen.push({ turn: ctx.turn, call, result }); };
+
+    await collect(createPlanExecuteArchitecture({ exitPlanTool: 'submit_plan' }).loop(services, { prompt: 'go' }));
+
+    expect(seen).toEqual([{
+      turn: 0,
+      call: { callId: 'r1', name: 'web_search', input: { q: 'x' } },
+      result: { type: 'text', text: 'results' },
+    }]);
   });
 
   it('ends the run after a terminating tool succeeds', async () => {

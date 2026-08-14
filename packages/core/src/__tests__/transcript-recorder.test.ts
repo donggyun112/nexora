@@ -107,3 +107,88 @@ describe('TranscriptRecorder', () => {
     expect(toolUser.content).toContainEqual({ type: 'image', source: { type: 'attachment_ref', ref: 'img.png', media_type: 'image/png' } });
   });
 });
+
+/**
+ * 권한 결정은 이벤트로만 나오므로, 트랜스크립트에 남으려면 여기서 기록돼야 한다.
+ * 도구 결과 문자열에 감사 footer 를 덧붙이던 예전 방식으로 돌아가지 않는 것이 요점 —
+ * 승인자 이름은 metadata 에만 남고 모델 컨텍스트로 흘러들지 않는다.
+ */
+describe('TranscriptRecorder — permission events', () => {
+  it('records a denial as a system entry with the decision in metadata', async () => {
+    const store = fakeStore();
+    const rec = new TranscriptRecorder(store, 'c');
+    await rec.onEvent({
+      type: 'permission_denied',
+      callId: 'c1',
+      name: 'shell',
+      source: 'pre_tool_use',
+      result: { type: 'error', message: 'denied by policy' },
+    });
+
+    expect(store.entries).toHaveLength(1);
+    const entry = store.entries[0];
+    expect(entry.type).toBe('system');
+    if (entry.type !== 'system') throw new Error('not a system entry');
+    expect(entry.level).toBe('warn');
+    expect(entry.content).toContain('Permission denied for shell');
+    expect(entry.metadata).toMatchObject({
+      event: 'permission_denied',
+      callId: 'c1',
+      tool: 'shell',
+      source: 'pre_tool_use',
+    });
+  });
+
+  it('records a park with the pendingId the answer will come back on', async () => {
+    const store = fakeStore();
+    const rec = new TranscriptRecorder(store, 'c');
+    await rec.onEvent({
+      type: 'permission_request',
+      callId: 'c1',
+      name: 'shell',
+      source: 'pre_tool_use',
+      pendingId: 'p-42',
+    });
+    expect(store.entries[0].metadata).toMatchObject({ event: 'permission_request', pendingId: 'p-42' });
+  });
+
+  it('records who approved in metadata, never in model-visible content', async () => {
+    const store = fakeStore();
+    const rec = new TranscriptRecorder(store, 'c');
+    await rec.onEvent({
+      type: 'permission_granted',
+      callId: 'c1',
+      name: 'shell',
+      source: 'on_resume',
+      audit: { choice: 'once', decidedBy: 'Alice' },
+    });
+
+    const entry = store.entries[0];
+    if (entry.type !== 'system') throw new Error('not a system entry');
+    expect(entry.metadata).toMatchObject({ audit: { choice: 'once', decidedBy: 'Alice' } });
+    expect(entry.content).not.toContain('Alice');
+  });
+
+  it('does not disturb the round it lands in the middle of', async () => {
+    const store = fakeStore();
+    const rec = new TranscriptRecorder(store, 'c');
+    await rec.recordUserInput({ prompt: 'run it' });
+    await rec.onEvent({ type: 'tool_call', id: 'c1', name: 'shell', input: {} });
+    await rec.onEvent({
+      type: 'permission_granted',
+      callId: 'c1',
+      name: 'shell',
+      source: 'on_resume',
+      audit: { choice: 'once' },
+    });
+    await rec.onEvent({ type: 'tool_result', id: 'c1', name: 'shell', result: { type: 'text', text: 'ok' }, isError: false });
+    await rec.onEvent({ type: 'done', content: 'finished', toolCalls: [] });
+
+    // 권한 엔트리는 turn 이 아니라 감사 기록이므로 lineage 를 끊지 않는다.
+    const chain = store.entries.filter(e => e.type !== 'system');
+    expect(chain.map(e => e.type)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    for (let i = 1; i < chain.length; i++) {
+      expect(chain[i].parentUuid).toBe(chain[i - 1].uuid);
+    }
+  });
+});

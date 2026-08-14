@@ -128,10 +128,54 @@ export class TranscriptRecorder {
         });
         break;
 
+      case 'permission_denied':
+      case 'permission_request':
+      case 'permission_granted':
+        await this.recordPermission(event);
+        break;
+
       default:
         // thinking / progress / artifact / suspended / error not persisted as turns
         break;
     }
+  }
+
+  /**
+   * 권한 결정(거부·파킹·승인)을 system 엔트리로 남긴다.
+   *
+   * recordFallback 과 같은 이유로 store.appendEntry 를 직접 호출한다(write() 아님) —
+   * 이 이벤트들은 tool_call 과 tool_result 사이에 도착하므로, lastUuid 나 pending 버퍼를
+   * 건드리면 진행 중인 라운드의 assistant/tool_result 엔트리 순서와 lineage 가 흐트러진다.
+   * 권한 사실은 턴이 아니라 그 턴에 붙는 감사 기록이다.
+   *
+   * system 엔트리를 고른 이유는 그 타입이 이미 "권한 변경 등 인간이 읽는 짧은 텍스트"로
+   * 정의돼 있고(contracts/src/transcript.ts), transcript-mapping 이 LLM 메시지로 되돌릴 때
+   * 통째로 건너뛰기 때문이다 — 승인자 이름이 모델 컨텍스트에 들어가지 않는 게 이번 설계의
+   * 이점이고 그게 여기서 유지된다. 구조화된 값은 metadata 로만 간다.
+   */
+  private async recordPermission(
+    event: Extract<AgentEvent, { type: `permission_${string}` }>,
+  ): Promise<void> {
+    const verb = event.type === 'permission_denied'
+      ? 'denied'
+      : event.type === 'permission_request' ? 'requested' : 'granted';
+    const entry: TranscriptEntry = {
+      ...this.base(),
+      type: 'system',
+      uuid: randomUUID(),
+      parentUuid: this.lastUuid,
+      content: `Permission ${verb} for ${event.name} (call ${event.callId}) at ${event.source}`,
+      level: event.type === 'permission_denied' ? 'warn' : 'info',
+      metadata: {
+        event: event.type,
+        callId: event.callId,
+        tool: event.name,
+        source: event.source,
+        ...(event.type === 'permission_request' ? { pendingId: event.pendingId } : {}),
+        ...(event.type === 'permission_granted' ? { audit: event.audit } : {}),
+      },
+    };
+    try { await this.store.appendEntry(entry); } catch { /* best-effort */ }
   }
 
   private async flushPendingAssistant(meta?: {

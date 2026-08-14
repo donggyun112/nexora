@@ -101,7 +101,61 @@ export type AgentEvent =
   | { type: 'progress'; message: string; agent?: string }
   | { type: 'done'; content: string; toolCalls: ToolCallSummary[]; usage?: LLMUsage; model?: string }
   | { type: 'error'; message: string }
-  | { type: 'suspended'; pendingId: string; toolCallId: string };
+  | { type: 'suspended'; pendingId: string; toolCallId: string }
+  /**
+   * 게이트가 호출을 거부했다 — python `EventType.PERMISSION_DENIED`.
+   *
+   * `result` 는 모델이 대신 보게 되는 결과다(`ToolDecision.deny` 의 것 그대로).
+   */
+  | {
+      type: 'permission_denied';
+      callId: string;
+      name: string;
+      source: PermissionSource;
+      result: unknown;
+    }
+  /**
+   * 게이트가 호출을 파킹하고 질문을 냈다 — python `EventType.PERMISSION_REQUEST`.
+   *
+   * `pendingId` 는 런타임이 민팅한 실제 파킹 id 이므로 `suspended` 이벤트·체크포인트와
+   * 같은 값이다.
+   */
+  | {
+      type: 'permission_request';
+      callId: string;
+      name: string;
+      source: PermissionSource;
+      pendingId: string;
+    }
+  /**
+   * 게이트가 호출을 통과시키면서 기록할 감사 정보를 실어 보냈다.
+   *
+   * **python `EventType` 에는 대응이 없다 — 의도적으로 추가한 것이다.** 거부가 감사
+   * 대상인 이유(권한 결정이 트랜스크립트에 남아야 한다)는 승인에도 똑같이 적용되는데,
+   * 승인 게이트를 도구 래퍼에서 control point 쌍으로 옮기면서 도구 결과에 붙던
+   * `[approved-<choice> by <who>]` 감사 footer가 사라졌다 — 게이트가 더 이상 도구를
+   * 감싸지 않아 결과를 후처리할 자리가 없다. 그 기록을 되살리되 모델 컨텍스트가 아니라
+   * 관찰 채널로 되살리는 것이 이 이벤트다(승인자 이름이 모델에게 보이지 않는 게 이
+   * 설계의 이점이다). 나중에 python 과의 일치 여부를 다시 볼 사람은 이 빈칸을 실수가
+   * 아니라 판단으로 읽어야 한다.
+   *
+   * 통과 전부가 아니라 `ToolDecision.continue` 가 `audit` 을 실어 보낸 통과만 이 이벤트가
+   * 된다 — `loop-helpers.ts` 의 발행 규칙 참고.
+   */
+  | {
+      type: 'permission_granted';
+      callId: string;
+      name: string;
+      source: PermissionSource;
+      audit: Record<string, unknown>;
+    };
+
+/**
+ * 권한 결정이 나온 자리. python `tool_payload(..., source=...)` 가 싣는 문자열과 같은 값
+ * 이다 — 같은 거부라도 `pre_tool_use` 는 아예 돌지 않은 호출이고, `on_resume` 은 사람의
+ * 승인이 파킹 중 바뀐 정책에 뒤집힌 것이라 읽는 쪽이 구별해야 한다.
+ */
+export type PermissionSource = 'pre_tool_use' | 'on_resume';
 
 export interface ToolCallSummary {
   name: string;

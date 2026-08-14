@@ -48,7 +48,8 @@
  *          'session' → rememberSession, continue
  *          'always'  → rememberAlways, continue
  *          'once'    → continue, nothing cached
- *      11. audit → `approval.granted` carries `choice` and `decidedBy`.
+ *      11. audit → `approval.granted` carries `choice` and `decidedBy`, and the
+ *          same two ride back on `continue` as `ToolDecision.audit`.
  *
  * A HandraiseInbox (subscribed elsewhere) collects the published request and
  * hands it to a UI (Discord buttons, etc.) which posts the ApprovalReply back
@@ -58,7 +59,12 @@
  * Audit note: the gate no longer wraps the tool, so the old
  * `[approved-<choice> by <who>]` footer appended to the tool's text result is
  * gone — after `continue` the loop runs the tool and the gate never sees the
- * result. The `approval.granted` log event carries the same two facts.
+ * result. The two facts it carried travel two ways now: the `approval.granted`
+ * log event (for operational dashboards) and `ToolDecision.audit` on the
+ * `continue`, which the loop publishes as a `permission_granted` event. The
+ * event is the better half of the trade — the approver's name reaches the
+ * transcript and the UI without ever entering model context, which the footer
+ * could not manage.
  */
 import type {
   EventTransport,
@@ -255,7 +261,12 @@ export interface ApprovalGateOptions {
  */
 type GateVerdict =
   | { kind: 'deny'; result: ToolResult }
-  | { kind: 'allow' }
+  /**
+   * `audit` is set only when the allow rests on a human decision made earlier —
+   * a cached approval. The runtime turns it into a `permission_granted` event;
+   * an allow with nothing attached stays silent. See `ToolDecision.continue`.
+   */
+  | { kind: 'allow'; audit?: Record<string, unknown> }
   | { kind: 'ask'; spec: ApprovalGateSpec; tenantId: string; sessionKey: string };
 
 export function createApprovalGate(options: ApprovalGateOptions): {
@@ -281,7 +292,7 @@ export function createApprovalGate(options: ApprovalGateOptions): {
   async function preToolUse(info: ToolGateInfo) {
     const verdict = await evaluate(info, 'pre_tool_use');
     if (verdict.kind === 'deny') return denyDecision(verdict.result);
-    if (verdict.kind === 'allow') return continueDecision();
+    if (verdict.kind === 'allow') return continueDecision(verdict.audit);
 
     const { spec, tenantId, sessionKey } = verdict;
     const toolName = info.call.name;
@@ -327,7 +338,7 @@ export function createApprovalGate(options: ApprovalGateOptions): {
     if (verdict.kind === 'deny') return denyDecision(verdict.result);
     // Policy now clears the call without asking (mode went 'off', a cached
     // allow landed, the spec is gone): the parked question is moot.
-    if (verdict.kind === 'allow') return continueDecision();
+    if (verdict.kind === 'allow') return continueDecision(verdict.audit);
 
     const { spec, tenantId, sessionKey } = verdict;
     const toolName = info.call.name;
@@ -356,14 +367,18 @@ export function createApprovalGate(options: ApprovalGateOptions): {
     }
     // 'once' → proceed without caching
 
-    // The tool result is out of reach from here, so this log is the audit
-    // trail: choice + who decided.
+    // The tool result is out of reach from here, so this log is one half of the
+    // audit trail: choice + who decided. Operational dashboards read it, so it
+    // stays. The other half is the decision itself — the same two facts ride
+    // back on `continue` as `audit`, and the loop turns them into a
+    // `permission_granted` event that reaches the transcript and the UI. Only
+    // the gate knows them; by the time the loop sees `continue` they are gone.
     info.context?.logger.info('approval.granted', {
       tool: toolName,
       choice,
       decidedBy,
     });
-    return continueDecision();
+    return continueDecision({ choice, ...(decidedBy ? { decidedBy } : {}) });
   }
 
   /**
@@ -491,14 +506,20 @@ export function createApprovalGate(options: ApprovalGateOptions): {
       return { kind: 'allow' };
     }
 
-    // 8. Cached allow.
+    // 8. Cached allow. This one carries audit while steps 3 and 7 do not: a
+    // cached allow IS a human approval, just an earlier one, and without a
+    // record the transcript shows a gated tool running with no permission entry
+    // at all — indistinguishable from a gate that was never wired. Steps 3 and 7
+    // have no human behind them (not gated / mode off), so recording them would
+    // be noise. The store does not keep who decided, so the record says what it
+    // knows: which key was already approved.
     if (cached === 'allow') {
       context.logger.info('approval.cached.allow', {
         tool: toolName,
         source,
         approvalKey: spec.approvalKey,
       });
-      return { kind: 'allow' };
+      return { kind: 'allow', audit: { cached: 'allow', approvalKey: spec.approvalKey } };
     }
 
     // 9. Ask a human.

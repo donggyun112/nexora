@@ -221,7 +221,7 @@ export function createPlanExecuteArchitecture(options: PlanExecuteOptions): Agen
           yield { type: 'tool_call', id: tc.id, name: tc.name, input: tc.arguments };
         }
 
-        const toolResults = await executeToolCalls(
+        const toolResults = yield* executeToolCalls(
           services,
           toolCalls,
           controlContext(iteration, history, callsMade, response.content),

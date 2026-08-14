@@ -259,6 +259,7 @@ export type {
   ImageContent,
   FileContent,
   AgentEvent,
+  PermissionSource,
   ExecutionHarness,
   ToolCallSummary,
   AgentRuntime,

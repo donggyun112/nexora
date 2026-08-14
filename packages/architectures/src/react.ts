@@ -215,7 +215,7 @@ export function createReactArchitecture(options: ReactOptions = {}): AgentArchit
         }
 
         // 도구 병렬 실행 (Promise.all 안에서 yield 불가하므로 결과 모은 후 일괄 emit)
-        const toolResults = await executeToolCalls(
+        const toolResults = yield* executeToolCalls(
           services,
           toolCalls,
           controlContext(iteration, history, callsMade, response.content),

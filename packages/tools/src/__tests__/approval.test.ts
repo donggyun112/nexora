@@ -662,6 +662,60 @@ describe('createApprovalGate — onResume', () => {
     const granted = logs.find((l) => l.event === 'approval.granted');
     expect(granted?.data).toMatchObject({ tool: 'risky', choice: 'once', decidedBy: 'Alice' });
   });
+
+  it('step 11: the same two facts ride back on the continue as audit', async () => {
+    const { onResume } = setupGate({
+      transport: new FakeTransport(),
+      store: new InMemoryApprovalPolicyStore(),
+    });
+
+    const decision = await onResume(resumeInfo(callInfo('risky'), APPROVED_ONCE));
+
+    // Only the gate knows these; the loop sees `continue` and nothing else.
+    // Carrying them here is what puts them back into the transcript, which the
+    // old `[approved-<choice> by <who>]` result footer used to do.
+    expect(decision).toEqual({
+      kind: 'continue',
+      audit: { choice: 'once', decidedBy: 'Alice' },
+    });
+  });
+
+  it('omits decidedBy when the reply named nobody', async () => {
+    const { onResume } = setupGate({
+      transport: new FakeTransport(),
+      store: new InMemoryApprovalPolicyStore(),
+    });
+
+    const decision = await onResume(resumeInfo(callInfo('risky'), { choice: 'once' }));
+
+    expect(decision).toEqual({ kind: 'continue', audit: { choice: 'once' } });
+  });
+
+  it('a cached allow is recorded too — it is an earlier human approval', async () => {
+    const store = new InMemoryApprovalPolicyStore();
+    await store.rememberSession('tenant-A', 'session-1', 'risky-key', 'session');
+    const { preToolUse } = setupGate({ transport: new FakeTransport(), store });
+
+    const decision = await preToolUse(callInfo('risky'));
+
+    expect(decision).toEqual({
+      kind: 'continue',
+      audit: { cached: 'allow', approvalKey: 'risky-key' },
+    });
+  });
+
+  it("an ungated call and mode 'off' stay silent — no human is behind either", async () => {
+    const transport = new FakeTransport();
+    const store = new InMemoryApprovalPolicyStore();
+    // step 3: the predicate declines to gate this call at all.
+    expect(await setupGate({ transport, store }).preToolUse(callInfo('safe'))).toEqual({
+      kind: 'continue',
+    });
+    // step 7: gated, but enforcement is off.
+    expect(
+      await setupGate({ transport, store, mode: 'off' }).preToolUse(callInfo('risky')),
+    ).toEqual({ kind: 'continue' });
+  });
 });
 
 /**

@@ -52,8 +52,21 @@ export interface SuspendRequest {
  * result — and reusing one key for both would make that line unreadable.
  */
 export type ToolDecision =
-  /** Run the call as the model asked. */
-  | { readonly kind: 'continue' }
+  /**
+   * Run the call as the model asked.
+   *
+   * `audit` is what the gate knows and the loop does not: an approval's `choice`
+   * and `decidedBy` live inside the gate, and by the time the loop sees
+   * `continue` they are gone. Attaching them here keeps the gate side-effect
+   * free — it *describes* the record to make, exactly as `suspend` describes the
+   * question to ask rather than publishing it, and the runtime does the emitting
+   * in both cases. The loop moves it verbatim into a `permission_granted` event.
+   *
+   * Optional, and its presence is a signal, not just data: a gate that attaches
+   * nothing is saying this pass is not worth recording. See the emission rule in
+   * `architectures/src/loop-helpers.ts`.
+   */
+  | { readonly kind: 'continue'; readonly audit?: Record<string, unknown> }
   /** Do not run the call; this result is what the model sees instead. */
   | { readonly kind: 'deny'; readonly result: ToolResult }
   /**
@@ -70,9 +83,13 @@ export type ToolDecision =
    */
   | { readonly kind: 'suspend'; readonly request: SuspendRequest };
 
-/** Allow the call through. */
-export function continueDecision(): ToolDecision {
-  return { kind: 'continue' };
+/**
+ * Allow the call through, optionally carrying what to record about the pass.
+ * No argument means "nothing worth recording" — the common case, and what every
+ * caller that predates `audit` keeps meaning.
+ */
+export function continueDecision(audit?: Record<string, unknown>): ToolDecision {
+  return audit ? { kind: 'continue', audit } : { kind: 'continue' };
 }
 
 /** Block the call and hand the model `result` in its place. */
@@ -183,12 +200,17 @@ export type OnResume = (
 export function composePreToolUse(...stages: PreToolUse[]): PreToolUse {
   return async (info) => {
     let asked: ToolDecision | undefined;
+    // A stage that attached audit to its `continue` asked for that pass to be
+    // recorded; composing must not silently drop the request. First one wins,
+    // same rule as `asked`.
+    let granted: ToolDecision | undefined;
     for (const stage of stages) {
       const decision = await stage(info);
       if (decision.kind === 'deny') return decision;
       if (decision.kind === 'suspend' && asked === undefined) asked = decision;
+      if (decision.kind === 'continue' && decision.audit && granted === undefined) granted = decision;
     }
-    return asked ?? continueDecision();
+    return asked ?? granted ?? continueDecision();
   };
 }
 

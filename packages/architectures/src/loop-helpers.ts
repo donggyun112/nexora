@@ -15,6 +15,7 @@ import type {
   LLMMessage,
   LLMResponse,
   PendingRuntimeInput,
+  PermissionSource,
   RuntimeServices,
   StopReason,
   SuspendRequest,
@@ -180,23 +181,32 @@ export type ToolCallOutcome = {
  * (deny/suspend) 호출은 기록하지 않는다. python `execute_calls` 가 `refused` 인 호출에
  * `record_resolved` 를 부르지 않는 것과 같다("A policy result stands in for an effect;
  * it must not claim that the tool ran").
+ *
+ * 게이트가 낸 결정은 permission 이벤트로도 나온다 — python `decide_tool_call` 이 같은
+ * 자리에서 `PERMISSION_DENIED` / `PERMISSION_REQUEST` 를 내는 것과 같다. 발행은 관찰일
+ * 뿐이라 결정에 아무 영향을 주지 않는다(`permissionEvents` 는 이미 정해진 결정을 읽기만
+ * 한다).
  */
-export async function executeToolCalls(
+export async function* executeToolCalls(
   services: RuntimeServices,
   toolCalls: ToolCall[],
   ctx: ControlContext,
-): Promise<ToolCallOutcome[]> {
+): AsyncGenerator<AgentEvent, ToolCallOutcome[]> {
   const gate = services.preToolUse;
   if (!gate) return runToolCalls(services, toolCalls, ctx);
 
   const context = services.tools.getContext?.();
-  const decided: { tc: ToolCall; decision: ToolDecision }[] = [];
+  const decided: { tc: ToolCall; decision: ToolDecision; pendingId?: string }[] = [];
   for (const tc of toolCalls) {
     const decision = await gate({
       call: { callId: tc.id, name: tc.name, input: tc.arguments },
       ...(context ? { context } : {}),
     });
-    decided.push({ tc, decision });
+    // pendingId 는 여기서 만든다 — 이벤트와 아래의 `suspendResult` 가 같은 값을 써야
+    // "질문 id"와 "파킹 id"가 갈라지지 않는다.
+    const pendingId = decision.kind === 'suspend' ? messageId() : undefined;
+    yield* permissionEvents(tc, decision, 'pre_tool_use', pendingId);
+    decided.push({ tc, decision, ...(pendingId ? { pendingId } : {}) });
     if (decision.kind === 'suspend') break;
   }
 
@@ -206,7 +216,7 @@ export async function executeToolCalls(
   );
 
   const results: ToolCallOutcome[] = [];
-  for (const { tc, decision } of decided) {
+  for (const { tc, decision, pendingId } of decided) {
     if (decision.kind === 'deny') {
       // 거부는 모델에게 실패로 보여야 한다 — 도구가 돌지 않았고, terminatesLoop 같은
       // 성공 전용 판정도 타지 않아야 한다.
@@ -216,7 +226,7 @@ export async function executeToolCalls(
     if (decision.kind === 'suspend') {
       results.push({
         tc,
-        result: suspendResult(messageId()),
+        result: suspendResult(pendingId!),
         isError: false,
         suspendRequest: decision.request,
       });
@@ -228,6 +238,37 @@ export async function executeToolCalls(
     if (out) results.push(out);
   }
   return results;
+}
+
+/**
+ * 게이트가 낸 결정을 공개한다 — 결정을 읽기만 하고 바꾸지 않는다. `AgentEvent` 는 관찰
+ * 채널이라 발행이 제어 흐름에 되먹임되면 안 된다(python events.py 모듈 docstring).
+ *
+ * 발행 규칙:
+ *   - `deny`     → `permission_denied`.
+ *   - `suspend`  → `permission_request`. `pendingId` 는 호출자가 민팅해 넘긴 실제 파킹 id.
+ *   - `continue` → **audit 이 실렸을 때만** `permission_granted`. 게이트가 있는 모든 통과
+ *                  호출마다 이벤트가 나면 소음이고, 승인은 사람이 개입한 사건일 때만
+ *                  기록할 값이 있다 — 그건 `on_resume` 경로다. 그래서 `pre_tool_use` 의
+ *                  맨 `continue` 는 아무 이벤트도 내지 않는다. 다만 게이트가
+ *                  `pre_tool_use` 에서도 audit 을 실어 보내면(캐시된 allow 등) 그때는
+ *                  낸다 — **게이트가 audit 을 실었다는 것 자체가 "기록할 값이 있다"는
+ *                  신호**다. 판단은 게이트 몫이고 여기는 그 신호를 따를 뿐이다.
+ */
+function* permissionEvents(
+  tc: ToolCall,
+  decision: ToolDecision,
+  source: PermissionSource,
+  pendingId?: string,
+): Generator<AgentEvent> {
+  const call = { callId: tc.id, name: tc.name };
+  if (decision.kind === 'deny') {
+    yield { type: 'permission_denied', ...call, source, result: decision.result };
+  } else if (decision.kind === 'suspend') {
+    yield { type: 'permission_request', ...call, source, pendingId: pendingId! };
+  } else if (decision.audit) {
+    yield { type: 'permission_granted', ...call, source, audit: decision.audit };
+  }
 }
 
 async function runToolCalls(
@@ -399,12 +440,25 @@ export async function* injectResumedToolResult(
   // 재파킹도 첫 파킹과 같다 — 여기서 pendingId 를 만들고, 질문은 onSuspend 로 넘겨
   // 런타임이 새 파킹을 기록한 뒤 발행한다.
   let suspendRequest: SuspendRequest | undefined;
+  const repark = decision?.kind === 'suspend' ? messageId() : undefined;
+
+  // 재개에서 나온 결정도 pre_tool_use 와 같은 자리에서 공개한다 — python
+  // `Orchestrator.resume_effect` 가 `source="on_resume"` 로 싣는 것과 같다. `continue` 는
+  // 게이트가 audit 을 실었을 때만 `permission_granted` 가 된다(= 사람이 개입한 승인).
+  if (decision) {
+    yield* permissionEvents(
+      { id: resume.resumedCallId, name: call!.name, arguments: call!.input },
+      decision,
+      'on_resume',
+      repark,
+    );
+  }
 
   if (decision?.kind === 'deny') {
     result = decision.result;
     isError = true;
   } else if (decision?.kind === 'suspend') {
-    result = suspendResult(messageId());
+    result = suspendResult(repark!);
     isError = false;
     suspendRequest = decision.request;
   } else if (decision?.kind === 'continue') {

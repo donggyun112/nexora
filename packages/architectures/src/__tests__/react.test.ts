@@ -1344,3 +1344,189 @@ describe('ReAct tool-driven termination', () => {
     expect(events.some(e => e.type === 'done')).toBe(true);
   });
 });
+
+/**
+ * 권한 결정은 관찰 채널로도 나와야 한다 — 그래야 트랜스크립트와 UI 가 본다. python
+ * `decide_tool_call` / `Orchestrator.resume_effect` 가 같은 자리에서 PERMISSION_DENIED /
+ * PERMISSION_REQUEST 를 내고, `source` 로 두 자리를 구별한다.
+ */
+describe('ReAct permission events', () => {
+  const oneCallLLM = () => new MockLLMProvider([
+    { text: '', toolCalls: [{ id: 'call-1', name: 'echo', arguments: { msg: 'a' } }] },
+    { text: 'wrapped up' },
+  ]);
+  const echoTools = () => new Map<string, (input: unknown) => Promise<unknown>>([
+    ['echo', async () => ({ type: 'text' as const, text: 'ok' })],
+  ]);
+  const permissions = (events: AgentEvent[]) =>
+    events.filter(e => e.type.startsWith('permission_'));
+
+  const run = (services: unknown) =>
+    collect(createReactArchitecture().loop(services as RuntimeServices, { prompt: 'go' }));
+
+  it('emits nothing when no gate is wired', async () => {
+    const events = await run(makeServices(oneCallLLM(), echoTools()));
+    expect(permissions(events)).toEqual([]);
+  });
+
+  it('emits nothing for a bare continue — a gated pass is not worth a record', async () => {
+    const services = makeServices(oneCallLLM(), echoTools(), {
+      preToolUse: async () => continueDecision(),
+    });
+    const events = await run(services);
+    expect(permissions(events)).toEqual([]);
+    // 게이트는 분명히 돌았다 — 조용한 것이 곧 미설정은 아니다.
+    expect(events.filter(e => e.type === 'tool_result')).toHaveLength(1);
+  });
+
+  it('emits permission_granted when preToolUse attaches audit (a cached approval)', async () => {
+    const services = makeServices(oneCallLLM(), echoTools(), {
+      preToolUse: async () => continueDecision({ cached: 'allow', approvalKey: 'echo:x' }),
+    });
+    const events = await run(services);
+    expect(permissions(events)).toEqual([{
+      type: 'permission_granted',
+      callId: 'call-1',
+      name: 'echo',
+      source: 'pre_tool_use',
+      audit: { cached: 'allow', approvalKey: 'echo:x' },
+    }]);
+  });
+
+  it('emits permission_denied from pre_tool_use with the result the model sees', async () => {
+    const services = makeServices(oneCallLLM(), echoTools(), {
+      preToolUse: async () => denyDecision(errorResult('denied by policy')),
+    });
+    const events = await run(services);
+    expect(permissions(events)).toEqual([{
+      type: 'permission_denied',
+      callId: 'call-1',
+      name: 'echo',
+      source: 'pre_tool_use',
+      result: { type: 'error', message: 'denied by policy' },
+    }]);
+  });
+
+  it('emits permission_request carrying the same pendingId the turn parked under', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'call-1', name: 'echo', arguments: { msg: 'a' } }] },
+    ]);
+    let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+    const services = makeServices(llm, echoTools(), {
+      preToolUse: async () => suspendDecision(ASK),
+      onSuspend: async (info) => { checkpoint = info; },
+    });
+
+    const events = await run(services);
+
+    const request = permissions(events);
+    expect(request).toHaveLength(1);
+    expect(request[0]).toMatchObject({
+      type: 'permission_request',
+      callId: 'call-1',
+      name: 'echo',
+      source: 'pre_tool_use',
+    });
+    // 이벤트의 pendingId 가 실제 파킹 id 여야 답이 돌아올 자리를 가리킨다.
+    const pendingId = (request[0] as { pendingId: string }).pendingId;
+    const suspended = events.find(e => e.type === 'suspended') as { pendingId: string };
+    expect(pendingId).toBe(suspended.pendingId);
+    expect(pendingId).toBe(checkpoint?.pendingId);
+  });
+
+  it('emits the request before the tool_result that parks the turn', async () => {
+    const llm = new MockLLMProvider([
+      { text: '', toolCalls: [{ id: 'call-1', name: 'echo', arguments: { msg: 'a' } }] },
+    ]);
+    const services = makeServices(llm, echoTools(), {
+      preToolUse: async () => suspendDecision(ASK),
+      onSuspend: async () => {},
+    });
+    const events = await run(services);
+    const types = events.map(e => e.type);
+    expect(types.indexOf('permission_request')).toBeLessThan(types.indexOf('suspended'));
+  });
+
+  describe('on the resume path', () => {
+    const resumeContext = () => ({
+      architectureHistory: [
+        { role: 'user' as const, content: 'delete the file' },
+        {
+          role: 'assistant' as const,
+          content: [{ type: 'tool_call' as const, id: 'call-1', name: 'rm', arguments: { path: 'a.txt' } }],
+        },
+      ],
+      resumedCallId: 'call-1',
+      toolResult: { type: 'text' as const, text: 'approve' },
+      resumedCall: { name: 'rm', input: { path: 'a.txt' } },
+      resumeAnswer: { pendingId: 'p1', answer: 'approve' },
+    });
+    const rmTools = () => new Map<string, (input: unknown) => Promise<unknown>>([
+      ['rm', async () => ({ type: 'text' as const, text: 'removed a.txt' })],
+    ]);
+    const resume = (services: unknown) =>
+      collect(createReactArchitecture().loop(services as RuntimeServices, {
+        prompt: '',
+        resumeContext: resumeContext(),
+      }));
+
+    it('emits permission_granted with the choice and who decided', async () => {
+      const services = makeServices(new MockLLMProvider([{ text: 'file removed' }]), rmTools(), {
+        onResume: async () => continueDecision({ choice: 'once', decidedBy: 'Alice' }),
+      });
+      const events = await resume(services);
+      expect(permissions(events)).toEqual([{
+        type: 'permission_granted',
+        callId: 'call-1',
+        name: 'rm',
+        source: 'on_resume',
+        audit: { choice: 'once', decidedBy: 'Alice' },
+      }]);
+    });
+
+    it('emits nothing for a bare continue', async () => {
+      const services = makeServices(new MockLLMProvider([{ text: 'file removed' }]), rmTools(), {
+        onResume: async () => continueDecision(),
+      });
+      expect(permissions(await resume(services))).toEqual([]);
+    });
+
+    it("emits permission_denied with source 'on_resume' — a yes overturned by policy", async () => {
+      const services = makeServices(new MockLLMProvider([{ text: 'understood' }]), rmTools(), {
+        onResume: async () => denyDecision(errorResult('human refused')),
+      });
+      expect(permissions(await resume(services))).toEqual([{
+        type: 'permission_denied',
+        callId: 'call-1',
+        name: 'rm',
+        source: 'on_resume',
+        result: { type: 'error', message: 'human refused' },
+      }]);
+    });
+
+    it('emits permission_request carrying the re-park id', async () => {
+      let checkpoint: Parameters<NonNullable<RuntimeServices['onSuspend']>>[0] | undefined;
+      const services = makeServices(new MockLLMProvider([{ text: 'never reached' }]), rmTools(), {
+        onResume: async () => suspendDecision(ASK),
+        onSuspend: async (info) => { checkpoint = info; },
+      });
+
+      const events = await resume(services);
+
+      const request = permissions(events);
+      expect(request).toHaveLength(1);
+      expect(request[0]).toMatchObject({
+        type: 'permission_request',
+        callId: 'call-1',
+        name: 'rm',
+        source: 'on_resume',
+      });
+      expect((request[0] as { pendingId: string }).pendingId).toBe(checkpoint?.pendingId);
+    });
+
+    it('emits nothing when no gate is wired', async () => {
+      const services = makeServices(new MockLLMProvider([{ text: 'done' }]), rmTools());
+      expect(permissions(await resume(services))).toEqual([]);
+    });
+  });
+});

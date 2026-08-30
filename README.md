@@ -19,7 +19,15 @@
   <sub>🤖 Coding agent? Start at <a href="AGENTS.md"><strong>AGENTS.md</strong></a> → <a href="docs/architecture/packages-map.md">packages-map.md</a> for capability → package routing.</sub>
 </p>
 
-> **v0.1** — The core works and is tested (1,200+ tests). APIs may still change before 1.0. Feedback welcome.
+> [!IMPORTANT]
+> **Maintenance mode (August 30, 2026).** Nexora is frozen: no new features or
+> public API expansion are planned. Published `@dongkseo/*` packages remain
+> available; maintenance is limited to security fixes and critical bugs.
+>
+> Active runtime development continues in
+> [Semora](https://github.com/donggyun112/semora), a Python durable agent runtime
+> focused on exactly-once tool effects, permission parking, and crash recovery.
+> Semora is not a drop-in replacement for Nexora's TypeScript packages.
 
 ---
 
@@ -160,7 +168,18 @@ Exec sandbox (allowList + interpreter block), fd-based file I/O (O_NOFOLLOW), Ab
 
 ## Status
 
-This is **v0.1** — the architecture is proven and the tests pass, but the APIs are not frozen. We expect breaking changes before 1.0 based on real-world usage feedback.
+Nexora entered **maintenance mode on August 30, 2026**. Existing packages,
+documentation, and releases remain available, but there is no active feature
+roadmap or planned 1.0 release.
+
+- No new features or public API expansion
+- Security fixes and critical bug fixes only
+- No package unpublishing; existing `@dongkseo/*` releases remain available
+
+For current runtime development, see
+[Semora](https://github.com/donggyun112/semora). Semora carries the durable
+execution and control-plane work forward in Python; it is not a drop-in
+replacement for Nexora applications.
 
 ## License
 
